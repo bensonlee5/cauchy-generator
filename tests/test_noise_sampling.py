@@ -1,14 +1,115 @@
+from __future__ import annotations
+
 import pytest
 import torch
 from conftest import make_generator as _make_generator
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 import dagzoo.sampling.noise as noise_mod
+from dagzoo.config import (
+    NOISE_FAMILY_GAUSSIAN,
+    NOISE_FAMILY_LAPLACE,
+    NOISE_FAMILY_MIXTURE,
+    NOISE_FAMILY_STUDENT_T,
+    NOISE_MIXTURE_COMPONENT_GAUSSIAN,
+    NOISE_MIXTURE_COMPONENT_LAPLACE,
+    NOISE_MIXTURE_COMPONENT_STUDENT_T,
+)
+from dagzoo.rng import SEED32_MAX
 from dagzoo.sampling.noise import (
     NoiseSamplingSpec,
+    normalize_mixture_weights,
     sample_mixture_component_family,
     sample_noise,
     sample_noise_from_spec,
 )
+
+_MIXTURE_COMPONENTS = (
+    NOISE_MIXTURE_COMPONENT_GAUSSIAN,
+    NOISE_MIXTURE_COMPONENT_LAPLACE,
+    NOISE_MIXTURE_COMPONENT_STUDENT_T,
+)
+_SEED32_STRATEGY = st.integers(min_value=0, max_value=SEED32_MAX)
+_SHAPE_DIM_STRATEGY = st.integers(min_value=1, max_value=32)
+_SHAPE_STRATEGY = st.one_of(
+    st.tuples(_SHAPE_DIM_STRATEGY),
+    st.tuples(_SHAPE_DIM_STRATEGY, _SHAPE_DIM_STRATEGY),
+)
+_SCALE_STRATEGY = st.floats(
+    min_value=0.125,
+    max_value=4.0,
+    allow_nan=False,
+    allow_infinity=False,
+    width=32,
+)
+_STUDENT_T_DF_STRATEGY = st.floats(
+    min_value=2.25,
+    max_value=12.0,
+    allow_nan=False,
+    allow_infinity=False,
+    width=32,
+)
+_POSITIVE_WEIGHT_STRATEGY = st.floats(
+    min_value=0.125,
+    max_value=8.0,
+    allow_nan=False,
+    allow_infinity=False,
+    width=32,
+)
+_MIXTURE_WEIGHTS_STRATEGY = st.dictionaries(
+    keys=st.sampled_from(_MIXTURE_COMPONENTS),
+    values=_POSITIVE_WEIGHT_STRATEGY,
+    min_size=1,
+    max_size=len(_MIXTURE_COMPONENTS),
+)
+_ORDERED_MIXTURE_WEIGHTS_STRATEGY = st.dictionaries(
+    keys=st.sampled_from(_MIXTURE_COMPONENTS),
+    values=_POSITIVE_WEIGHT_STRATEGY,
+    min_size=2,
+    max_size=len(_MIXTURE_COMPONENTS),
+)
+
+
+@st.composite
+def _noise_family_case_strategy(
+    draw: st.DrawFn,
+) -> tuple[str, float, dict[str, float] | None]:
+    family = draw(
+        st.sampled_from(
+            (
+                NOISE_FAMILY_GAUSSIAN,
+                NOISE_FAMILY_LAPLACE,
+                NOISE_FAMILY_STUDENT_T,
+                NOISE_FAMILY_MIXTURE,
+            )
+        )
+    )
+    student_t_df = draw(_STUDENT_T_DF_STRATEGY)
+    mixture_weights = draw(_MIXTURE_WEIGHTS_STRATEGY) if family == NOISE_FAMILY_MIXTURE else None
+    return family, student_t_df, mixture_weights
+
+
+def _sample_noise_kwargs(
+    *,
+    family: str,
+    scale: float,
+    student_t_df: float,
+    mixture_weights: dict[str, float] | None,
+) -> dict[str, object]:
+    kwargs: dict[str, object] = {
+        "family": family,
+        "scale": scale,
+    }
+    if family in {NOISE_FAMILY_STUDENT_T, NOISE_FAMILY_MIXTURE}:
+        kwargs["student_t_df"] = student_t_df
+    if family == NOISE_FAMILY_MIXTURE:
+        kwargs["mixture_weights"] = mixture_weights
+    return kwargs
+
+
+def _reordered_weights(weights: dict[str, float]) -> dict[str, float]:
+    return dict(reversed(list(weights.items())))
 
 
 @pytest.mark.parametrize(
@@ -272,3 +373,202 @@ def test_sample_noise_mixture_student_t_falls_back_when_standard_gamma_is_unavai
     )
     assert samples.shape == (128,)
     assert torch.all(torch.isfinite(samples))
+
+
+@settings(max_examples=75, deadline=None)
+@given(
+    shape=_SHAPE_STRATEGY,
+    seed=_SEED32_STRATEGY,
+    scale=_SCALE_STRATEGY,
+    family_case=_noise_family_case_strategy(),
+)
+def test_sample_noise_shape_finite_and_deterministic_hypothesis(
+    shape: tuple[int, ...],
+    seed: int,
+    scale: float,
+    family_case: tuple[str, float, dict[str, float] | None],
+) -> None:
+    family, student_t_df, mixture_weights = family_case
+    kwargs = _sample_noise_kwargs(
+        family=family,
+        scale=scale,
+        student_t_df=student_t_df,
+        mixture_weights=mixture_weights,
+    )
+
+    first = sample_noise(shape, generator=_make_generator(seed), device="cpu", **kwargs)
+    second = sample_noise(shape, generator=_make_generator(seed), device="cpu", **kwargs)
+
+    assert tuple(first.shape) == shape
+    assert torch.all(torch.isfinite(first))
+    torch.testing.assert_close(first, second)
+
+
+@settings(max_examples=75, deadline=None)
+@given(
+    shape=_SHAPE_STRATEGY,
+    seed=_SEED32_STRATEGY,
+    scale=_SCALE_STRATEGY,
+    family_case=_noise_family_case_strategy(),
+)
+def test_sample_noise_scale_is_linear_hypothesis(
+    shape: tuple[int, ...],
+    seed: int,
+    scale: float,
+    family_case: tuple[str, float, dict[str, float] | None],
+) -> None:
+    family, student_t_df, mixture_weights = family_case
+    base = sample_noise(
+        shape,
+        generator=_make_generator(seed),
+        device="cpu",
+        **_sample_noise_kwargs(
+            family=family,
+            scale=1.0,
+            student_t_df=student_t_df,
+            mixture_weights=mixture_weights,
+        ),
+    )
+    scaled = sample_noise(
+        shape,
+        generator=_make_generator(seed),
+        device="cpu",
+        **_sample_noise_kwargs(
+            family=family,
+            scale=scale,
+            student_t_df=student_t_df,
+            mixture_weights=mixture_weights,
+        ),
+    )
+
+    torch.testing.assert_close(scaled, base * scale)
+
+
+@settings(max_examples=75, deadline=None)
+@given(
+    shape=_SHAPE_STRATEGY,
+    seed=_SEED32_STRATEGY,
+    scale=_SCALE_STRATEGY,
+    student_t_df=_STUDENT_T_DF_STRATEGY,
+    mixture_weights=_ORDERED_MIXTURE_WEIGHTS_STRATEGY,
+)
+def test_sample_noise_mixture_is_order_independent_hypothesis(
+    shape: tuple[int, ...],
+    seed: int,
+    scale: float,
+    student_t_df: float,
+    mixture_weights: dict[str, float],
+) -> None:
+    reordered_weights = _reordered_weights(mixture_weights)
+    first = sample_noise(
+        shape,
+        generator=_make_generator(seed),
+        device="cpu",
+        family=NOISE_FAMILY_MIXTURE,
+        scale=scale,
+        student_t_df=student_t_df,
+        mixture_weights=mixture_weights,
+    )
+    second = sample_noise(
+        shape,
+        generator=_make_generator(seed),
+        device="cpu",
+        family=NOISE_FAMILY_MIXTURE,
+        scale=scale,
+        student_t_df=student_t_df,
+        mixture_weights=reordered_weights,
+    )
+
+    torch.testing.assert_close(first, second)
+
+
+@settings(max_examples=75, deadline=None)
+@given(seed=_SEED32_STRATEGY, mixture_weights=_ORDERED_MIXTURE_WEIGHTS_STRATEGY)
+def test_sample_mixture_component_family_is_order_independent_hypothesis(
+    seed: int,
+    mixture_weights: dict[str, float],
+) -> None:
+    reordered_weights = _reordered_weights(mixture_weights)
+    first = sample_mixture_component_family(
+        generator=_make_generator(seed),
+        device="cpu",
+        mixture_weights=mixture_weights,
+    )
+    second = sample_mixture_component_family(
+        generator=_make_generator(seed),
+        device="cpu",
+        mixture_weights=reordered_weights,
+    )
+
+    assert first == second
+
+
+@settings(max_examples=75, deadline=None)
+@given(seed=_SEED32_STRATEGY, mixture_weights=_MIXTURE_WEIGHTS_STRATEGY)
+def test_sample_mixture_component_family_returns_enabled_family_hypothesis(
+    seed: int,
+    mixture_weights: dict[str, float],
+) -> None:
+    family = sample_mixture_component_family(
+        generator=_make_generator(seed),
+        device="cpu",
+        mixture_weights=mixture_weights,
+    )
+
+    assert family in mixture_weights
+
+
+@settings(max_examples=75, deadline=None)
+@given(mixture_weights=_MIXTURE_WEIGHTS_STRATEGY)
+def test_normalize_mixture_weights_preserves_enabled_keys_hypothesis(
+    mixture_weights: dict[str, float],
+) -> None:
+    normalized = normalize_mixture_weights(mixture_weights)
+
+    assert set(normalized) == set(mixture_weights)
+    assert sum(normalized.values()) == pytest.approx(1.0)
+
+
+@settings(max_examples=75, deadline=None)
+@given(
+    shape=_SHAPE_STRATEGY,
+    seed=_SEED32_STRATEGY,
+    scale=_SCALE_STRATEGY,
+    scale_multiplier=_SCALE_STRATEGY,
+    family_case=_noise_family_case_strategy(),
+)
+def test_sample_noise_from_spec_matches_direct_sample_noise_hypothesis(
+    shape: tuple[int, ...],
+    seed: int,
+    scale: float,
+    scale_multiplier: float,
+    family_case: tuple[str, float, dict[str, float] | None],
+) -> None:
+    family, student_t_df, mixture_weights = family_case
+    spec = NoiseSamplingSpec(
+        family=family,
+        scale=scale,
+        student_t_df=student_t_df,
+        mixture_weights=mixture_weights,
+    )
+
+    from_spec = sample_noise_from_spec(
+        shape,
+        generator=_make_generator(seed),
+        device="cpu",
+        noise_spec=spec,
+        scale_multiplier=scale_multiplier,
+    )
+    direct = sample_noise(
+        shape,
+        generator=_make_generator(seed),
+        device="cpu",
+        **_sample_noise_kwargs(
+            family=family,
+            scale=scale * scale_multiplier,
+            student_t_df=student_t_df,
+            mixture_weights=mixture_weights,
+        ),
+    )
+
+    torch.testing.assert_close(from_spec, direct)

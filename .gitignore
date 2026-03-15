@@ -19,6 +19,7 @@ env/
 
 # Test / lint / type-check caches and coverage
 .pytest_cache/
+.hypothesis/
 .testmondata
 .mypy_cache/
 .ruff_cache/

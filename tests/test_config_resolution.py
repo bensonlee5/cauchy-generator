@@ -1,5 +1,7 @@
 import pytest
 from conftest import load_repo_config
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from dagzoo.bench.constants import (
     SMOKE_N_FEATURES_CAP,
@@ -7,7 +9,14 @@ from dagzoo.bench.constants import (
     SMOKE_N_TEST_CAP,
     SMOKE_N_TRAIN_CAP,
 )
-from dagzoo.config import GeneratorConfig
+from dagzoo.config import (
+    DATASET_ROWS_MAX_TOTAL,
+    DATASET_ROWS_MIN_TOTAL,
+    DatasetRowsSpec,
+    GeneratorConfig,
+    dataset_rows_bounds,
+    normalize_dataset_rows,
+)
 from dagzoo.core.config_resolution import (
     BenchmarkSmokeCaps,
     cap_rows_spec_to_total,
@@ -16,6 +25,35 @@ from dagzoo.core.config_resolution import (
     serialize_resolution_events,
 )
 from dagzoo.hardware import HardwareInfo
+
+_ROW_TOTAL_STRATEGY = st.integers(
+    min_value=DATASET_ROWS_MIN_TOTAL,
+    max_value=DATASET_ROWS_MAX_TOTAL,
+)
+_TOTAL_ROWS_CAP_STRATEGY = st.integers(
+    min_value=DATASET_ROWS_MIN_TOTAL,
+    max_value=DATASET_ROWS_MAX_TOTAL,
+)
+
+
+@st.composite
+def _cap_rows_spec_strategy(draw: st.DrawFn) -> DatasetRowsSpec:
+    mode = draw(st.sampled_from(("fixed", "range", "choices")))
+    if mode == "fixed":
+        value = draw(_ROW_TOTAL_STRATEGY)
+        return DatasetRowsSpec(mode="fixed", value=value)
+    if mode == "range":
+        start = draw(
+            st.integers(
+                min_value=DATASET_ROWS_MIN_TOTAL,
+                max_value=DATASET_ROWS_MAX_TOTAL - 1,
+            )
+        )
+        stop = draw(st.integers(min_value=start + 1, max_value=DATASET_ROWS_MAX_TOTAL))
+        return DatasetRowsSpec(mode="range", start=start, stop=stop)
+
+    choices = draw(st.lists(_ROW_TOTAL_STRATEGY, min_size=2, max_size=5, unique=True))
+    return DatasetRowsSpec(mode="choices", choices=choices)
 
 
 def _mock_cuda_h100(_requested_device: str) -> HardwareInfo:
@@ -121,6 +159,59 @@ def test_cap_rows_spec_to_total_caps_fixed_range_and_choice_rows(
     assert cfg.dataset.rows.mode == expected_mode
     for field_name, expected_value in expected_payload.items():
         assert getattr(cfg.dataset.rows, field_name) == expected_value
+
+
+@settings(max_examples=100, deadline=None)
+@given(rows_spec=_cap_rows_spec_strategy(), total_rows_cap=_TOTAL_ROWS_CAP_STRATEGY)
+def test_cap_rows_spec_to_total_preserves_mode_contracts_hypothesis(
+    rows_spec: DatasetRowsSpec,
+    total_rows_cap: int,
+) -> None:
+    cfg = GeneratorConfig.from_dict({})
+    cfg.dataset.rows = rows_spec
+
+    cap_rows_spec_to_total(cfg, total_rows_cap=total_rows_cap)
+
+    assert cfg.dataset.rows is not None
+    capped_rows = normalize_dataset_rows(cfg.dataset.rows)
+    assert capped_rows is not None
+
+    bounds = dataset_rows_bounds(capped_rows)
+    assert bounds is not None
+    assert bounds[0] <= total_rows_cap
+    assert bounds[1] <= total_rows_cap
+
+    if rows_spec.mode == "fixed":
+        assert rows_spec.value is not None
+        assert capped_rows.mode == "fixed"
+        assert capped_rows.value == min(int(rows_spec.value), int(total_rows_cap))
+        return
+
+    if rows_spec.mode == "range":
+        assert rows_spec.start is not None and rows_spec.stop is not None
+        expected_start = min(int(rows_spec.start), int(total_rows_cap))
+        expected_stop = min(int(rows_spec.stop), int(total_rows_cap))
+        if expected_start == expected_stop:
+            assert capped_rows.mode == "fixed"
+            assert capped_rows.value == expected_stop
+            return
+
+        assert capped_rows.mode == "range"
+        assert capped_rows.start == expected_start
+        assert capped_rows.stop == expected_stop
+        return
+
+    expected_choices = sorted(
+        {min(int(choice), int(total_rows_cap)) for choice in rows_spec.choices}
+    )
+    if len(expected_choices) == 1:
+        assert capped_rows.mode == "fixed"
+        assert capped_rows.value == expected_choices[0]
+        return
+
+    assert capped_rows.mode == "choices"
+    assert capped_rows.choices == expected_choices
+    assert all(choice <= total_rows_cap for choice in capped_rows.choices)
 
 
 def test_resolve_generate_config_rejects_invalid_missingness_combination() -> None:

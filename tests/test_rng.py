@@ -1,7 +1,11 @@
 """Tests for rng.py."""
 
+import string
+
 import pytest
 import torch
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 import dagzoo.rng as rng_mod
 from dagzoo.rng import (
@@ -11,6 +15,15 @@ from dagzoo.rng import (
     keyed_rng_from_generator,
     validate_seed32,
 )
+
+_COMPONENT_CHARS = string.ascii_letters + string.digits + "_-"
+_SEED32_STRATEGY = st.integers(min_value=0, max_value=SEED32_MAX)
+_COMPONENT_STRATEGY = st.one_of(
+    st.text(alphabet=_COMPONENT_CHARS, min_size=1, max_size=8),
+    st.integers(min_value=-32, max_value=32),
+)
+_COMPONENT_TUPLE_STRATEGY = st.lists(_COMPONENT_STRATEGY, min_size=0, max_size=4).map(tuple)
+_AMBIENT_NONCE_STRATEGY = st.lists(_SEED32_STRATEGY, min_size=0, max_size=3).map(tuple)
 
 
 def test_derive_seed_deterministic() -> None:
@@ -106,6 +119,70 @@ def test_keyed_rng_torch_rng_is_deterministic_for_same_key() -> None:
     root = KeyedRng(seed=123)
     draws_a = torch.rand(8, generator=root.torch_rng("node", 2), device="cpu")
     draws_b = torch.rand(8, generator=root.torch_rng("node", 2), device="cpu")
+    torch.testing.assert_close(draws_a, draws_b)
+
+
+@settings(max_examples=100, deadline=None)
+@given(
+    seed=_SEED32_STRATEGY,
+    path=_COMPONENT_TUPLE_STRATEGY,
+    ambient_nonce=_AMBIENT_NONCE_STRATEGY,
+    components=_COMPONENT_TUPLE_STRATEGY,
+)
+def test_keyed_rng_child_seed_matches_derive_contract_hypothesis(
+    seed: int,
+    path: tuple[str | int, ...],
+    ambient_nonce: tuple[int, ...],
+    components: tuple[str | int, ...],
+) -> None:
+    rng = KeyedRng(seed=seed, path=path, _ambient_nonce=ambient_nonce)
+    ambient_components = (rng_mod._AMBIENT_NONCE_MARKER, *ambient_nonce) if ambient_nonce else ()
+
+    assert rng.child_seed(*components) == derive_seed(
+        seed,
+        *ambient_components,
+        *path,
+        *components,
+    )
+
+
+@settings(max_examples=100, deadline=None)
+@given(
+    seed=_SEED32_STRATEGY,
+    path=_COMPONENT_TUPLE_STRATEGY,
+    ambient_nonce=_AMBIENT_NONCE_STRATEGY,
+    first=_COMPONENT_TUPLE_STRATEGY,
+    second=_COMPONENT_TUPLE_STRATEGY,
+)
+def test_keyed_rng_keyed_chaining_matches_flat_derivation_hypothesis(
+    seed: int,
+    path: tuple[str | int, ...],
+    ambient_nonce: tuple[int, ...],
+    first: tuple[str | int, ...],
+    second: tuple[str | int, ...],
+) -> None:
+    root = KeyedRng(seed=seed, path=path, _ambient_nonce=ambient_nonce)
+
+    assert root.keyed(*first).keyed(*second).child_seed() == root.child_seed(*first, *second)
+
+
+@settings(max_examples=100, deadline=None)
+@given(
+    seed=_SEED32_STRATEGY,
+    path=_COMPONENT_TUPLE_STRATEGY,
+    ambient_nonce=_AMBIENT_NONCE_STRATEGY,
+    components=_COMPONENT_TUPLE_STRATEGY,
+)
+def test_keyed_rng_torch_rng_is_deterministic_for_same_key_hypothesis(
+    seed: int,
+    path: tuple[str | int, ...],
+    ambient_nonce: tuple[int, ...],
+    components: tuple[str | int, ...],
+) -> None:
+    root = KeyedRng(seed=seed, path=path, _ambient_nonce=ambient_nonce)
+    draws_a = torch.rand(6, generator=root.torch_rng(*components), device="cpu")
+    draws_b = torch.rand(6, generator=root.torch_rng(*components), device="cpu")
+
     torch.testing.assert_close(draws_a, draws_b)
 
 

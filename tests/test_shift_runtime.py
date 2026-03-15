@@ -3,8 +3,11 @@ from __future__ import annotations
 import math
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from dagzoo.config import (
+    SHIFT_MODE_CUSTOM,
     SHIFT_MODE_GRAPH_DRIFT,
     SHIFT_MODE_MECHANISM_DRIFT,
     SHIFT_MODE_MIXED,
@@ -14,9 +17,45 @@ from dagzoo.config import (
 from dagzoo.core.shift import (
     MECHANISM_FAMILY_ORDER,
     MECHANISM_FAMILY_SUPPORTED_ORDER,
+    NONLINEAR_MECHANISM_FAMILIES,
     mechanism_family_probabilities,
     mechanism_nonlinear_mass,
     resolve_shift_runtime_params,
+)
+
+_TILT_STRATEGY = st.floats(
+    min_value=-1.0,
+    max_value=2.0,
+    allow_nan=False,
+    allow_infinity=False,
+    width=32,
+)
+_NONPOSITIVE_TILT_STRATEGY = st.floats(
+    min_value=-1.0,
+    max_value=0.0,
+    allow_nan=False,
+    allow_infinity=False,
+    width=32,
+)
+_SCALE_STRATEGY = st.floats(
+    min_value=0.0,
+    max_value=2.0,
+    allow_nan=False,
+    allow_infinity=False,
+    width=32,
+)
+_WEIGHT_STRATEGY = st.floats(
+    min_value=0.125,
+    max_value=4.0,
+    allow_nan=False,
+    allow_infinity=False,
+    width=32,
+)
+_FAMILY_WEIGHT_MAP_STRATEGY = st.dictionaries(
+    keys=st.sampled_from(MECHANISM_FAMILY_SUPPORTED_ORDER),
+    values=_WEIGHT_STRATEGY,
+    min_size=1,
+    max_size=len(MECHANISM_FAMILY_SUPPORTED_ORDER),
 )
 
 
@@ -29,8 +68,19 @@ def _entropy_bits(probabilities: list[float]) -> float:
 
 
 def _nonlinear_mass(probs: dict[str, float]) -> float:
-    nonlinear = {"nn", "tree", "discretization", "gp", "product"}
-    return float(sum(prob for family, prob in probs.items() if family in nonlinear))
+    return float(
+        sum(prob for family, prob in probs.items() if family in NONLINEAR_MECHANISM_FAMILIES)
+    )
+
+
+def _normalized_supported_weights(
+    family_weights: dict[str, float],
+) -> dict[str, float]:
+    total = float(sum(family_weights.values()))
+    return {
+        family: (float(family_weights.get(family, 0.0)) / total)
+        for family in MECHANISM_FAMILY_SUPPORTED_ORDER
+    }
 
 
 def test_resolve_shift_runtime_params_disabled_returns_identity() -> None:
@@ -182,3 +232,115 @@ def test_mechanism_family_probabilities_include_piecewise_only_when_mix_enables_
         mechanism_logit_tilt=0.0,
         family_weights={"piecewise": 1.0},
     ) == pytest.approx(1.0)
+
+
+@settings(max_examples=100, deadline=None)
+@given(tilt=_TILT_STRATEGY)
+def test_mechanism_family_probabilities_default_support_and_mass_hypothesis(tilt: float) -> None:
+    probs = mechanism_family_probabilities(mechanism_logit_tilt=tilt)
+
+    assert tuple(probs) == MECHANISM_FAMILY_ORDER
+    assert sum(probs.values()) == pytest.approx(1.0)
+    assert all(0.0 <= prob <= 1.0 for prob in probs.values())
+
+
+@settings(max_examples=100, deadline=None)
+@given(tilt=_TILT_STRATEGY, family_weights=_FAMILY_WEIGHT_MAP_STRATEGY)
+def test_mechanism_family_probabilities_weighted_support_and_mass_hypothesis(
+    tilt: float,
+    family_weights: dict[str, float],
+) -> None:
+    probs = mechanism_family_probabilities(
+        mechanism_logit_tilt=tilt,
+        family_weights=family_weights,  # type: ignore[arg-type]
+    )
+
+    assert tuple(probs) == MECHANISM_FAMILY_SUPPORTED_ORDER
+    assert sum(probs.values()) == pytest.approx(1.0)
+    assert all(0.0 <= prob <= 1.0 for prob in probs.values())
+
+
+@settings(max_examples=100, deadline=None)
+@given(tilt=_NONPOSITIVE_TILT_STRATEGY, family_weights=_FAMILY_WEIGHT_MAP_STRATEGY)
+def test_mechanism_family_probabilities_nonpositive_tilt_returns_base_weights_hypothesis(
+    tilt: float,
+    family_weights: dict[str, float],
+) -> None:
+    probs = mechanism_family_probabilities(
+        mechanism_logit_tilt=tilt,
+        family_weights=family_weights,  # type: ignore[arg-type]
+    )
+    expected = _normalized_supported_weights(family_weights)
+
+    assert probs == pytest.approx(expected)
+
+
+@settings(max_examples=100, deadline=None)
+@given(tilt=_TILT_STRATEGY, family_weights=_FAMILY_WEIGHT_MAP_STRATEGY)
+def test_mechanism_nonlinear_mass_matches_probability_sum_hypothesis(
+    tilt: float,
+    family_weights: dict[str, float],
+) -> None:
+    probs = mechanism_family_probabilities(
+        mechanism_logit_tilt=tilt,
+        family_weights=family_weights,  # type: ignore[arg-type]
+    )
+    observed = mechanism_nonlinear_mass(
+        mechanism_logit_tilt=tilt,
+        family_weights=family_weights,  # type: ignore[arg-type]
+    )
+
+    assert observed == pytest.approx(_nonlinear_mass(probs))
+    assert 0.0 <= observed <= 1.0
+
+
+@settings(max_examples=100, deadline=None)
+@given(tilt_pair=st.tuples(_TILT_STRATEGY, _TILT_STRATEGY).map(lambda pair: tuple(sorted(pair))))
+def test_mechanism_nonlinear_mass_is_monotonic_for_default_support_hypothesis(
+    tilt_pair: tuple[float, float],
+) -> None:
+    low_tilt, high_tilt = tilt_pair
+
+    assert mechanism_nonlinear_mass(mechanism_logit_tilt=high_tilt) >= mechanism_nonlinear_mass(
+        mechanism_logit_tilt=low_tilt
+    )
+
+
+@settings(max_examples=100, deadline=None)
+@given(
+    mode=st.sampled_from(
+        (
+            SHIFT_MODE_CUSTOM,
+            SHIFT_MODE_GRAPH_DRIFT,
+            SHIFT_MODE_MECHANISM_DRIFT,
+            SHIFT_MODE_MIXED,
+            SHIFT_MODE_NOISE_DRIFT,
+        )
+    ),
+    graph_scale=_SCALE_STRATEGY,
+    mechanism_scale=_SCALE_STRATEGY,
+    variance_scale=_SCALE_STRATEGY,
+)
+def test_resolve_shift_runtime_params_explicit_scales_match_formula_hypothesis(
+    mode: str,
+    graph_scale: float,
+    mechanism_scale: float,
+    variance_scale: float,
+) -> None:
+    cfg = _cfg()
+    cfg.shift.enabled = True
+    cfg.shift.mode = mode
+    cfg.shift.graph_scale = graph_scale
+    cfg.shift.mechanism_scale = mechanism_scale
+    cfg.shift.variance_scale = variance_scale
+
+    params = resolve_shift_runtime_params(cfg)
+
+    assert params.graph_scale == pytest.approx(graph_scale)
+    assert params.mechanism_scale == pytest.approx(mechanism_scale)
+    assert params.variance_scale == pytest.approx(variance_scale)
+    assert params.edge_logit_bias_shift == pytest.approx(math.log(2.0) * graph_scale)
+    assert params.mechanism_logit_tilt == pytest.approx(mechanism_scale)
+    assert params.variance_sigma_multiplier == pytest.approx(
+        math.exp((math.log(2.0) / 2.0) * variance_scale)
+    )
