@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 import torch
 
 from dagzoo.core.layout_types import AggregationKind
+from dagzoo.math import row_normalize
 from dagzoo.rng import KeyedRng
 from dagzoo.sampling.noise import NoiseSamplingSpec, sample_noise_from_spec
 
@@ -248,8 +249,7 @@ class FixedLayoutBatchRng:
 
 
 def _row_normalize_batch(matrix: torch.Tensor) -> torch.Tensor:
-    norms = torch.linalg.norm(matrix, dim=-1, keepdim=True)
-    return matrix / torch.clamp(norms, min=1e-6)
+    return row_normalize(matrix, dim=-1)
 
 
 def _sample_random_weights_batch(

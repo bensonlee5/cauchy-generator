@@ -10,6 +10,16 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.10.1] - 2026-03-15
+
+### Changed
+
+- Fixed random matrix row normalization so nonzero rows now reach exact unit
+  L2 norm even in tiny-magnitude edge cases, including the fixed-layout batch
+  matrix path used during generation.
+- Added final property-based validation coverage for lineage schema payloads
+  and noise/mechanism config normalization to harden merge-time invariants.
+
 ## [0.10.0] - 2026-03-14
 
 ### Changed

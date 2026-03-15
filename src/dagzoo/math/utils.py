@@ -28,6 +28,16 @@ def normalize_positive_weights[KT: str](
     return {k: v / total for k, v in scaled.items()}
 
 
+def row_normalize(x: torch.Tensor, *, dim: int = -1) -> torch.Tensor:
+    """Normalize nonzero rows exactly to unit norm while leaving zero rows at zero."""
+
+    norms = torch.linalg.norm(x, dim=dim, keepdim=True)
+    nonzero = norms > 0.0
+    safe_norms = torch.where(nonzero, norms, torch.ones_like(norms))
+    normalized = x / safe_norms
+    return torch.where(nonzero, normalized, torch.zeros_like(normalized))
+
+
 def log_uniform(generator: torch.Generator, low: float, high: float, device: str) -> float:
     """Sample from a log-uniform distribution using torch."""
     low_log = math.log(low)

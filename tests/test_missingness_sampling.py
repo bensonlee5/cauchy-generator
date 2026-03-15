@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 import torch
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from dagzoo.config import (
     MISSINGNESS_MECHANISM_MAR,
@@ -13,8 +15,35 @@ from dagzoo.config import (
     DatasetConfig,
     MissingnessMechanism,
 )
-from dagzoo.rng import KeyedRng
+from dagzoo.rng import SEED32_MAX, KeyedRng
 from dagzoo.sampling import sample_missingness_mask
+
+_MECHANISM_STRATEGY = st.sampled_from(
+    (MISSINGNESS_MECHANISM_MCAR, MISSINGNESS_MECHANISM_MAR, MISSINGNESS_MECHANISM_MNAR)
+)
+_SEED32_STRATEGY = st.integers(min_value=0, max_value=SEED32_MAX)
+_ROWS_STRATEGY = st.integers(min_value=64, max_value=512)
+_COLS_STRATEGY = st.integers(min_value=2, max_value=16)
+_EMPIRICAL_ROWS_STRATEGY = st.integers(min_value=256, max_value=512)
+_EMPIRICAL_COLS_STRATEGY = st.integers(min_value=8, max_value=16)
+_MISSING_RATE_STRATEGY = st.floats(
+    min_value=0.05,
+    max_value=0.95,
+    allow_nan=False,
+    allow_infinity=False,
+)
+_MAR_OBSERVED_FRACTION_STRATEGY = st.floats(
+    min_value=0.1,
+    max_value=1.0,
+    allow_nan=False,
+    allow_infinity=False,
+)
+_LOGIT_SCALE_STRATEGY = st.floats(
+    min_value=0.25,
+    max_value=3.0,
+    allow_nan=False,
+    allow_infinity=False,
+)
 
 
 def _feature_matrix(n_rows: int = 512, n_cols: int = 12) -> torch.Tensor:
@@ -25,13 +54,20 @@ def _feature_matrix(n_rows: int = 512, n_cols: int = 12) -> torch.Tensor:
     return torch.sin(grid * freqs * 0.7) + torch.cos(grid * (freqs + 0.5) * 0.4)
 
 
-def _cfg(mechanism: MissingnessMechanism, *, missing_rate: float = 0.35) -> DatasetConfig:
+def _cfg(
+    mechanism: MissingnessMechanism,
+    *,
+    missing_rate: float = 0.35,
+    missing_mar_observed_fraction: float = 0.5,
+    missing_mar_logit_scale: float = 1.5,
+    missing_mnar_logit_scale: float = 1.5,
+) -> DatasetConfig:
     return DatasetConfig(
         missing_rate=missing_rate,
         missing_mechanism=mechanism,
-        missing_mar_observed_fraction=0.5,
-        missing_mar_logit_scale=1.5,
-        missing_mnar_logit_scale=1.5,
+        missing_mar_observed_fraction=missing_mar_observed_fraction,
+        missing_mar_logit_scale=missing_mar_logit_scale,
+        missing_mnar_logit_scale=missing_mnar_logit_scale,
     )
 
 
@@ -143,3 +179,199 @@ def test_sampler_rejects_non_2d_input() -> None:
     cfg = _cfg(MISSINGNESS_MECHANISM_MCAR, missing_rate=0.2)
     with pytest.raises(ValueError, match="expects a 2D tensor"):
         sample_missingness_mask(x, dataset_cfg=cfg, keyed_rng=KeyedRng(1), device="cpu")
+
+
+@settings(max_examples=50, deadline=None)
+@given(
+    mechanism=_MECHANISM_STRATEGY,
+    n_rows=_ROWS_STRATEGY,
+    n_cols=_COLS_STRATEGY,
+    missing_rate=_MISSING_RATE_STRATEGY,
+    missing_mar_observed_fraction=_MAR_OBSERVED_FRACTION_STRATEGY,
+    missing_mar_logit_scale=_LOGIT_SCALE_STRATEGY,
+    missing_mnar_logit_scale=_LOGIT_SCALE_STRATEGY,
+    seed=_SEED32_STRATEGY,
+)
+def test_missingness_mask_shape_and_dtype_hypothesis(
+    mechanism: MissingnessMechanism,
+    n_rows: int,
+    n_cols: int,
+    missing_rate: float,
+    missing_mar_observed_fraction: float,
+    missing_mar_logit_scale: float,
+    missing_mnar_logit_scale: float,
+    seed: int,
+) -> None:
+    x = _feature_matrix(n_rows, n_cols)
+    cfg = _cfg(
+        mechanism,
+        missing_rate=missing_rate,
+        missing_mar_observed_fraction=missing_mar_observed_fraction,
+        missing_mar_logit_scale=missing_mar_logit_scale,
+        missing_mnar_logit_scale=missing_mnar_logit_scale,
+    )
+
+    mask = sample_missingness_mask(x, dataset_cfg=cfg, keyed_rng=KeyedRng(seed), device="cpu")
+
+    assert mask.shape == x.shape
+    assert mask.dtype == torch.bool
+
+
+@settings(max_examples=50, deadline=None)
+@given(
+    mechanism=_MECHANISM_STRATEGY,
+    n_rows=_ROWS_STRATEGY,
+    n_cols=_COLS_STRATEGY,
+    missing_rate=_MISSING_RATE_STRATEGY,
+    missing_mar_observed_fraction=_MAR_OBSERVED_FRACTION_STRATEGY,
+    missing_mar_logit_scale=_LOGIT_SCALE_STRATEGY,
+    missing_mnar_logit_scale=_LOGIT_SCALE_STRATEGY,
+    seed=_SEED32_STRATEGY,
+)
+def test_missingness_mask_is_deterministic_for_identical_inputs_hypothesis(
+    mechanism: MissingnessMechanism,
+    n_rows: int,
+    n_cols: int,
+    missing_rate: float,
+    missing_mar_observed_fraction: float,
+    missing_mar_logit_scale: float,
+    missing_mnar_logit_scale: float,
+    seed: int,
+) -> None:
+    x = _feature_matrix(n_rows, n_cols)
+    cfg = _cfg(
+        mechanism,
+        missing_rate=missing_rate,
+        missing_mar_observed_fraction=missing_mar_observed_fraction,
+        missing_mar_logit_scale=missing_mar_logit_scale,
+        missing_mnar_logit_scale=missing_mnar_logit_scale,
+    )
+
+    first = sample_missingness_mask(x, dataset_cfg=cfg, keyed_rng=KeyedRng(seed), device="cpu")
+    second = sample_missingness_mask(x, dataset_cfg=cfg, keyed_rng=KeyedRng(seed), device="cpu")
+
+    assert torch.equal(first, second)
+
+
+@settings(max_examples=50, deadline=None)
+@given(
+    mechanism=_MECHANISM_STRATEGY,
+    n_rows=_ROWS_STRATEGY,
+    n_cols=_COLS_STRATEGY,
+    missing_rate_pair=st.tuples(_MISSING_RATE_STRATEGY, _MISSING_RATE_STRATEGY).map(
+        lambda pair: tuple(sorted(pair))
+    ),
+    missing_mar_observed_fraction=_MAR_OBSERVED_FRACTION_STRATEGY,
+    missing_mar_logit_scale=_LOGIT_SCALE_STRATEGY,
+    missing_mnar_logit_scale=_LOGIT_SCALE_STRATEGY,
+    seed=_SEED32_STRATEGY,
+)
+def test_missingness_mask_rate_is_monotonic_for_same_seed_hypothesis(
+    mechanism: MissingnessMechanism,
+    n_rows: int,
+    n_cols: int,
+    missing_rate_pair: tuple[float, float],
+    missing_mar_observed_fraction: float,
+    missing_mar_logit_scale: float,
+    missing_mnar_logit_scale: float,
+    seed: int,
+) -> None:
+    low_rate, high_rate = missing_rate_pair
+    x = _feature_matrix(n_rows, n_cols)
+    common_kwargs = {
+        "missing_mar_observed_fraction": missing_mar_observed_fraction,
+        "missing_mar_logit_scale": missing_mar_logit_scale,
+        "missing_mnar_logit_scale": missing_mnar_logit_scale,
+    }
+    low_mask = sample_missingness_mask(
+        x,
+        dataset_cfg=_cfg(mechanism, missing_rate=low_rate, **common_kwargs),
+        keyed_rng=KeyedRng(seed),
+        device="cpu",
+    )
+    high_mask = sample_missingness_mask(
+        x,
+        dataset_cfg=_cfg(mechanism, missing_rate=high_rate, **common_kwargs),
+        keyed_rng=KeyedRng(seed),
+        device="cpu",
+    )
+
+    assert not bool(torch.any(low_mask & ~high_mask).item())
+
+
+@settings(max_examples=50, deadline=None)
+@given(
+    mechanism=_MECHANISM_STRATEGY,
+    n_rows=_EMPIRICAL_ROWS_STRATEGY,
+    n_cols=_EMPIRICAL_COLS_STRATEGY,
+    missing_rate=_MISSING_RATE_STRATEGY,
+    missing_mar_observed_fraction=_MAR_OBSERVED_FRACTION_STRATEGY,
+    missing_mar_logit_scale=_LOGIT_SCALE_STRATEGY,
+    missing_mnar_logit_scale=_LOGIT_SCALE_STRATEGY,
+    seed=_SEED32_STRATEGY,
+)
+def test_missingness_mask_empirical_rate_tracks_target_hypothesis(
+    mechanism: MissingnessMechanism,
+    n_rows: int,
+    n_cols: int,
+    missing_rate: float,
+    missing_mar_observed_fraction: float,
+    missing_mar_logit_scale: float,
+    missing_mnar_logit_scale: float,
+    seed: int,
+) -> None:
+    x = _feature_matrix(n_rows, n_cols)
+    cfg = _cfg(
+        mechanism,
+        missing_rate=missing_rate,
+        missing_mar_observed_fraction=missing_mar_observed_fraction,
+        missing_mar_logit_scale=missing_mar_logit_scale,
+        missing_mnar_logit_scale=missing_mnar_logit_scale,
+    )
+
+    mask = sample_missingness_mask(x, dataset_cfg=cfg, keyed_rng=KeyedRng(seed), device="cpu")
+    observed_rate = float(mask.float().mean().item())
+    tolerance = 0.05 if mechanism == MISSINGNESS_MECHANISM_MCAR else 0.08
+
+    assert abs(observed_rate - missing_rate) <= tolerance
+
+
+@settings(max_examples=50, deadline=None)
+@given(
+    mechanism=_MECHANISM_STRATEGY,
+    n_rows=_ROWS_STRATEGY,
+    n_cols=_COLS_STRATEGY,
+    missing_rate=_MISSING_RATE_STRATEGY,
+    missing_mar_observed_fraction=_MAR_OBSERVED_FRACTION_STRATEGY,
+    missing_mar_logit_scale=_LOGIT_SCALE_STRATEGY,
+    missing_mnar_logit_scale=_LOGIT_SCALE_STRATEGY,
+    seed=_SEED32_STRATEGY,
+)
+def test_missingness_mask_sanitizes_nonfinite_inputs_hypothesis(
+    mechanism: MissingnessMechanism,
+    n_rows: int,
+    n_cols: int,
+    missing_rate: float,
+    missing_mar_observed_fraction: float,
+    missing_mar_logit_scale: float,
+    missing_mnar_logit_scale: float,
+    seed: int,
+) -> None:
+    x = _feature_matrix(n_rows, n_cols).clone()
+    x[0, 0] = float("nan")
+    x[1, 1 % n_cols] = float("inf")
+    x[2, 0] = -float("inf")
+    cfg = _cfg(
+        mechanism,
+        missing_rate=missing_rate,
+        missing_mar_observed_fraction=missing_mar_observed_fraction,
+        missing_mar_logit_scale=missing_mar_logit_scale,
+        missing_mnar_logit_scale=missing_mnar_logit_scale,
+    )
+
+    first = sample_missingness_mask(x, dataset_cfg=cfg, keyed_rng=KeyedRng(seed), device="cpu")
+    second = sample_missingness_mask(x, dataset_cfg=cfg, keyed_rng=KeyedRng(seed), device="cpu")
+
+    assert first.shape == x.shape
+    assert first.dtype == torch.bool
+    assert torch.equal(first, second)

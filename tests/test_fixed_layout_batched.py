@@ -260,6 +260,22 @@ def test_sample_random_matrix_from_plan_batch_supports_parametric_activation_wit
     assert torch.all(torch.isfinite(matrices))
 
 
+def test_sample_random_matrix_from_plan_batch_kernel_single_column_rows_are_unit_normalized() -> (
+    None
+):
+    rng = FixedLayoutBatchRng(seed=0, batch_size=2, device="cpu")
+    matrices = _sample_random_matrix_from_plan_batch(
+        KernelMatrixPlan(),
+        out_dim=6,
+        in_dim=1,
+        rng=rng,
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+    norms = torch.linalg.norm(matrices, dim=-1)
+    torch.testing.assert_close(norms, torch.ones_like(norms), atol=1e-4, rtol=1e-4)
+
+
 def test_apply_function_plan_batch_supports_piecewise() -> None:
     x = torch.randn(2, 12, 4, generator=torch.Generator(device="cpu").manual_seed(37))
     plan = PiecewiseFunctionPlan(

@@ -8,16 +8,11 @@ import torch
 
 from dagzoo.functions._rng_helpers import randint_scalar
 from dagzoo.functions.activations import apply_random_activation
+from dagzoo.math import row_normalize as _row_normalize
 from dagzoo.sampling.noise import NoiseSamplingSpec, sample_noise_from_spec
 from dagzoo.sampling.random_weights import sample_random_weights
 
 from .utils import log_uniform as _log_uniform
-
-
-def _row_normalize(m: torch.Tensor) -> torch.Tensor:
-    """Normalize matrix rows to unit L2 norm in torch."""
-    norms = torch.linalg.norm(m, dim=1, keepdim=True)
-    return m / torch.clamp(norms, min=1e-6)
 
 
 def _sample_gaussian(
