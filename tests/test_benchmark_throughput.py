@@ -406,9 +406,7 @@ def test_run_throughput_benchmark_aggregates_raw_batch_metrics(monkeypatch) -> N
         device: str | None = None,
     ):
         _ = (num_datasets, seed, device)
-        if False:
-            yield None
-        return
+        return iter(())
 
     def _stub_prepare_canonical_fixed_layout_run(
         _config,
