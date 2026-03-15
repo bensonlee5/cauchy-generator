@@ -44,7 +44,7 @@ workflows, not the primary interface; prefer `dagzoo generate` and
 - `scripts/benchmark-smoke.sh [preset] [diagnostics] [diagnostics_out_dir]`
   - Quick smoke benchmark for a single preset with optional diagnostics.
 - `scripts/benchmark-gpu-validation.sh [out_dir]`
-  - Validates Torch CUDA visibility, runs the primary H100 smoke + standard benchmarks, saves the standard-run baseline as an artifact, and executes the feature-smoke GPU benchmark matrix.
+  - Delegates to the Python H100 validation runner, which records Torch CUDA visibility, runs the primary H100 smoke + standard benchmarks, adds a large-shape stress phase plus bounded saturation candidates, saves the standard-run baseline as an artifact, captures `nvidia-smi` telemetry for primary H100 phases, and executes the feature-smoke GPU benchmark matrix.
 - `scripts/bump-version.sh <major|minor|patch> [--dry-run] [--tag]`
   - Bump the semver version in `pyproject.toml`. Use `--tag` to commit and create a git tag.
 - `scripts/cleanup_local_artifacts.py [--group runtime|docs|all] [--apply]`
@@ -121,3 +121,13 @@ When missingness is enabled in benchmark configs, summary JSON includes
 
 When non-gaussian noise is enabled in benchmark configs, summary JSON includes
 `preset_results[*].noise_guardrails` and may escalate regression status via runtime or metadata validity issues.
+
+The H100 validation runner writes a root manifest at
+`<out_dir>/validation_manifest.json`. Primary H100 performance phases also write:
+
+- `<phase_dir>/gpu_telemetry.csv`
+- `<phase_dir>/gpu_telemetry_summary.json`
+
+Use those alongside each phase `summary.json` to inspect generation timing,
+write-stage timing, fixed-layout batch/chunking, and GPU memory/utilization
+evidence without inferring bottlenecks from datasets/minute alone.

@@ -10,7 +10,7 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
-## [0.10.1] - 2026-03-15
+## [0.10.2] - 2026-03-15
 
 ### Changed
 
@@ -20,6 +20,12 @@ records the later `dagsynth -> dagzoo` rename on the current release line.
 - Added `scripts/benchmark-gpu-validation.sh` as the canonical local H100
   validation runner for the primary CUDA benchmark plus feature-smoke GPU
   coverage, with the primary standard baseline saved as a run artifact.
+- Benchmark suite summaries now record direct bottleneck evidence for
+  generation CPU time, write/filter replay timing, fixed-layout batch/chunking,
+  and CUDA memory headroom instead of relying only on aggregate throughput.
+- The H100 validation runner now adds a large-shape stress phase, bounded
+  saturation candidates, and host-level `nvidia-smi` telemetry artifacts for
+  the primary H100 performance phases.
 
 ## [0.10.0] - 2026-03-14
 

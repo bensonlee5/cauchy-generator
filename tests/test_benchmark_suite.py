@@ -81,6 +81,16 @@ def _tiny_noise_cpu_config() -> GeneratorConfig:
     return cfg
 
 
+def _stub_fixed_layout_evidence() -> dict[str, int]:
+    return {
+        "fixed_layout_target_cells_effective": 4_000_000,
+        "fixed_layout_per_dataset_cells": 160,
+        "fixed_layout_realized_batch_size": 2,
+        "fixed_layout_chunk_count": 1,
+        "fixed_layout_tail_chunk_size": 2,
+    }
+
+
 def test_reproducibility_workload_signature_ignores_values_but_tracks_layout_metadata() -> None:
     bundle_a = DatasetBundle(
         X_train=np.zeros((2, 2), dtype=np.float32),
@@ -268,6 +278,11 @@ def test_run_preset_benchmark_synchronizes_before_cuda_memory_reads(
         "_collect_lineage_guardrails",
         lambda *_args, **_kwargs: {"enabled": False},
     )
+    monkeypatch.setattr(
+        suite_mod,
+        "_build_fixed_layout_evidence",
+        lambda *_args, **_kwargs: _stub_fixed_layout_evidence(),
+    )
     monkeypatch.setattr(suite_mod, "_peak_rss_mb", lambda: next(rss_values))
     monkeypatch.setattr(
         suite_mod,
@@ -299,6 +314,13 @@ def test_run_preset_benchmark_synchronizes_before_cuda_memory_reads(
     assert result["peak_rss_mb"] == pytest.approx(20.0)
     assert result["peak_cuda_allocated_mb"] == pytest.approx(2.0)
     assert result["peak_cuda_reserved_mb"] == pytest.approx(3.0)
+    assert result["peak_cuda_allocated_pct_of_total_memory"] == pytest.approx(
+        2.0 / (94.0 * 1024.0) * 100.0
+    )
+    assert result["peak_cuda_reserved_pct_of_total_memory"] == pytest.approx(
+        3.0 / (94.0 * 1024.0) * 100.0
+    )
+    assert result["peak_cuda_headroom_mb"] == pytest.approx((94.0 * 1024.0) - 3.0)
     assert sync_calls == ["cuda", "cuda"]
 
 
@@ -451,9 +473,13 @@ def test_run_benchmark_suite_emits_stage_and_filter_pressure_metrics(
         },
     )
     monkeypatch.setattr(
-        "dagzoo.bench.suite.measure_write_datasets_per_minute",
-        lambda bundles, *, config: (
-            float(len(bundles)) * 10.0 + float(config.output.shard_size) * 0.0
+        "dagzoo.bench.suite.measure_write_stage_metrics",
+        lambda bundles, *, config: SimpleNamespace(
+            datasets_per_minute=float(len(bundles)) * 10.0 + float(config.output.shard_size) * 0.0,
+            elapsed_seconds=0.5,
+            cpu_time_seconds=0.25,
+            bytes_written=2048,
+            mib_per_second=1.0,
         ),
     )
     monkeypatch.setattr(
@@ -465,11 +491,17 @@ def test_run_benchmark_suite_emits_stage_and_filter_pressure_metrics(
             filter_accepted_datasets=2,
             filter_rejections_total=1,
             filter_rejected_datasets=1,
+            elapsed_seconds=0.75,
+            cpu_time_seconds=0.5,
         ),
     )
     monkeypatch.setattr(
         "dagzoo.bench.suite._collect_lineage_guardrails",
         lambda *_args, **_kwargs: {"enabled": False},
+    )
+    monkeypatch.setattr(
+        "dagzoo.bench.suite._build_fixed_layout_evidence",
+        lambda *_args, **_kwargs: _stub_fixed_layout_evidence(),
     )
 
     summary = run_benchmark_suite(
@@ -490,9 +522,18 @@ def test_run_benchmark_suite_emits_stage_and_filter_pressure_metrics(
 
     result = summary["preset_results"][0]
     assert result["generation_datasets_per_minute"] == pytest.approx(120.0)
+    assert result["generation_elapsed_seconds"] == pytest.approx(1.0)
+    assert result["generation_cpu_time_seconds"] == pytest.approx(0.0)
+    assert result["generation_cpu_busy_pct_of_wall"] == pytest.approx(0.0)
     assert result["write_datasets_per_minute"] == pytest.approx(20.0)
+    assert result["write_stage_elapsed_seconds"] == pytest.approx(0.5)
+    assert result["write_stage_cpu_time_seconds"] == pytest.approx(0.25)
+    assert result["write_stage_bytes_written"] == 2048
+    assert result["write_stage_mib_per_second"] == pytest.approx(1.0)
     assert result["filter_datasets_per_minute"] == pytest.approx(40.0)
     assert result["filter_accepted_datasets_per_minute"] == pytest.approx(40.0 * (2.0 / 3.0))
+    assert result["filter_stage_elapsed_seconds"] == pytest.approx(0.75)
+    assert result["filter_stage_cpu_time_seconds"] == pytest.approx(0.5)
     assert result["filter_stage_enabled"] is True
     assert "accepted_datasets_measured" not in result
     assert result["total_attempts"] == 3
@@ -509,6 +550,11 @@ def test_run_benchmark_suite_emits_stage_and_filter_pressure_metrics(
     assert result["filter_rejection_rate_attempt_level"] == pytest.approx(1.0 / 3.0)
     assert result["filter_retry_dataset_count"] == 1
     assert result["filter_retry_dataset_rate"] == pytest.approx(0.5)
+    assert result["fixed_layout_target_cells_effective"] == 4_000_000
+    assert result["fixed_layout_per_dataset_cells"] == 160
+    assert result["fixed_layout_realized_batch_size"] == 2
+    assert result["fixed_layout_chunk_count"] == 1
+    assert result["fixed_layout_tail_chunk_size"] == 2
 
 
 def test_run_benchmark_suite_filter_enabled_uses_filter_disabled_generation_config_everywhere(
@@ -1731,6 +1777,24 @@ def test_write_suite_markdown_profile_table_includes_shift_and_noise_columns(
                 "peak_rss_mb": 10.0,
                 "reproducibility_match": True,
                 "reproducibility_workload_match": False,
+                "generation_elapsed_seconds": 1.0,
+                "generation_cpu_time_seconds": 0.3,
+                "generation_cpu_busy_pct_of_wall": 30.0,
+                "fixed_layout_target_cells_effective": 4_000_000,
+                "fixed_layout_per_dataset_cells": 1024,
+                "fixed_layout_realized_batch_size": 4,
+                "fixed_layout_chunk_count": 1,
+                "fixed_layout_tail_chunk_size": 4,
+                "stage_sample_datasets": 2,
+                "write_stage_elapsed_seconds": 0.2,
+                "write_stage_cpu_time_seconds": 0.1,
+                "write_stage_bytes_written": 4096,
+                "write_stage_mib_per_second": 2.0,
+                "filter_stage_elapsed_seconds": 0.4,
+                "filter_stage_cpu_time_seconds": 0.2,
+                "peak_cuda_reserved_mb": 512.0,
+                "peak_cuda_reserved_pct_of_total_memory": 25.0,
+                "peak_cuda_headroom_mb": 1536.0,
                 "filter_acceptance_rate_dataset_level": 0.75,
                 "filter_rejection_rate_attempt_level": 0.25,
                 "filter_rejection_rate_dataset_level": 0.25,
@@ -1757,6 +1821,9 @@ def test_write_suite_markdown_profile_table_includes_shift_and_noise_columns(
     assert "Filter Retry % (dataset)" in text
     assert "match" in text
     assert "mismatch" in text
+    assert "## Bottleneck Evidence" in text
+    assert "target_cells=4000000" in text
+    assert "reserved_mb=512.00" in text
     assert "| shift_smoke |" in text
 
 

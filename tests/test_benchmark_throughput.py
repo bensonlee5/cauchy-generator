@@ -173,6 +173,46 @@ def test_run_throughput_benchmark_synchronizes_accelerator_for_timed_cuda_path(
     assert sync_calls == ["cuda", "cuda"]
 
 
+def test_run_throughput_benchmark_reports_generation_cpu_time(
+    monkeypatch,
+) -> None:
+    def _stub_generate_batch_iter(
+        _config,
+        *,
+        num_datasets: int,
+        seed: int | None = None,
+        device: str | None = None,
+    ):
+        _ = seed
+        _ = device
+        yield from range(num_datasets)
+
+    perf_counter_values = iter((0.0, 2.0))
+    process_time_values = iter((10.0, 10.75))
+
+    monkeypatch.setattr(
+        "dagzoo.bench.throughput.generate_batch_iter",
+        _stub_generate_batch_iter,
+    )
+    monkeypatch.setattr(
+        "dagzoo.bench.throughput.time.perf_counter", lambda: next(perf_counter_values)
+    )
+    monkeypatch.setattr(
+        "dagzoo.bench.throughput.time.process_time", lambda: next(process_time_values)
+    )
+
+    cfg = GeneratorConfig()
+    result = run_throughput_benchmark(
+        cfg,
+        num_datasets=4,
+        warmup_datasets=0,
+        device="cpu",
+    )
+
+    assert result["elapsed_seconds"] == pytest.approx(2.0)
+    assert result["cpu_time_seconds"] == pytest.approx(0.75)
+
+
 def test_run_throughput_benchmark_callback_exception_does_not_hang_parallel_path() -> None:
     cfg = _tiny_parallel_config()
 

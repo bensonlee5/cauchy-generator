@@ -2257,6 +2257,39 @@ def test_resolve_fixed_layout_batch_size_uses_configured_target_cells() -> None:
     assert larger_target_batch >= default_batch
 
 
+def test_h100_large_shape_reduces_auto_batch_size_relative_to_standard_h100() -> None:
+    standard_cfg = GeneratorConfig.from_yaml("configs/benchmark_cuda_h100.yaml")
+    large_cfg = GeneratorConfig.from_yaml("configs/benchmark_cuda_h100_large_shape.yaml")
+
+    standard_plan = SimpleNamespace(
+        n_train=standard_cfg.dataset.n_train,
+        n_test=standard_cfg.dataset.n_test,
+        layout=SimpleNamespace(n_features=standard_cfg.dataset.n_features_max),
+    )
+    large_plan = SimpleNamespace(
+        n_train=large_cfg.dataset.n_train,
+        n_test=large_cfg.dataset.n_test,
+        layout=SimpleNamespace(n_features=large_cfg.dataset.n_features_max),
+    )
+
+    standard_batch = _resolve_fixed_layout_batch_size(
+        standard_plan,
+        num_datasets=32,
+        batch_size=None,
+        target_cells=standard_cfg.runtime.fixed_layout_target_cells,
+    )
+    large_batch = _resolve_fixed_layout_batch_size(
+        large_plan,
+        num_datasets=32,
+        batch_size=None,
+        target_cells=large_cfg.runtime.fixed_layout_target_cells,
+    )
+
+    assert standard_batch >= 1
+    assert large_batch >= 1
+    assert large_batch <= standard_batch
+
+
 def test_generate_batch_iter_classification_avoids_midstream_invalid_class_split() -> None:
     cfg = _tiny_config()
     cfg.dataset.task = "classification"

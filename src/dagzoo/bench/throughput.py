@@ -38,6 +38,18 @@ def _throughput_root(config: GeneratorConfig) -> KeyedRng:
     return KeyedRng(int(config.seed)).keyed("bench", "throughput")
 
 
+def _throughput_warmup_seed(config: GeneratorConfig) -> int:
+    """Return the deterministic warmup seed for throughput benchmarks."""
+
+    return _throughput_root(config).child_seed("warmup")
+
+
+def _throughput_measure_seed(config: GeneratorConfig) -> int:
+    """Return the deterministic measured-run seed for throughput benchmarks."""
+
+    return _throughput_root(config).child_seed("measure")
+
+
 def _default_fixed_layout_target_cells_sweep_values(
     config: GeneratorConfig,
     *,
@@ -159,11 +171,10 @@ def iter_throughput_measure_bundles(
 ) -> Iterator[DatasetBundle]:
     """Yield the deterministic measured corpus used by throughput benchmarks."""
 
-    throughput_root = _throughput_root(config)
     yield from generate_batch_iter(
         config,
         num_datasets=num_datasets,
-        seed=throughput_root.child_seed("measure"),
+        seed=_throughput_measure_seed(config),
         device=device,
     )
 
@@ -178,18 +189,18 @@ def run_throughput_benchmark(
 ) -> dict[str, Any]:
     """Measure end-to-end generation throughput for a benchmark preset."""
 
-    throughput_root = _throughput_root(config)
     timing_device = device or config.runtime.device
     if warmup_datasets > 0:
         _consume_generation(
             config,
             num_datasets=warmup_datasets,
-            seed=throughput_root.child_seed("warmup"),
+            seed=_throughput_warmup_seed(config),
             device=device,
         )
 
     _synchronize_accelerator(timing_device)
     start = time.perf_counter()
+    start_cpu = time.process_time()
     for bundle in iter_throughput_measure_bundles(
         config,
         num_datasets=num_datasets,
@@ -199,6 +210,7 @@ def run_throughput_benchmark(
             on_bundle(bundle)
     _synchronize_accelerator(timing_device)
     elapsed = time.perf_counter() - start
+    cpu_time_seconds = time.process_time() - start_cpu
     dps = num_datasets / elapsed if elapsed > 0 else 0.0
     dpm = dps * SECONDS_PER_MINUTE
     return {
@@ -206,6 +218,7 @@ def run_throughput_benchmark(
         "num_datasets": num_datasets,
         "warmup_datasets": warmup_datasets,
         "elapsed_seconds": elapsed,
+        "cpu_time_seconds": cpu_time_seconds,
         "datasets_per_second": dps,
         "datasets_per_minute": dpm,
         "slo_pass_100_datasets_per_min": dpm >= THROUGHPUT_SLO_DATASETS_PER_MINUTE,
