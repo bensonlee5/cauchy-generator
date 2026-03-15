@@ -208,7 +208,7 @@ def _build_validation_phases(out_root: Path, *, python_executable: str) -> list[
                         "--suite",
                         "standard",
                         "--hardware-policy",
-                        "cuda_tiered_v1",
+                        "none",
                         "--out-dir",
                         str(out_dir),
                     ],

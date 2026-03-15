@@ -7,6 +7,7 @@ from typing import Any
 
 from dagzoo.config import GeneratorConfig
 from dagzoo.core.fixed_layout.runtime import (
+    CanonicalFixedLayoutRun,
     _generate_batch_with_plan_iter,
     prepare_canonical_fixed_layout_run,
 )
@@ -134,9 +135,9 @@ def generate_batch_iter(
 ) -> Iterator[DatasetBundle]:
     """Yield datasets from one canonical fixed-layout run.
 
-    Classification runs may validate replayability for the requested run before
-    the first bundle is emitted so canonical batches do not fail after partial
-    output.
+    Classification runs emit bundles as soon as fixed-layout generation succeeds
+    for each dataset. A later dataset may still exhaust the retry budget after
+    earlier bundles have already been yielded.
     """
 
     if num_datasets < 0:
@@ -151,6 +152,16 @@ def generate_batch_iter(
         seed=seed,
         device=device,
     )
+    yield from _iter_prepared_canonical_batch_iter(prepared, num_datasets=num_datasets)
+
+
+def _iter_prepared_canonical_batch_iter(
+    prepared: CanonicalFixedLayoutRun,
+    *,
+    num_datasets: int,
+) -> Iterator[DatasetBundle]:
+    """Yield annotated bundles from one already-prepared canonical fixed-layout run."""
+
     for dataset_index, bundle in enumerate(
         _generate_batch_with_plan_iter(
             prepared.config,
@@ -158,7 +169,6 @@ def generate_batch_iter(
             num_datasets=num_datasets,
             seed=prepared.run_seed,
             batch_size=prepared.batch_size,
-            classification_attempt_plan=prepared.classification_attempt_plan,
         )
     ):
         yield _annotate_canonical_batch_metadata(

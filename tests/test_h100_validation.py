@@ -27,6 +27,8 @@ def test_build_validation_phases_orders_primary_and_feature_runs(tmp_path, monke
     ]
     assert phases[1].require_telemetry is True
     assert phases[3].target_cells == 160_000_000
+    assert "--hardware-policy" in phases[3].command
+    assert phases[3].command[phases[3].command.index("--hardware-policy") + 1] == "none"
     assert (
         tmp_path / "generated_configs" / "benchmark_cuda_h100_saturation_160000000.yaml"
     ).exists()

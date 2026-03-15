@@ -55,7 +55,7 @@ def test_hardware_policy_cuda_tiered_applied_when_h100_profile() -> None:
     assert cfg.dataset.n_train == original_train
     assert effective.dataset.n_train >= 4096
     assert effective.benchmark.preset_name == "cuda_h100_auto"
-    assert effective.runtime.fixed_layout_target_cells == 160_000_000
+    assert effective.runtime.fixed_layout_target_cells == 240_000_000
 
 
 @pytest.mark.parametrize(
@@ -106,7 +106,7 @@ def test_hardware_policy_cuda_tiered_applied_when_h100_profile() -> None:
             512,
             5000,
             50,
-            160_000_000,
+            240_000_000,
         ),
     ],
 )

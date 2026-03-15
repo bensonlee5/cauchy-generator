@@ -12,7 +12,8 @@ from dagzoo.bench.constants import (
     THROUGHPUT_SLO_DATASETS_PER_MINUTE,
 )
 from dagzoo.config import GeneratorConfig, clone_generator_config
-from dagzoo.core.dataset import generate_batch_iter
+from dagzoo.core.dataset import _iter_prepared_canonical_batch_iter, generate_batch_iter
+from dagzoo.core.fixed_layout.runtime import prepare_canonical_fixed_layout_run
 from dagzoo.hardware import detect_hardware
 from dagzoo.hardware_policy import (
     resolve_cuda_fixed_layout_target_cells_limits,
@@ -171,12 +172,13 @@ def iter_throughput_measure_bundles(
 ) -> Iterator[DatasetBundle]:
     """Yield the deterministic measured corpus used by throughput benchmarks."""
 
-    yield from generate_batch_iter(
+    prepared = prepare_canonical_fixed_layout_run(
         config,
         num_datasets=num_datasets,
         seed=_throughput_measure_seed(config),
         device=device,
     )
+    yield from _iter_prepared_canonical_batch_iter(prepared, num_datasets=num_datasets)
 
 
 def run_throughput_benchmark(
@@ -201,11 +203,16 @@ def run_throughput_benchmark(
     _synchronize_accelerator(timing_device)
     start = time.perf_counter()
     start_cpu = time.process_time()
-    for bundle in iter_throughput_measure_bundles(
+    prepared = prepare_canonical_fixed_layout_run(
         config,
         num_datasets=num_datasets,
+        seed=_throughput_measure_seed(config),
         device=device,
-    ):
+    )
+    _synchronize_accelerator(timing_device)
+    prepare_elapsed_seconds = time.perf_counter() - start
+    prepare_cpu_time_seconds = time.process_time() - start_cpu
+    for bundle in _iter_prepared_canonical_batch_iter(prepared, num_datasets=num_datasets):
         if on_bundle is not None:
             on_bundle(bundle)
     _synchronize_accelerator(timing_device)
@@ -219,6 +226,8 @@ def run_throughput_benchmark(
         "warmup_datasets": warmup_datasets,
         "elapsed_seconds": elapsed,
         "cpu_time_seconds": cpu_time_seconds,
+        "prepare_elapsed_seconds": prepare_elapsed_seconds,
+        "prepare_cpu_time_seconds": prepare_cpu_time_seconds,
         "datasets_per_second": dps,
         "datasets_per_minute": dpm,
         "slo_pass_100_datasets_per_min": dpm >= THROUGHPUT_SLO_DATASETS_PER_MINUTE,

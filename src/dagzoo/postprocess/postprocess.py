@@ -130,10 +130,37 @@ def _has_at_least_two_classes(y: torch.Tensor) -> bool:
     return bool(torch.min(y_i64) != torch.max(y_i64))
 
 
-def _postprocess_classification_labels(
+def _sample_label_permutation(
+    *,
+    num_classes: int,
+    keyed_rng: KeyedRng,
+    device: str,
+) -> torch.Tensor:
+    """Sample one deterministic class-label permutation with device-local preference."""
+
+    preferred_device = str(device).strip().lower()
+    if preferred_device == "cuda":
+        try:
+            return torch.randperm(
+                num_classes,
+                generator=keyed_rng.keyed("label_permutation").torch_rng(device="cuda"),
+                device="cuda",
+            )
+        except Exception:
+            pass
+    return torch.randperm(
+        num_classes,
+        generator=keyed_rng.keyed("label_permutation").torch_rng(device="cpu"),
+        device="cpu",
+    )
+
+
+def _postprocess_classification_labels_with_permutation_device(
     y_train: torch.Tensor,
     y_test: torch.Tensor,
     keyed_rng: KeyedRng,
+    *,
+    permutation_device: str,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Remap classification labels into dense space with deterministic permutation."""
 
@@ -142,12 +169,13 @@ def _postprocess_classification_labels(
     classes, inverse = torch.unique(y_all_original, sorted=True, return_inverse=True)
     y_all_original_dense = inverse.to(torch.int64)
 
-    perm_dense_cpu = torch.randperm(
-        classes.numel(),
-        generator=keyed_rng.keyed("label_permutation").torch_rng(device="cpu"),
-        device="cpu",
+    perm_dense = _sample_label_permutation(
+        num_classes=classes.numel(),
+        keyed_rng=keyed_rng,
+        device=permutation_device,
     )
-    perm_dense = perm_dense_cpu.to(device=inverse.device)
+    if perm_dense.device != inverse.device:
+        perm_dense = perm_dense.to(device=inverse.device)
     y_all_permuted_dense = perm_dense[inverse].to(torch.int64)
     y_train_candidate = y_all_permuted_dense[:n_train]
     y_test_candidate = y_all_permuted_dense[n_train:]
@@ -159,6 +187,44 @@ def _postprocess_classification_labels(
     else:
         y_all_dense = y_all_permuted_dense
     return y_all_dense[:n_train], y_all_dense[n_train:]
+
+
+def _postprocess_classification_labels(
+    y_train: torch.Tensor,
+    y_test: torch.Tensor,
+    keyed_rng: KeyedRng,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Remap scalar classification labels with the historical CPU permutation path."""
+
+    return _postprocess_classification_labels_with_permutation_device(
+        y_train,
+        y_test,
+        keyed_rng,
+        permutation_device="cpu",
+    )
+
+
+def _postprocess_classification_label_batch(
+    y_train: torch.Tensor,
+    y_test: torch.Tensor,
+    *,
+    postprocess_roots: list[KeyedRng],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Remap one fixed-schema classification batch while preferring device-local permutations."""
+
+    permutation_device = "cuda" if str(y_train.device.type) == "cuda" else "cpu"
+    y_train_batches: list[torch.Tensor] = []
+    y_test_batches: list[torch.Tensor] = []
+    for batch_index, keyed_rng in enumerate(postprocess_roots):
+        y_train_p, y_test_p = _postprocess_classification_labels_with_permutation_device(
+            y_train[batch_index],
+            y_test[batch_index],
+            keyed_rng,
+            permutation_device=permutation_device,
+        )
+        y_train_batches.append(y_train_p)
+        y_test_batches.append(y_test_p)
+    return torch.stack(y_train_batches), torch.stack(y_test_batches)
 
 
 @overload
@@ -278,18 +344,12 @@ def postprocess_fixed_schema_batch(
         y_train_p, y_test_p = _postprocess_regression_targets(y_train, y_test)
         return x_train_p, y_train_p, x_test_p, y_test_p
 
-    y_train_batches: list[torch.Tensor] = []
-    y_test_batches: list[torch.Tensor] = []
-    for batch_index, keyed_rng in enumerate(postprocess_roots):
-        y_train_p, y_test_p = _postprocess_classification_labels(
-            y_train[batch_index],
-            y_test[batch_index],
-            keyed_rng,
-        )
-        y_train_batches.append(y_train_p)
-        y_test_batches.append(y_test_p)
-
-    return x_train_p, torch.stack(y_train_batches), x_test_p, torch.stack(y_test_batches)
+    y_train_p, y_test_p = _postprocess_classification_label_batch(
+        y_train,
+        y_test,
+        postprocess_roots=postprocess_roots,
+    )
+    return x_train_p, y_train_p, x_test_p, y_test_p
 
 
 def inject_missingness(

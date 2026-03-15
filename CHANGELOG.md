@@ -10,6 +10,26 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.10.3] - 2026-03-15
+
+### Changed
+
+- Canonical fixed-layout classification runs now emit datasets as they
+  complete instead of prevalidating the entire run before the first bundle, so
+  late invalid-class-split failures no longer block earlier successful output.
+- Fixed-layout grouped generation now reuses the first split-resolution pass
+  during chunk finalization and retries only the dataset offsets that actually
+  fail, reducing CPU-heavy preparation overhead on CUDA paths.
+- Throughput and suite benchmark artifacts now record preparation-stage wall
+  time and CPU time separately from total generation time, and the suite
+  report surfaces that preparation evidence directly.
+- Fixed-schema batched classification postprocessing now prefers device-local
+  label permutations on CUDA batches instead of always generating the class
+  permutation on CPU.
+- H100 hardware defaults now target `240_000_000` fixed-layout cells, and the
+  saturation validation runner keeps its explicit target-cell sweep by running
+  those generated configs without the tiered hardware policy floor.
+
 ## [0.10.2] - 2026-03-15
 
 ### Changed

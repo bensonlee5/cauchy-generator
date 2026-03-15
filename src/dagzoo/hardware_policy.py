@@ -15,7 +15,7 @@ _FIXED_LAYOUT_TARGET_CELLS_PER_GB = 2_000_000
 _FIXED_LAYOUT_TARGET_CELLS_MIN_BY_TIER: dict[str, int] = {
     "cuda_desktop": 32_000_000,
     "cuda_datacenter": 64_000_000,
-    "cuda_h100": 96_000_000,
+    "cuda_h100": 240_000_000,
     "cuda_unknown_fallback": 32_000_000,
 }
 _FIXED_LAYOUT_TARGET_CELLS_MAX_BY_TIER: dict[str, int] = {
@@ -27,7 +27,7 @@ _FIXED_LAYOUT_TARGET_CELLS_MAX_BY_TIER: dict[str, int] = {
 _FIXED_LAYOUT_TARGET_CELLS_DEFAULT_BY_TIER: dict[str, int] = {
     "cuda_desktop": 48_000_000,
     "cuda_datacenter": 96_000_000,
-    "cuda_h100": 128_000_000,
+    "cuda_h100": 240_000_000,
     "cuda_unknown_fallback": 48_000_000,
 }
 

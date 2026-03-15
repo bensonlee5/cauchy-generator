@@ -304,6 +304,8 @@ def run_preset_benchmark(
     )
     generation_elapsed_seconds = float(result.get("elapsed_seconds", 0.0) or 0.0)
     generation_cpu_time_seconds = float(result.get("cpu_time_seconds", 0.0) or 0.0)
+    prepare_elapsed_seconds = float(result.get("prepare_elapsed_seconds", 0.0) or 0.0)
+    prepare_cpu_time_seconds = float(result.get("prepare_cpu_time_seconds", 0.0) or 0.0)
     sampled_bundles = stage_sample_collector.bundles
     stage_sample_datasets = len(sampled_bundles)
     write_stage_measurement = (
@@ -392,6 +394,12 @@ def run_preset_benchmark(
     result["diagnostics_enabled"] = diagnostics_enabled
     result["diagnostics_artifacts"] = None
     result["generation_datasets_per_minute"] = generation_dpm
+    result["prepare_elapsed_seconds"] = prepare_elapsed_seconds
+    result["prepare_cpu_time_seconds"] = prepare_cpu_time_seconds
+    result["prepare_cpu_busy_pct_of_wall"] = _cpu_busy_pct_of_wall(
+        cpu_time_seconds=prepare_cpu_time_seconds,
+        elapsed_seconds=prepare_elapsed_seconds,
+    )
     result["generation_elapsed_seconds"] = generation_elapsed_seconds
     result["generation_cpu_time_seconds"] = generation_cpu_time_seconds
     result["generation_cpu_busy_pct_of_wall"] = _cpu_busy_pct_of_wall(

@@ -455,6 +455,8 @@ def test_run_benchmark_suite_emits_stage_and_filter_pressure_metrics(
             "preset": "cpu_test",
             "num_datasets": num_datasets,
             "warmup_datasets": warmup_datasets,
+            "prepare_elapsed_seconds": 0.2,
+            "prepare_cpu_time_seconds": 0.1,
             "elapsed_seconds": elapsed,
             "datasets_per_second": dps,
             "datasets_per_minute": dpm,
@@ -522,6 +524,9 @@ def test_run_benchmark_suite_emits_stage_and_filter_pressure_metrics(
 
     result = summary["preset_results"][0]
     assert result["generation_datasets_per_minute"] == pytest.approx(120.0)
+    assert result["prepare_elapsed_seconds"] == pytest.approx(0.2)
+    assert result["prepare_cpu_time_seconds"] == pytest.approx(0.1)
+    assert result["prepare_cpu_busy_pct_of_wall"] == pytest.approx(50.0)
     assert result["generation_elapsed_seconds"] == pytest.approx(1.0)
     assert result["generation_cpu_time_seconds"] == pytest.approx(0.0)
     assert result["generation_cpu_busy_pct_of_wall"] == pytest.approx(0.0)
@@ -1777,6 +1782,9 @@ def test_write_suite_markdown_profile_table_includes_shift_and_noise_columns(
                 "peak_rss_mb": 10.0,
                 "reproducibility_match": True,
                 "reproducibility_workload_match": False,
+                "prepare_elapsed_seconds": 0.4,
+                "prepare_cpu_time_seconds": 0.2,
+                "prepare_cpu_busy_pct_of_wall": 50.0,
                 "generation_elapsed_seconds": 1.0,
                 "generation_cpu_time_seconds": 0.3,
                 "generation_cpu_busy_pct_of_wall": 30.0,
@@ -1813,6 +1821,7 @@ def test_write_suite_markdown_profile_table_includes_shift_and_noise_columns(
     assert "| Shift |" in text
     assert "| Noise |" in text
     assert "| Repro |" in text
+    assert "- Preparation:" in text
     assert "| Workload |" in text
     assert "Filter Accepted/min" in text
     assert "Filter Accept % (dataset)" in text

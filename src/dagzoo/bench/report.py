@@ -132,6 +132,12 @@ def _build_bottleneck_evidence_lines(preset_results: list[dict[str, Any]]) -> li
     for result in preset_results:
         lines.append(f"### {result.get('preset_key', '-')}")
         lines.append(
+            "- Preparation: "
+            f"`wall={_format_float(result.get('prepare_elapsed_seconds'), 3)}s`, "
+            f"`cpu={_format_float(result.get('prepare_cpu_time_seconds'), 3)}s`, "
+            f"`cpu_busy_pct={_format_float(result.get('prepare_cpu_busy_pct_of_wall'), 2)}`"
+        )
+        lines.append(
             "- Generation: "
             f"`wall={_format_float(result.get('generation_elapsed_seconds'), 3)}s`, "
             f"`cpu={_format_float(result.get('generation_cpu_time_seconds'), 3)}s`, "

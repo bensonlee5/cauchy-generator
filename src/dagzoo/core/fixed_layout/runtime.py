@@ -19,6 +19,8 @@ from dagzoo.core.generation_runtime import (
     _build_fixed_schema_finalization_context,
     _finalize_generated_chunk_preserve_schema,
     _finalize_generated_tensors,
+    _FixedSchemaFinalizationContext,
+    _resolve_split_indices,
 )
 from dagzoo.core.layout import _sample_layout
 from dagzoo.core.layout_types import LayoutPlan
@@ -73,7 +75,6 @@ class CanonicalFixedLayoutRun:
     requested_device: str
     resolved_device: str
     batch_size: int
-    classification_attempt_plan: tuple[int, ...] | None = None
 
 
 def _sample_fixed_layout_candidate(
@@ -155,7 +156,6 @@ def prepare_canonical_fixed_layout_run(
     rows_seed = run_root.child_seed("rows")
     attempts = max(1, int(realized_config.filter.max_attempts))
     last_error = "unknown"
-    classification_attempt_plan: tuple[int, ...] | None = None
     for attempt in range(attempts):
         candidate_root = run_root.keyed("plan_candidate", attempt)
         plan = _sample_fixed_layout_candidate(
@@ -171,26 +171,7 @@ def prepare_canonical_fixed_layout_run(
             batch_size=batch_size,
             target_cells=_effective_fixed_layout_target_cells(realized_config),
         )
-        if str(realized_config.dataset.task) != "classification":
-            break
-        attempt_plan = _fixed_layout_plan_classification_attempt_plan(
-            realized_config,
-            plan=plan,
-            requested_device=requested_device,
-            resolved_device=resolved_device,
-            run_root=run_root,
-            num_datasets=max(1, int(num_datasets)),
-            batch_size=effective_batch_size,
-        )
-        if attempt_plan is not None:
-            classification_attempt_plan = attempt_plan
-            break
-        last_error = "invalid_class_split"
-        if attempt == attempts - 1:
-            raise ValueError(
-                "Failed to prepare a replayable canonical fixed-layout classification run "
-                f"after {attempts} attempts. Last reason: {last_error}."
-            )
+        break
     else:
         raise ValueError(
             "Failed to prepare a fixed-layout run after "
@@ -203,7 +184,6 @@ def prepare_canonical_fixed_layout_run(
         requested_device=str(requested_device),
         resolved_device=str(resolved_device),
         batch_size=int(effective_batch_size),
-        classification_attempt_plan=classification_attempt_plan,
     )
 
 
@@ -484,6 +464,7 @@ def _generate_fixed_layout_bundle_with_retries(
     resolved_device: str,
     preserve_feature_schema: bool,
     start_attempt: int = 0,
+    finalization_context: _FixedSchemaFinalizationContext | None = None,
 ) -> DatasetBundle:
     dataset_seed = dataset_root.child_seed()
     shift_params = resolve_shift_runtime_params(config)
@@ -537,6 +518,7 @@ def _generate_fixed_layout_bundle_with_retries(
                 noise_runtime_selection=noise_runtime_selection,
                 dtype=dtype,
                 preserve_feature_schema=preserve_feature_schema,
+                finalization_context=finalization_context,
             )
         except InvalidClassSplitError:
             last_error = "invalid_class_split"
@@ -601,9 +583,8 @@ def _generate_batch_with_plan_iter(
             if classification_attempt_plan is not None
             else [0] * chunk_size
         )
-        raw_batch_by_offset: list[tuple[_GroupedRawBatch, int, DatasetBundle | None] | None] = [
-            None
-        ] * chunk_size
+        raw_batch_by_offset: list[DatasetBundle | None] = [None] * chunk_size
+        finalized_offsets: set[int] = set()
         zero_attempt_offsets = [
             offset for offset, attempt in enumerate(chunk_attempts) if int(attempt) == 0
         ]
@@ -613,10 +594,11 @@ def _generate_batch_with_plan_iter(
         retry_offset_set = set(retry_offsets)
 
         if zero_attempt_offsets:
+            zero_attempt_dataset_roots = [dataset_roots[offset] for offset in zero_attempt_offsets]
             grouped_noise_runtime = _group_noise_runtime_chunk(
                 config,
-                dataset_roots=dataset_roots,
-                attempts=[0] * chunk_size,
+                dataset_roots=zero_attempt_dataset_roots,
+                attempts=[0] * len(zero_attempt_dataset_roots),
             )
         else:
             grouped_noise_runtime = []
@@ -630,9 +612,28 @@ def _generate_batch_with_plan_iter(
             noise_sigma_multiplier=float(shift_params.variance_sigma_multiplier),
         )
         for grouped_batch in grouped_raw_batches:
-            group_dataset_roots = [
-                dataset_roots[int(chunk_offset)] for chunk_offset in grouped_batch.chunk_offsets
+            group_dataset_offsets = [
+                zero_attempt_offsets[int(chunk_offset)]
+                for chunk_offset in grouped_batch.chunk_offsets
             ]
+            group_dataset_roots = [
+                dataset_roots[int(chunk_offset)] for chunk_offset in group_dataset_offsets
+            ]
+            resolved_split_indices: list[tuple[torch.Tensor, torch.Tensor] | None] | None = None
+            if str(config.dataset.task) == "classification":
+                resolved_split_indices = []
+                for local_index, dataset_root in enumerate(group_dataset_roots):
+                    attempt_root = dataset_root.keyed("attempt", grouped_batch.attempt)
+                    try:
+                        split_indices = _resolve_split_indices(
+                            grouped_batch.y_batch[local_index],
+                            task=config.dataset.task,
+                            n_train=int(plan.n_train),
+                            keyed_rng=attempt_root.keyed("split"),
+                        )
+                    except InfeasibleStratifiedSplitError:
+                        split_indices = None
+                    resolved_split_indices.append(split_indices)
             finalized_group = _finalize_generated_chunk_preserve_schema(
                 config,
                 plan.layout,
@@ -651,15 +652,13 @@ def _generate_batch_with_plan_iter(
                 aux_meta_batch=grouped_batch.aux_meta_batch,
                 noise_runtime_selection=grouped_batch.selection,
                 dtype=dtype,
+                resolved_split_indices=resolved_split_indices,
             )
-            for local_index, chunk_offset in enumerate(grouped_batch.chunk_offsets):
-                raw_batch_by_offset[int(chunk_offset)] = (
-                    grouped_batch,
-                    int(local_index),
-                    finalized_group[local_index],
-                )
+            for local_index, chunk_offset in enumerate(group_dataset_offsets):
+                offset = int(chunk_offset)
+                raw_batch_by_offset[offset] = finalized_group[local_index]
+                finalized_offsets.add(offset)
         for offset, dataset_root in enumerate(dataset_roots):
-            raw_batch_entry = raw_batch_by_offset[offset]
             if offset in retry_offset_set:
                 bundle = _generate_fixed_layout_bundle_with_retries(
                     config,
@@ -669,6 +668,7 @@ def _generate_batch_with_plan_iter(
                     resolved_device=validated_resolved_device,
                     preserve_feature_schema=True,
                     start_attempt=chunk_attempts[offset],
+                    finalization_context=finalization_context,
                 )
                 _annotate_fixed_layout_metadata(bundle, plan=plan)
                 schema = _extract_emitted_schema_signature(bundle)
@@ -682,9 +682,9 @@ def _generate_batch_with_plan_iter(
                 yield bundle
                 continue
 
-            if raw_batch_entry is None:
+            if offset not in finalized_offsets:
                 raise RuntimeError("Missing grouped raw batch entry for fixed-layout chunk offset.")
-            _grouped_batch, _local_index, grouped_bundle = raw_batch_entry
+            grouped_bundle = raw_batch_by_offset[offset]
             if grouped_bundle is None:
                 grouped_bundle = _generate_fixed_layout_bundle_with_retries(
                     config,
@@ -693,7 +693,8 @@ def _generate_batch_with_plan_iter(
                     requested_device=requested_device,
                     resolved_device=validated_resolved_device,
                     preserve_feature_schema=True,
-                    start_attempt=0,
+                    start_attempt=max(1, int(chunk_attempts[offset])),
+                    finalization_context=finalization_context,
                 )
             _annotate_fixed_layout_metadata(grouped_bundle, plan=plan)
             schema = _extract_emitted_schema_signature(grouped_bundle)
