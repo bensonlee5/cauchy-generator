@@ -6,7 +6,7 @@ import csv
 import datetime as dt
 import subprocess
 import threading
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -210,9 +210,3 @@ def summarize_gpu_telemetry(samples: list[GpuTelemetrySample]) -> dict[str, Any]
         "max_memory_used_mb": max(mem_used),
         "per_gpu": per_gpu_summary,
     }
-
-
-def telemetry_samples_to_json(samples: list[GpuTelemetrySample]) -> list[dict[str, Any]]:
-    """Serialize structured GPU telemetry samples for JSON artifacts."""
-
-    return [asdict(sample) for sample in samples]
