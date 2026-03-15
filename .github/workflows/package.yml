@@ -28,6 +28,7 @@ jobs:
       contents: read
     outputs:
       should_publish: ${{ steps.plan.outputs.should_publish }}
+      tag_name: ${{ steps.plan.outputs.tag_name }}
       version: ${{ steps.plan.outputs.version }}
       source_ref: ${{ steps.target.outputs.source_ref }}
       source_sha: ${{ steps.source.outputs.source_sha }}
@@ -137,9 +138,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
 
   release:
-    if: >-
-      needs.resolve-release.outputs.should_publish == 'true'
-      && startsWith(github.ref, 'refs/tags/v')
+    if: needs.resolve-release.outputs.should_publish == 'true'
     needs:
       - resolve-release
       - build
@@ -160,3 +159,6 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+          name: ${{ needs.resolve-release.outputs.tag_name }}
+          tag_name: ${{ needs.resolve-release.outputs.tag_name }}
+          target_commitish: ${{ needs.resolve-release.outputs.source_sha }}
