@@ -25,13 +25,19 @@ from dagzoo.core.node_pipeline import apply_node_pipeline
 from dagzoo.functions.random_functions import apply_random_function
 from dagzoo.rng import KeyedRng
 
+from .runtime_support import _synchronize_accelerator
 
-def _time_ms(func: Callable[[], None], repeats: int) -> float:
+
+def _time_ms(func: Callable[[], None], repeats: int, *, device: str | None = None) -> float:
     """Run ``func`` repeatedly and return the average runtime in milliseconds."""
 
+    if device is not None:
+        _synchronize_accelerator(device)
     start = time.perf_counter()
     for _ in range(max(1, repeats)):
         func()
+    if device is not None:
+        _synchronize_accelerator(device)
     elapsed = time.perf_counter() - start
     return (elapsed / max(1, repeats)) * MILLISECONDS_PER_SECOND
 
@@ -117,7 +123,9 @@ def run_microbenchmarks(
                 device=device,
             )
 
-        generate_one_ms = _time_ms(run_generate_one, repeats)
+        generate_one_ms = _time_ms(
+            run_generate_one, repeats, device=device or micro_cfg.runtime.device
+        )
     else:
         generate_one_ms = None
 

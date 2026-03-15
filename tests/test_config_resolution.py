@@ -280,13 +280,13 @@ def test_resolve_generate_config_applies_rows_override_after_policy_revalidation
     assert resolved.config.dataset.rows.start == 2000
     assert resolved.config.dataset.rows.stop == 60000
     assert resolved.config.dataset.n_test == 1024
-    assert resolved.config.runtime.fixed_layout_target_cells == 160_000_000
+    assert resolved.config.runtime.fixed_layout_target_cells == 240_000_000
 
     trace = serialize_resolution_events(resolved.trace_events)
     assert any(
         event["path"] == "runtime.fixed_layout_target_cells"
         and event["source"] == "hardware_policy.cuda_tiered_v1"
-        and event["new_value"] == 160_000_000
+        and event["new_value"] == 240_000_000
         for event in trace
     )
 
@@ -311,13 +311,13 @@ def test_resolve_generate_config_applies_default_cuda_fixed_layout_floor_without
         diagnostics_enabled=False,
     )
 
-    assert resolved.config.runtime.fixed_layout_target_cells == 160_000_000
+    assert resolved.config.runtime.fixed_layout_target_cells == 240_000_000
     trace = serialize_resolution_events(resolved.trace_events)
     assert any(
         event["path"] == "runtime.fixed_layout_target_cells"
         and event["source"] == "hardware.default_cuda_fixed_layout_target_cells"
         and event["old_value"] is None
-        and event["new_value"] == 160_000_000
+        and event["new_value"] == 240_000_000
         for event in trace
     )
 
@@ -493,7 +493,7 @@ def test_resolve_benchmark_preset_config_preserves_dataset_rows_after_policy_tra
     assert resolved.config.dataset.rows.stop == 60000
     assert resolved.requested_device == "cuda"
     assert resolved.config.dataset.n_test == 1024
-    assert resolved.config.runtime.fixed_layout_target_cells == 160_000_000
+    assert resolved.config.runtime.fixed_layout_target_cells == 240_000_000
 
 
 def test_resolve_benchmark_preset_config_preserves_explicit_cuda_budget_without_policy(
@@ -539,12 +539,12 @@ def test_resolve_benchmark_preset_config_applies_default_cuda_floor_when_unset(
     )
 
     assert resolved.requested_device == "cuda"
-    assert resolved.config.runtime.fixed_layout_target_cells == 160_000_000
+    assert resolved.config.runtime.fixed_layout_target_cells == 240_000_000
     trace = serialize_resolution_events(resolved.trace_events)
     assert any(
         event["path"] == "runtime.fixed_layout_target_cells"
         and event["source"] == "hardware.default_cuda_fixed_layout_target_cells"
         and event["old_value"] is None
-        and event["new_value"] == 160_000_000
+        and event["new_value"] == 240_000_000
         for event in trace
     )

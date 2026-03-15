@@ -166,7 +166,7 @@ Trace artifacts are ordered lists of field-level override events:
 - path: runtime.fixed_layout_target_cells
   source: hardware.default_cuda_fixed_layout_target_cells
   old_value: 32000000
-  new_value: 160000000
+  new_value: 240000000
 ```
 
 Fields:

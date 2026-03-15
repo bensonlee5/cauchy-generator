@@ -60,13 +60,14 @@ from dagzoo.bench.runtime_support import (
     _peak_rss_mb,
     _preset_counts,
     _sanitize_preset_key,
+    _synchronize_accelerator,
 )
 from dagzoo.bench.stage_metrics import (
     StageSampleCollector,
     measure_filter_stage_metrics,
-    measure_write_datasets_per_minute,
+    measure_write_stage_metrics,
 )
-from dagzoo.bench.throughput import run_throughput_benchmark
+from dagzoo.bench.throughput import _throughput_measure_seed, run_throughput_benchmark
 from dagzoo.config import (
     MISSINGNESS_MECHANISM_NONE,
     NOISE_FAMILY_GAUSSIAN,
@@ -79,7 +80,11 @@ from dagzoo.core.config_resolution import (
     serialize_resolution_events,
 )
 from dagzoo.core.dataset import generate_batch_iter
-from dagzoo.core.fixed_layout.runtime import realize_generation_config_for_run
+from dagzoo.core.fixed_layout.prepare import normalize_fixed_layout_target_cells
+from dagzoo.core.fixed_layout.runtime import (
+    prepare_canonical_fixed_layout_run,
+    realize_generation_config_for_run,
+)
 from dagzoo.core.shift import resolve_shift_runtime_params
 from dagzoo.diagnostics import (
     CoverageAggregator,
@@ -112,6 +117,46 @@ def _collect_reproducibility(
         "reproducibility_match": bool(sig_a == sig_b),
         "reproducibility_workload_signature": workload_a,
         "reproducibility_workload_match": bool(workload_a == workload_b),
+    }
+
+
+def _cpu_busy_pct_of_wall(*, cpu_time_seconds: float, elapsed_seconds: float) -> float:
+    """Return process CPU time as a percentage of wall time for one stage."""
+
+    if elapsed_seconds <= 0.0:
+        return 0.0
+    return float(cpu_time_seconds) / float(elapsed_seconds) * 100.0
+
+
+def _build_fixed_layout_evidence(
+    config: GeneratorConfig,
+    *,
+    device: str | None,
+    num_datasets: int,
+) -> dict[str, int]:
+    """Resolve fixed-layout batch and chunking evidence for one benchmark run."""
+
+    sample_n = max(1, int(num_datasets))
+    prepared = prepare_canonical_fixed_layout_run(
+        config,
+        num_datasets=sample_n,
+        seed=_throughput_measure_seed(config),
+        device=device,
+    )
+    per_dataset_cells = int(prepared.plan.n_train + prepared.plan.n_test) * max(
+        1, int(prepared.plan.layout.n_features)
+    )
+    batch_size = max(1, int(prepared.batch_size))
+    chunk_count = ((sample_n - 1) // batch_size) + 1
+    tail_chunk_size = sample_n - ((chunk_count - 1) * batch_size)
+    return {
+        "fixed_layout_target_cells_effective": int(
+            normalize_fixed_layout_target_cells(prepared.config.runtime.fixed_layout_target_cells)
+        ),
+        "fixed_layout_per_dataset_cells": int(per_dataset_cells),
+        "fixed_layout_realized_batch_size": int(batch_size),
+        "fixed_layout_chunk_count": int(chunk_count),
+        "fixed_layout_tail_chunk_size": int(max(1, tail_chunk_size)),
     }
 
 
@@ -178,6 +223,7 @@ def run_preset_benchmark(
 
     rss_before = _peak_rss_mb() if collect_memory else 0.0
     if collect_memory and hw.backend == "cuda" and torch.cuda.is_available():
+        _synchronize_accelerator(requested_device)
         with contextlib.suppress(Exception):
             torch.cuda.reset_peak_memory_stats()
 
@@ -204,6 +250,11 @@ def run_preset_benchmark(
 
     generation_config = _copy_runtime_config(config)
     generation_config.filter.enabled = False
+    fixed_layout_evidence = _build_fixed_layout_evidence(
+        generation_config,
+        device=requested_device,
+        num_datasets=num_datasets,
+    )
 
     def _build_throughput_on_bundle_callback(
         *,
@@ -251,13 +302,18 @@ def run_preset_benchmark(
         device=requested_device,
         on_bundle=on_bundle_callback,
     )
+    generation_elapsed_seconds = float(result.get("elapsed_seconds", 0.0) or 0.0)
+    generation_cpu_time_seconds = float(result.get("cpu_time_seconds", 0.0) or 0.0)
+    prepare_elapsed_seconds = float(result.get("prepare_elapsed_seconds", 0.0) or 0.0)
+    prepare_cpu_time_seconds = float(result.get("prepare_cpu_time_seconds", 0.0) or 0.0)
     sampled_bundles = stage_sample_collector.bundles
     stage_sample_datasets = len(sampled_bundles)
-    write_dpm = (
-        measure_write_datasets_per_minute(sampled_bundles, config=config)
+    write_stage_measurement = (
+        measure_write_stage_metrics(sampled_bundles, config=config)
         if sampled_bundles
-        else 0.0
+        else measure_write_stage_metrics([], config=config)
     )
+    write_dpm = float(getattr(write_stage_measurement, "datasets_per_minute", 0.0))
     filter_stage_enabled = bool(config.filter.enabled)
     filter_dpm: float | None
     if filter_stage_enabled:
@@ -338,9 +394,61 @@ def run_preset_benchmark(
     result["diagnostics_enabled"] = diagnostics_enabled
     result["diagnostics_artifacts"] = None
     result["generation_datasets_per_minute"] = generation_dpm
+    result["prepare_elapsed_seconds"] = prepare_elapsed_seconds
+    result["prepare_cpu_time_seconds"] = prepare_cpu_time_seconds
+    result["prepare_cpu_busy_pct_of_wall"] = _cpu_busy_pct_of_wall(
+        cpu_time_seconds=prepare_cpu_time_seconds,
+        elapsed_seconds=prepare_elapsed_seconds,
+    )
+    result["generation_elapsed_seconds"] = generation_elapsed_seconds
+    result["generation_cpu_time_seconds"] = generation_cpu_time_seconds
+    result["generation_cpu_busy_pct_of_wall"] = _cpu_busy_pct_of_wall(
+        cpu_time_seconds=generation_cpu_time_seconds,
+        elapsed_seconds=generation_elapsed_seconds,
+    )
+    result["raw_batch_elapsed_seconds"] = float(result.get("raw_batch_elapsed_seconds", 0.0) or 0.0)
+    result["raw_batch_cpu_time_seconds"] = float(
+        result.get("raw_batch_cpu_time_seconds", 0.0) or 0.0
+    )
+    result["node_apply_elapsed_seconds"] = float(
+        result.get("node_apply_elapsed_seconds", 0.0) or 0.0
+    )
+    result["node_apply_cpu_time_seconds"] = float(
+        result.get("node_apply_cpu_time_seconds", 0.0) or 0.0
+    )
+    result["converter_elapsed_seconds"] = float(result.get("converter_elapsed_seconds", 0.0) or 0.0)
+    result["converter_cpu_time_seconds"] = float(
+        result.get("converter_cpu_time_seconds", 0.0) or 0.0
+    )
+    result["feature_materialization_elapsed_seconds"] = float(
+        result.get("feature_materialization_elapsed_seconds", 0.0) or 0.0
+    )
+    result["feature_materialization_cpu_time_seconds"] = float(
+        result.get("feature_materialization_cpu_time_seconds", 0.0) or 0.0
+    )
     result["write_datasets_per_minute"] = float(write_dpm)
+    result["write_stage_elapsed_seconds"] = float(
+        getattr(write_stage_measurement, "elapsed_seconds", 0.0)
+    )
+    result["write_stage_cpu_time_seconds"] = float(
+        getattr(write_stage_measurement, "cpu_time_seconds", 0.0)
+    )
+    result["write_stage_bytes_written"] = int(getattr(write_stage_measurement, "bytes_written", 0))
+    result["write_stage_mib_per_second"] = float(
+        getattr(write_stage_measurement, "mib_per_second", 0.0)
+    )
     result["filter_datasets_per_minute"] = float(filter_dpm) if filter_dpm is not None else None
     result["filter_accepted_datasets_per_minute"] = filter_accepted_datasets_per_minute
+    result["filter_stage_elapsed_seconds"] = (
+        float(getattr(filter_stage_measurement, "elapsed_seconds", 0.0))
+        if filter_stage_measurement is not None
+        else None
+    )
+    result["filter_stage_cpu_time_seconds"] = (
+        float(getattr(filter_stage_measurement, "cpu_time_seconds", 0.0))
+        if filter_stage_measurement is not None
+        else None
+    )
     result["stage_sample_datasets"] = int(stage_sample_datasets)
     result["filter_stage_enabled"] = filter_stage_enabled
     result["total_attempts"] = int(throughput_pressure_summary["attempts_total"])
@@ -357,6 +465,7 @@ def run_preset_benchmark(
     result["filter_retry_dataset_count"] = filter_retry_dataset_count
     result["filter_retry_dataset_rate"] = filter_retry_dataset_rate
     result["estimated_attempts_per_minute"] = generation_dpm * mean_attempts_per_dataset
+    result.update(fixed_layout_evidence)
     result["missingness_guardrails"] = {"enabled": False}
     result["lineage_guardrails"] = {"enabled": False}
     result["shift_guardrails"] = {"enabled": False}
@@ -376,12 +485,40 @@ def run_preset_benchmark(
     if collect_memory:
         result["peak_rss_mb"] = max(0.0, _peak_rss_mb() - rss_before)
         if hw.backend == "cuda" and torch.cuda.is_available():
+            _synchronize_accelerator(requested_device)
             try:
-                result["peak_cuda_allocated_mb"] = torch.cuda.max_memory_allocated() / MIB
-                result["peak_cuda_reserved_mb"] = torch.cuda.max_memory_reserved() / MIB
+                allocated_mb = torch.cuda.max_memory_allocated() / MIB
+                reserved_mb = torch.cuda.max_memory_reserved() / MIB
+                total_memory_mb = (
+                    float(hw.total_memory_gb) * 1024.0
+                    if isinstance(hw.total_memory_gb, (int, float)) and hw.total_memory_gb > 0.0
+                    else None
+                )
+                result["peak_cuda_allocated_mb"] = allocated_mb
+                result["peak_cuda_reserved_mb"] = reserved_mb
+                result["peak_cuda_total_memory_mb"] = total_memory_mb
+                result["peak_cuda_allocated_pct_of_total_memory"] = (
+                    (float(allocated_mb) / float(total_memory_mb) * 100.0)
+                    if total_memory_mb is not None and total_memory_mb > 0.0
+                    else None
+                )
+                result["peak_cuda_reserved_pct_of_total_memory"] = (
+                    (float(reserved_mb) / float(total_memory_mb) * 100.0)
+                    if total_memory_mb is not None and total_memory_mb > 0.0
+                    else None
+                )
+                result["peak_cuda_headroom_mb"] = (
+                    max(0.0, float(total_memory_mb) - float(reserved_mb))
+                    if total_memory_mb is not None
+                    else None
+                )
             except Exception:
                 result["peak_cuda_allocated_mb"] = None
                 result["peak_cuda_reserved_mb"] = None
+                result["peak_cuda_total_memory_mb"] = None
+                result["peak_cuda_allocated_pct_of_total_memory"] = None
+                result["peak_cuda_reserved_pct_of_total_memory"] = None
+                result["peak_cuda_headroom_mb"] = None
 
     if collect_reproducibility:
         repro_n = min(num_datasets, max(1, int(config.benchmark.reproducibility_num_datasets)))

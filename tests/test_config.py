@@ -250,13 +250,24 @@ def test_load_benchmark_profiles() -> None:
     cfg_cpu = GeneratorConfig.from_yaml("configs/benchmark_cpu.yaml")
     cfg_desktop = GeneratorConfig.from_yaml("configs/benchmark_cuda_desktop.yaml")
     cfg_h100 = GeneratorConfig.from_yaml("configs/benchmark_cuda_h100.yaml")
+    cfg_h100_large = GeneratorConfig.from_yaml("configs/benchmark_cuda_h100_large_shape.yaml")
+    cfg_h100_saturation = GeneratorConfig.from_yaml("configs/benchmark_cuda_h100_saturation.yaml")
 
     assert cfg_cpu.runtime.device == "cpu"
     assert cfg_desktop.runtime.device == "cuda"
     assert cfg_h100.runtime.device == "cuda"
+    assert cfg_h100_large.runtime.device == "cuda"
+    assert cfg_h100_saturation.runtime.device == "cuda"
     assert cfg_cpu.runtime.fixed_layout_target_cells == 12_000_000
     assert cfg_desktop.runtime.fixed_layout_target_cells == 16_000_000
     assert cfg_h100.runtime.fixed_layout_target_cells == 32_000_000
+    assert cfg_h100_large.runtime.fixed_layout_target_cells == 32_000_000
+    assert cfg_h100_saturation.runtime.fixed_layout_target_cells == 32_000_000
+    assert cfg_h100_large.dataset.n_train == 8192
+    assert cfg_h100_large.dataset.n_test == 2048
+    assert cfg_h100_large.dataset.n_features_max == 256
+    assert cfg_h100_saturation.benchmark.num_datasets == 1500
+    assert cfg_h100_saturation.benchmark.warmup_datasets == 25
     assert "cpu" in cfg_h100.benchmark.presets
 
 

@@ -142,6 +142,6 @@ def _stratified_split_indices(
 def _classification_split_valid(y_train: torch.Tensor, y_test: torch.Tensor) -> bool:
     """Validate classification split constraints."""
 
-    train_classes = set(torch.unique(y_train).tolist())
-    test_classes = set(torch.unique(y_test).tolist())
-    return len(train_classes) >= 2 and train_classes == test_classes
+    train_classes = torch.unique(y_train.to(torch.int64), sorted=True)
+    test_classes = torch.unique(y_test.to(torch.int64), sorted=True)
+    return bool(train_classes.numel() >= 2 and torch.equal(train_classes, test_classes))

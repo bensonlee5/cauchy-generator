@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
+from dataclasses import replace
 from typing import Any
 
 import torch
@@ -42,9 +44,13 @@ from .batch_functions import (
 from .plan_types import (
     DEFAULT_FIXED_LAYOUT_EXECUTION_CONTRACT,
     CategoricalConverterPlan,
+    CompiledCategoricalConverterGroup,
+    CompiledNumericConverterGroup,
     ConcatNodeSource,
     DiscretizationFunctionPlan,
     EmFunctionPlan,
+    FixedLayoutCompiledConverterGroup,
+    FixedLayoutCompiledConverterSlice,
     FixedLayoutConverterSpec,
     FixedLayoutExecutionPlan,
     FixedLayoutFunctionPlan,
@@ -93,14 +99,16 @@ def build_fixed_layout_execution_plan(
         node_root = plan_root.keyed("node_plan", node_index)
         converter_specs = _build_node_specs(node_index, layout, task, spec_root)
         node_plans.append(
-            sample_node_plan(
-                node_index=int(node_index),
-                parent_indices=parent_indices,
-                converter_specs=converter_specs,
-                keyed_rng=node_root,
-                device="cpu",
-                mechanism_logit_tilt=mechanism_logit_tilt,
-                function_family_mix=config.mechanism.function_family_mix,
+            _with_compiled_converter_groups(
+                sample_node_plan(
+                    node_index=int(node_index),
+                    parent_indices=parent_indices,
+                    converter_specs=converter_specs,
+                    keyed_rng=node_root,
+                    device="cpu",
+                    mechanism_logit_tilt=mechanism_logit_tilt,
+                    function_family_mix=config.mechanism.function_family_mix,
+                )
             )
         )
     return FixedLayoutExecutionPlan(
@@ -120,21 +128,103 @@ def fixed_layout_plan_signature(execution_plan: FixedLayoutExecutionPlan) -> str
     return hashlib.blake2s(encoded, digest_size=16).hexdigest()
 
 
-def apply_function_plan_batch(
-    x: torch.Tensor,
+def _compiled_converter_slice(
+    spec_index: int,
+    spec: FixedLayoutConverterSpec,
+) -> FixedLayoutCompiledConverterSlice:
+    column_start = int(spec.column_start)
+    column_end = int(spec.column_end)
+    return FixedLayoutCompiledConverterSlice(
+        spec_index=int(spec_index),
+        key=str(spec.key),
+        column_start=column_start,
+        column_end=column_end,
+        width=max(1, column_end - column_start),
+        cardinality=None if spec.cardinality is None else int(spec.cardinality),
+    )
+
+
+def _compile_converter_groups(
+    node_plan: FixedLayoutNodePlan,
+) -> tuple[FixedLayoutCompiledConverterGroup, ...]:
+    compiled_groups: list[FixedLayoutCompiledConverterGroup] = []
+    for group in node_plan.converter_groups:
+        slices = tuple(
+            _compiled_converter_slice(spec_index, node_plan.converter_specs[spec_index])
+            for spec_index in group.spec_indices
+        )
+        if isinstance(group, NumericConverterGroup):
+            plans: list[NumericConverterPlan] = []
+            for spec_index in group.spec_indices:
+                plan = node_plan.converter_plans[spec_index]
+                if not isinstance(plan, NumericConverterPlan):
+                    raise ValueError(
+                        "Numeric converter group must reference numeric converter plans."
+                    )
+                plans.append(plan)
+            compiled_groups.append(
+                CompiledNumericConverterGroup(
+                    spec_indices=tuple(int(spec_index) for spec_index in group.spec_indices),
+                    slices=slices,
+                    plans=tuple(plans),
+                    warp_enabled=tuple(bool(plan.warp_enabled) for plan in plans),
+                    all_unit_width=all(int(spec.width) == 1 for spec in slices),
+                )
+            )
+            continue
+
+        first_index = int(group.spec_indices[0])
+        plan = node_plan.converter_plans[first_index]
+        if not isinstance(plan, CategoricalConverterPlan):
+            raise ValueError("Categorical converter group must reference categorical plans.")
+        compiled_groups.append(
+            CompiledCategoricalConverterGroup(
+                spec_indices=tuple(int(spec_index) for spec_index in group.spec_indices),
+                slices=slices,
+                plan=plan,
+                category_count=max(2, int(slices[0].cardinality or 2)),
+                uses_center_random_fn=str(plan.variant) == "center_random_fn",
+            )
+        )
+    return tuple(compiled_groups)
+
+
+def _with_compiled_converter_groups(node_plan: FixedLayoutNodePlan) -> FixedLayoutNodePlan:
+    if node_plan.compiled_converter_groups:
+        return node_plan
+    return replace(
+        node_plan,
+        compiled_converter_groups=_compile_converter_groups(node_plan),
+    )
+
+
+def _resolved_compiled_converter_groups(
+    node_plan: FixedLayoutNodePlan,
+) -> tuple[FixedLayoutCompiledConverterGroup, ...]:
+    if node_plan.compiled_converter_groups:
+        return node_plan.compiled_converter_groups
+    return _compile_converter_groups(node_plan)
+
+
+def _accumulate_runtime_metric(
+    runtime_metrics_out: dict[str, float] | None,
+    key: str,
+    value: float,
+) -> None:
+    if runtime_metrics_out is None:
+        return
+    runtime_metrics_out[key] = float(runtime_metrics_out.get(key, 0.0)) + float(value)
+
+
+def _apply_function_plan_batch_core(
+    y: torch.Tensor,
     rng: FixedLayoutBatchRng,
     plan: FixedLayoutFunctionPlan,
     *,
     out_dim: int,
     noise_sigma_multiplier: float,
     noise_spec: NoiseSamplingSpec | None,
-    standardize_input: bool = True,
 ) -> torch.Tensor:
-    """Apply one frozen function-family plan across a batch of datasets."""
-
-    y = x.to(torch.float32)
-    if standardize_input:
-        y = _batch_standardize(y)
     if isinstance(plan, LinearFunctionPlan):
         return _apply_linear_batch(
             y,
@@ -192,23 +282,22 @@ def apply_function_plan_batch(
             noise_spec=noise_spec,
         )
     if isinstance(plan, ProductFunctionPlan):
-        lhs = apply_function_plan_batch(
-            y,
+        branch_input = _batch_standardize(y)
+        lhs = _apply_function_plan_batch_core(
+            branch_input,
             rng.keyed("product", "lhs"),
             plan.lhs,
             out_dim=out_dim,
             noise_sigma_multiplier=noise_sigma_multiplier,
             noise_spec=noise_spec,
-            standardize_input=True,
         )
-        rhs = apply_function_plan_batch(
-            y,
+        rhs = _apply_function_plan_batch_core(
+            branch_input,
             rng.keyed("product", "rhs"),
             plan.rhs,
             out_dim=out_dim,
             noise_sigma_multiplier=noise_sigma_multiplier,
             noise_spec=noise_spec,
-            standardize_input=True,
         )
         return lhs * rhs
     if isinstance(plan, PiecewiseFunctionPlan):
@@ -224,26 +313,50 @@ def apply_function_plan_batch(
         gate = torch.sigmoid(
             (gate_projection + float(plan.gate_bias)) * float(plan.gate_temperature)
         )
-        lhs = apply_function_plan_batch(
-            y,
+        branch_input = _batch_standardize(y)
+        lhs = _apply_function_plan_batch_core(
+            branch_input,
             rng.keyed("piecewise", "lhs"),
             plan.lhs,
             out_dim=out_dim,
             noise_sigma_multiplier=noise_sigma_multiplier,
             noise_spec=noise_spec,
-            standardize_input=True,
         )
-        rhs = apply_function_plan_batch(
-            y,
+        rhs = _apply_function_plan_batch_core(
+            branch_input,
             rng.keyed("piecewise", "rhs"),
             plan.rhs,
             out_dim=out_dim,
             noise_sigma_multiplier=noise_sigma_multiplier,
             noise_spec=noise_spec,
-            standardize_input=True,
         )
         return gate * lhs + (1.0 - gate) * rhs
     raise ValueError(f"Unsupported fixed-layout function plan: {plan!r}")
+
+
+def apply_function_plan_batch(
+    x: torch.Tensor,
+    rng: FixedLayoutBatchRng,
+    plan: FixedLayoutFunctionPlan,
+    *,
+    out_dim: int,
+    noise_sigma_multiplier: float,
+    noise_spec: NoiseSamplingSpec | None,
+    standardize_input: bool = True,
+) -> torch.Tensor:
+    """Apply one frozen function-family plan across a batch of datasets."""
+
+    y = x.to(torch.float32)
+    if standardize_input:
+        y = _batch_standardize(y)
+    return _apply_function_plan_batch_core(
+        y,
+        rng,
+        plan,
+        out_dim=out_dim,
+        noise_sigma_multiplier=noise_sigma_multiplier,
+        noise_spec=noise_spec,
+    )
 
 
 def apply_numeric_converter_plan_batch(
@@ -325,9 +438,11 @@ def _apply_numeric_converter_group_batch(
 
 def _categorical_group_input_views(
     latent: torch.Tensor,
-    spec_payloads: list[FixedLayoutConverterSpec],
+    compiled_slices: tuple[FixedLayoutCompiledConverterSlice, ...],
 ) -> torch.Tensor:
-    views = [latent[:, :, int(spec.column_start) : int(spec.column_end)] for spec in spec_payloads]
+    views = [
+        latent[:, :, int(spec.column_start) : int(spec.column_end)] for spec in compiled_slices
+    ]
     return torch.stack(views, dim=2)
 
 
@@ -558,9 +673,12 @@ def _apply_node_plan_batch(
     device: str,
     noise_sigma_multiplier: float,
     noise_spec: NoiseSamplingSpec | None,
+    runtime_metrics_out: dict[str, float] | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     _ = config
     _ = device
+    node_start = time.perf_counter()
+    node_start_cpu = time.process_time()
     total_dim = int(node_plan.latent.total_dim)
     if parent_data:
         source = node_plan.source
@@ -579,10 +697,13 @@ def _apply_node_plan_batch(
             if not isinstance(source, StackedNodeSource):
                 raise ValueError("Parent-driven fixed-layout node must use a multi-input source.")
             aggregation_kind = source.aggregation_kind
+            standardized_parents = [
+                _sanitize_and_batch_standardize(parent_tensor) for parent_tensor in parent_data
+            ]
             if aggregation_kind == "logsumexp":
                 transformed_outputs = [
                     apply_function_plan_batch(
-                        _sanitize_and_batch_standardize(parent_tensor),
+                        standardized_parent,
                         rng.keyed("parent", plan_index),
                         source.parent_functions[plan_index],
                         out_dim=total_dim,
@@ -590,7 +711,7 @@ def _apply_node_plan_batch(
                         noise_spec=noise_spec,
                         standardize_input=False,
                     )
-                    for plan_index, parent_tensor in enumerate(parent_data)
+                    for plan_index, standardized_parent in enumerate(standardized_parents)
                 ]
                 stacked = torch.stack(transformed_outputs, dim=2)
                 latent = _aggregate_parent_outputs_batch(
@@ -599,9 +720,9 @@ def _apply_node_plan_batch(
                 )
             else:
                 aggregate: torch.Tensor | None = None
-                for plan_index, parent_tensor in enumerate(parent_data):
+                for plan_index, standardized_parent in enumerate(standardized_parents):
                     transformed_output = apply_function_plan_batch(
-                        _sanitize_and_batch_standardize(parent_tensor),
+                        standardized_parent,
                         rng.keyed("parent", plan_index),
                         source.parent_functions[plan_index],
                         out_dim=total_dim,
@@ -657,33 +778,20 @@ def _apply_node_plan_batch(
     latent = latent / torch.clamp(mean_l2.view(-1, 1, 1), min=1e-6)
 
     extracted: dict[str, torch.Tensor] = {}
-    converter_specs = node_plan.converter_specs
-    converter_plans = node_plan.converter_plans
-    for group in node_plan.converter_groups:
-        spec_indices = [int(value) for value in group.spec_indices]
-        if isinstance(group, NumericConverterGroup):
-            spec_payloads = [converter_specs[idx] for idx in spec_indices]
-            numeric_plans: list[NumericConverterPlan] = []
-            for spec_index in spec_indices:
-                plan = converter_plans[spec_index]
-                if not isinstance(plan, NumericConverterPlan):
-                    raise ValueError(
-                        "Numeric converter group must reference numeric converter plans."
-                    )
-                numeric_plans.append(plan)
-            if all(
-                int(spec_payload.column_end - spec_payload.column_start) == 1
-                for spec_payload in spec_payloads
-            ):
+    converter_start = time.perf_counter()
+    converter_start_cpu = time.process_time()
+    for group in _resolved_compiled_converter_groups(node_plan):
+        if isinstance(group, CompiledNumericConverterGroup):
+            if group.all_unit_width:
                 grouped_input = torch.cat(
                     [
-                        latent[:, :, int(spec_payload.column_start) : int(spec_payload.column_end)]
-                        for spec_payload in spec_payloads
+                        latent[:, :, int(spec.column_start) : int(spec.column_end)]
+                        for spec in group.slices
                     ],
                     dim=2,
                 )
                 warp_enabled = torch.tensor(
-                    [plan.warp_enabled for plan in numeric_plans],
+                    group.warp_enabled,
                     device=latent.device,
                     dtype=torch.bool,
                 )
@@ -691,22 +799,21 @@ def _apply_node_plan_batch(
                     grouped_input,
                     rng,
                     warp_enabled,
-                    spec_indices=tuple(spec_indices),
+                    spec_indices=group.spec_indices,
                 )
-                for local_index, spec_payload in enumerate(spec_payloads):
-                    start = int(spec_payload.column_start)
-                    end = int(spec_payload.column_end)
+                for local_index, spec in enumerate(group.slices):
+                    start = int(spec.column_start)
+                    end = int(spec.column_end)
                     latent[:, :, start:end] = x_prime[:, :, local_index : local_index + 1]
-                    extracted[str(spec_payload.key)] = values[:, :, local_index]
+                    extracted[str(spec.key)] = values[:, :, local_index]
                 continue
-            for local_index, spec_payload in enumerate(spec_payloads):
-                spec_index = spec_indices[local_index]
-                start = int(spec_payload.column_start)
-                end = int(spec_payload.column_end)
+            for spec, plan in zip(group.slices, group.plans, strict=True):
+                start = int(spec.column_start)
+                end = int(spec.column_end)
                 spec_out, values = apply_numeric_converter_plan_batch(
                     latent[:, :, start:end],
-                    rng.keyed("converter", spec_index),
-                    numeric_plans[local_index],
+                    rng.keyed("converter", spec.spec_index),
+                    plan,
                 )
                 if int(spec_out.shape[2]) != (end - start):
                     if int(spec_out.shape[2]) > (end - start):
@@ -716,28 +823,22 @@ def _apply_node_plan_batch(
                             spec_out, (0, (end - start) - int(spec_out.shape[2]))
                         )
                 latent[:, :, start:end] = spec_out
-                extracted[str(spec_payload.key)] = values
+                extracted[str(spec.key)] = values
             continue
 
-        spec_payloads = [converter_specs[idx] for idx in spec_indices]
-        first_plan = converter_plans[spec_indices[0]]
-        if not isinstance(first_plan, CategoricalConverterPlan):
-            raise ValueError(
-                "Categorical converter group must reference categorical converter plans."
-            )
-        if first_plan.variant != "center_random_fn":
+        if not group.uses_center_random_fn:
             x_prime, values = _apply_categorical_group_batch(
-                _categorical_group_input_views(latent, spec_payloads),
+                _categorical_group_input_views(latent, group.slices),
                 rng,
-                first_plan,
-                n_categories=max(2, int(spec_payloads[0].cardinality or 2)),
+                group.plan,
+                n_categories=group.category_count,
                 noise_sigma_multiplier=noise_sigma_multiplier,
                 noise_spec=noise_spec,
-                spec_indices=tuple(spec_indices),
+                spec_indices=group.spec_indices,
             )
-            for local_index, spec_payload in enumerate(spec_payloads):
-                start = int(spec_payload.column_start)
-                end = int(spec_payload.column_end)
+            for local_index, spec in enumerate(group.slices):
+                start = int(spec.column_start)
+                end = int(spec.column_end)
                 spec_out = x_prime[:, :, local_index, :]
                 if int(spec_out.shape[2]) != (end - start):
                     if int(spec_out.shape[2]) > (end - start):
@@ -747,18 +848,17 @@ def _apply_node_plan_batch(
                             spec_out, (0, (end - start) - int(spec_out.shape[2]))
                         )
                 latent[:, :, start:end] = spec_out
-                extracted[str(spec_payload.key)] = values[:, :, local_index]
+                extracted[str(spec.key)] = values[:, :, local_index]
             continue
-        for local_index, spec_payload in enumerate(spec_payloads):
-            spec_index = spec_indices[local_index]
-            start = int(spec_payload.column_start)
-            end = int(spec_payload.column_end)
+        for spec in group.slices:
+            start = int(spec.column_start)
+            end = int(spec.column_end)
             spec_view = latent[:, :, start:end].unsqueeze(2)
             x_prime, values = _apply_categorical_group_batch(
                 spec_view,
-                rng.keyed("converter", spec_index),
-                first_plan,
-                n_categories=max(2, int(spec_payload.cardinality or 2)),
+                rng.keyed("converter", spec.spec_index),
+                group.plan,
+                n_categories=max(2, int(spec.cardinality or 2)),
                 noise_sigma_multiplier=noise_sigma_multiplier,
                 noise_spec=noise_spec,
             )
@@ -771,10 +871,31 @@ def _apply_node_plan_batch(
                         spec_out, (0, (end - start) - int(spec_out.shape[2]))
                     )
             latent[:, :, start:end] = spec_out
-            extracted[str(spec_payload.key)] = values[:, :, 0]
+            extracted[str(spec.key)] = values[:, :, 0]
+
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "converter_elapsed_seconds",
+        time.perf_counter() - converter_start,
+    )
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "converter_cpu_time_seconds",
+        time.process_time() - converter_start_cpu,
+    )
 
     scale = rng.keyed("latent_scale").log_uniform((rng.batch_size,), low=0.1, high=10.0)
     latent = latent * scale.view(-1, 1, 1)
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "node_apply_elapsed_seconds",
+        time.perf_counter() - node_start,
+    )
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "node_apply_cpu_time_seconds",
+        time.process_time() - node_start_cpu,
+    )
     return latent, extracted
 
 
@@ -788,11 +909,14 @@ def _generate_fixed_layout_raw_batch(
     noise_sigma_multiplier: float,
     noise_spec: NoiseSamplingSpec | None,
     emit_features: bool,
+    runtime_metrics_out: dict[str, float] | None = None,
 ) -> tuple[torch.Tensor | None, torch.Tensor, list[dict[str, Any]]]:
     """Generate one fixed-layout microbatch of raw tensors."""
 
     if not dataset_seeds:
         raise ValueError("dataset_seeds must be non-empty.")
+    raw_batch_start = time.perf_counter()
+    raw_batch_start_cpu = time.process_time()
     batch_size = len(dataset_seeds)
     n_rows = int(config.dataset.n_train + config.dataset.n_test)
     num_features = int(layout.n_features)
@@ -823,6 +947,7 @@ def _generate_fixed_layout_raw_batch(
             device=device,
             noise_sigma_multiplier=noise_sigma_multiplier,
             noise_spec=noise_spec,
+            runtime_metrics_out=runtime_metrics_out,
         )
         node_outputs[node_index] = latent
         for key, values in extracted.items():
@@ -838,9 +963,11 @@ def _generate_fixed_layout_raw_batch(
 
     x: torch.Tensor | None = None
     if feature_values is not None:
-        x = torch.zeros((batch_size, n_rows, num_features), dtype=dtype, device=device)
+        feature_start = time.perf_counter()
+        feature_start_cpu = time.process_time()
         feature_types = list(layout.feature_types)
         card_by_feature = dict(layout.card_by_feature)
+        feature_columns: list[torch.Tensor] = []
         for feature_index in range(num_features):
             feature_tensor: torch.Tensor | None = feature_values[feature_index]
             if feature_tensor is None:
@@ -854,7 +981,22 @@ def _generate_fixed_layout_raw_batch(
                         device=device,
                         noise_spec=noise_spec,
                     )
-            x[:, :, feature_index] = feature_tensor.to(dtype)
+            feature_columns.append(feature_tensor.to(dtype).unsqueeze(2))
+        x = (
+            torch.cat(feature_columns, dim=2)
+            if feature_columns
+            else torch.empty((batch_size, n_rows, 0), dtype=dtype, device=device)
+        )
+        _accumulate_runtime_metric(
+            runtime_metrics_out,
+            "feature_materialization_elapsed_seconds",
+            time.perf_counter() - feature_start,
+        )
+        _accumulate_runtime_metric(
+            runtime_metrics_out,
+            "feature_materialization_cpu_time_seconds",
+            time.process_time() - feature_start_cpu,
+        )
 
     if target_values is None:
         if str(config.dataset.task) == "classification":
@@ -871,6 +1013,16 @@ def _generate_fixed_layout_raw_batch(
             y = target_values.to(torch.int64) % int(layout.n_classes)
         else:
             y = target_values.to(dtype)
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "raw_batch_elapsed_seconds",
+        time.perf_counter() - raw_batch_start,
+    )
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "raw_batch_cpu_time_seconds",
+        time.process_time() - raw_batch_start_cpu,
+    )
     return x, y, aux_meta_batch
 
 
@@ -883,6 +1035,7 @@ def generate_fixed_layout_graph_batch(
     device: str,
     noise_sigma_multiplier: float,
     noise_spec: NoiseSamplingSpec | None,
+    runtime_metrics_out: dict[str, float] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, list[dict[str, object]]]:
     """Generate one fixed-layout microbatch of raw `x`/`y` tensors."""
 
@@ -895,6 +1048,7 @@ def generate_fixed_layout_graph_batch(
         noise_sigma_multiplier=noise_sigma_multiplier,
         noise_spec=noise_spec,
         emit_features=True,
+        runtime_metrics_out=runtime_metrics_out,
     )
     if x is None:
         raise RuntimeError("Expected fixed-layout feature batch to be materialized.")
@@ -910,6 +1064,7 @@ def generate_fixed_layout_label_batch(
     device: str,
     noise_sigma_multiplier: float,
     noise_spec: NoiseSamplingSpec | None,
+    runtime_metrics_out: dict[str, float] | None = None,
 ) -> tuple[torch.Tensor, list[dict[str, object]]]:
     """Generate one fixed-layout microbatch of raw target tensors only."""
 
@@ -922,6 +1077,7 @@ def generate_fixed_layout_label_batch(
         noise_sigma_multiplier=noise_sigma_multiplier,
         noise_spec=noise_spec,
         emit_features=False,
+        runtime_metrics_out=runtime_metrics_out,
     )
     return y, aux_meta_batch
 

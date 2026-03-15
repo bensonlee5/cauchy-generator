@@ -8,7 +8,7 @@ from typing import Any
 
 import torch
 
-from dagzoo.config import GeneratorConfig
+from dagzoo.config import MISSINGNESS_MECHANISM_NONE, GeneratorConfig
 from dagzoo.core.layout_types import LayoutPlan
 from dagzoo.core.metadata import _build_lineage_metadata, _build_shift_metadata
 from dagzoo.core.noise_runtime import (
@@ -39,6 +39,8 @@ class _FixedSchemaFinalizationContext:
     shift_metadata: dict[str, Any]
     feature_types: list[str]
     feature_index_map: list[int]
+    base_metadata: dict[str, Any]
+    missingness_enabled: bool
 
 
 def _config_payload_for_metadata(
@@ -103,38 +105,70 @@ def _resolve_split_indices(
     n_train: int,
     keyed_rng: KeyedRng,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Resolve one dataset's train/test split indices using the shared CPU generator."""
+    """Resolve one dataset's train/test split indices with CUDA preference and CPU fallback."""
 
-    generator = keyed_rng.torch_rng(device="cpu")
+    device_candidates = ("cuda", "cpu") if str(y.device.type) == "cuda" else ("cpu",)
+    last_error: Exception | None = None
+    for split_device in device_candidates:
+        try:
+            return _resolve_split_indices_for_device(
+                y,
+                task=task,
+                n_train=n_train,
+                keyed_rng=keyed_rng,
+                device=split_device,
+            )
+        except InfeasibleStratifiedSplitError:
+            raise
+        except Exception as exc:
+            last_error = exc
+            continue
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Failed to resolve train/test split indices.")
+
+
+def _resolve_split_indices_for_device(
+    y: torch.Tensor,
+    *,
+    task: str,
+    n_train: int,
+    keyed_rng: KeyedRng,
+    device: str,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Resolve one dataset's train/test split indices on one requested split device."""
+
+    generator = keyed_rng.torch_rng(device=device)
+    split_y = y if str(y.device.type) == device else y.to(device=device)
     if task == "classification":
         return _stratified_split_indices(
-            y.to(device="cpu"),
+            split_y,
             n_train,
             generator,
-            "cpu",
+            device,
         )
 
-    total_rows = int(y.shape[0])
-    order_cpu = torch.randperm(
+    total_rows = int(split_y.shape[0])
+    order = torch.randperm(
         total_rows,
         generator=generator,
-        device="cpu",
+        device=device,
     )
-    return order_cpu[:n_train], order_cpu[n_train:]
+    return order[:n_train], order[n_train:]
 
 
 def _split_raw_tensors(
     x: torch.Tensor,
     y: torch.Tensor,
     *,
-    train_idx_cpu: torch.Tensor,
-    test_idx_cpu: torch.Tensor,
+    train_idx: torch.Tensor,
+    test_idx: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Split one raw feature/target pair using CPU indices applied on the tensor device."""
+    """Split one raw feature/target pair using indices applied on the tensor device."""
 
-    train_idx = train_idx_cpu.to(device=x.device)
-    test_idx = test_idx_cpu.to(device=x.device)
-    return x[train_idx], y[train_idx], x[test_idx], y[test_idx]
+    train_index = train_idx if train_idx.device == x.device else train_idx.to(device=x.device)
+    test_index = test_idx if test_idx.device == x.device else test_idx.to(device=x.device)
+    return x[train_index], y[train_index], x[test_index], y[test_index]
 
 
 def _normalized_filter_metadata(aux_meta: dict[str, Any]) -> dict[str, Any]:
@@ -146,6 +180,36 @@ def _normalized_filter_metadata(aux_meta: dict[str, Any]) -> dict[str, Any]:
     return {"mode": "deferred", "status": "not_run"}
 
 
+def _is_missingness_enabled(config: GeneratorConfig) -> bool:
+    """Return whether missingness injection can mutate emitted feature tensors."""
+
+    return (
+        float(config.dataset.missing_rate) > 0.0
+        and str(config.dataset.missing_mechanism).strip().lower() != MISSINGNESS_MECHANISM_NONE
+    )
+
+
+def _base_bundle_metadata_for_layout(
+    layout: LayoutPlan,
+    *,
+    feature_types: list[str],
+    feature_index_map: list[int],
+) -> dict[str, Any]:
+    """Build invariant metadata shared across bundles with one emitted feature schema."""
+
+    return {
+        "backend": "torch",
+        "compute_backend": "torch_appendix_full",
+        "n_features": int(len(feature_types)),
+        "n_categorical_features": int(sum(1 for t in feature_types if t == "cat")),
+        "graph_nodes": int(layout.graph_nodes),
+        "graph_edges": int(layout.graph_edges),
+        "graph_depth_nodes": int(layout.graph_depth_nodes),
+        "graph_edge_density": float(layout.graph_edge_density),
+        "lineage": _build_lineage_metadata(layout, feature_index_map=feature_index_map),
+    }
+
+
 def _build_fixed_schema_finalization_context(
     config: GeneratorConfig,
     layout: LayoutPlan,
@@ -153,6 +217,8 @@ def _build_fixed_schema_finalization_context(
     n_train: int,
     n_test: int,
     shift_params: ShiftRuntimeParams,
+    feature_types: list[str] | None = None,
+    feature_index_map: list[int] | None = None,
 ) -> _FixedSchemaFinalizationContext:
     """Build cached metadata for fixed-schema bundle finalization."""
 
@@ -161,25 +227,36 @@ def _build_fixed_schema_finalization_context(
         n_train=n_train,
         n_test=n_test,
     )
-    feature_types = [str(feature_type) for feature_type in list(layout.feature_types)]
+    resolved_feature_types = (
+        [str(feature_type) for feature_type in list(layout.feature_types)]
+        if feature_types is None
+        else [str(feature_type) for feature_type in feature_types]
+    )
+    resolved_feature_index_map = (
+        [int(i) for i in range(int(layout.n_features))]
+        if feature_index_map is None
+        else [int(i) for i in feature_index_map]
+    )
     return _FixedSchemaFinalizationContext(
         config_payload=config_payload,
         shift_metadata=_build_shift_metadata(
             shift_params=shift_params,
             function_family_mix=config.mechanism.function_family_mix,
         ),
-        feature_types=feature_types,
-        feature_index_map=[int(i) for i in range(int(layout.n_features))],
+        feature_types=resolved_feature_types,
+        feature_index_map=resolved_feature_index_map,
+        base_metadata=_base_bundle_metadata_for_layout(
+            layout,
+            feature_types=resolved_feature_types,
+            feature_index_map=resolved_feature_index_map,
+        ),
+        missingness_enabled=_is_missingness_enabled(config),
     )
 
 
 def _build_bundle_metadata(
-    layout: LayoutPlan,
+    context: _FixedSchemaFinalizationContext,
     *,
-    feature_types: list[str],
-    feature_index_map: list[int],
-    config_payload: dict[str, Any],
-    shift_metadata: dict[str, Any],
     seed: int,
     attempt: int,
     attempts_used: int,
@@ -195,35 +272,30 @@ def _build_bundle_metadata(
     """Build emitted dataset metadata for scalar and batched finalization paths."""
 
     n_classes = None if class_structure is None else int(class_structure["n_classes_realized"])
-    metadata = {
-        "backend": "torch",
-        "device": str(device),
-        "requested_device": str(requested_device),
-        "resolved_device": str(resolved_device),
-        "device_fallback_reason": device_fallback_reason,
-        "compute_backend": "torch_appendix_full",
-        "n_features": int(len(feature_types)),
-        "n_categorical_features": int(sum(1 for t in feature_types if t == "cat")),
-        "n_classes": n_classes,
-        "graph_nodes": int(layout.graph_nodes),
-        "graph_edges": int(layout.graph_edges),
-        "graph_depth_nodes": int(layout.graph_depth_nodes),
-        "graph_edge_density": float(layout.graph_edge_density),
-        "lineage": _build_lineage_metadata(layout, feature_index_map=feature_index_map),
-        "seed": int(seed),
-        "attempt_used": int(attempt),
-        "filter": _normalized_filter_metadata(aux_meta),
-        "shift": copy.deepcopy(shift_metadata),
-        "noise_distribution": _build_noise_distribution_metadata(noise_runtime_selection),
-        "generation_attempts": {
-            "total_attempts": int(attempts_used),
-            "retry_count": int(max(0, attempts_used - 1)),
-            "filter_attempts": 0,
-            "filter_rejections": 0,
-            "filter_rejection_rate": None,
-        },
-        "config": copy.deepcopy(config_payload),
-    }
+    metadata = dict(context.base_metadata)
+    metadata["lineage"] = copy.deepcopy(context.base_metadata["lineage"])
+    metadata.update(
+        {
+            "device": str(device),
+            "requested_device": str(requested_device),
+            "resolved_device": str(resolved_device),
+            "device_fallback_reason": device_fallback_reason,
+            "n_classes": n_classes,
+            "seed": int(seed),
+            "attempt_used": int(attempt),
+            "filter": _normalized_filter_metadata(aux_meta),
+            "shift": copy.deepcopy(context.shift_metadata),
+            "noise_distribution": _build_noise_distribution_metadata(noise_runtime_selection),
+            "generation_attempts": {
+                "total_attempts": int(attempts_used),
+                "retry_count": int(max(0, attempts_used - 1)),
+                "filter_attempts": 0,
+                "filter_rejections": 0,
+                "filter_rejection_rate": None,
+            },
+            "config": copy.deepcopy(context.config_payload),
+        }
+    )
     if missingness_summary is not None:
         metadata["missingness"] = missingness_summary
     if class_structure is not None:
@@ -235,6 +307,7 @@ def _finalize_processed_bundle(
     config: GeneratorConfig,
     layout: LayoutPlan,
     *,
+    context: _FixedSchemaFinalizationContext,
     dataset_seed: int,
     attempt: int,
     attempts_used: int,
@@ -247,23 +320,22 @@ def _finalize_processed_bundle(
     y_train: torch.Tensor,
     x_test: torch.Tensor,
     y_test: torch.Tensor,
-    feature_types: list[str],
-    feature_index_map: list[int],
     aux_meta: dict[str, Any],
-    config_payload: dict[str, Any],
-    shift_metadata: dict[str, Any],
     noise_runtime_selection: NoiseRuntimeSelection,
     dtype: torch.dtype,
 ) -> DatasetBundle:
     """Finalize one already-postprocessed dataset into the emitted bundle contract."""
 
-    x_train, x_test, missingness_summary = inject_missingness(
-        x_train,
-        x_test,
-        dataset_cfg=config.dataset,
-        keyed_rng=attempt_root.keyed("missingness"),
-        device=device,
-    )
+    if context.missingness_enabled:
+        x_train, x_test, missingness_summary = inject_missingness(
+            x_train,
+            x_test,
+            dataset_cfg=config.dataset,
+            keyed_rng=attempt_root.keyed("missingness"),
+            device=device,
+        )
+    else:
+        missingness_summary = None
 
     if config.dataset.task == "classification" and not _classification_split_valid(y_train, y_test):
         raise InvalidClassSplitError("invalid_class_split")
@@ -283,11 +355,7 @@ def _finalize_processed_bundle(
         )
 
     metadata = _build_bundle_metadata(
-        layout,
-        feature_types=feature_types,
-        feature_index_map=feature_index_map,
-        config_payload=config_payload,
-        shift_metadata=shift_metadata,
+        context,
         seed=dataset_seed,
         attempt=attempt,
         attempts_used=attempts_used,
@@ -305,7 +373,7 @@ def _finalize_processed_bundle(
         y_train=y_train,
         X_test=x_test,
         y_test=y_test,
-        feature_types=list(feature_types),
+        feature_types=list(context.feature_types),
         metadata=metadata,
         runtime_metrics={},
     )
@@ -330,33 +398,42 @@ def _finalize_generated_chunk_preserve_schema(
     aux_meta_batch: list[dict[str, Any]],
     noise_runtime_selection: NoiseRuntimeSelection,
     dtype: torch.dtype,
+    resolved_split_indices: list[tuple[torch.Tensor, torch.Tensor] | None] | None = None,
 ) -> list[DatasetBundle | None]:
     """Finalize one fixed-schema raw chunk while preserving scalar retry semantics."""
 
     if int(x.shape[0]) != len(dataset_roots) or int(y.shape[0]) != len(dataset_roots):
         raise ValueError("Chunk tensors must align with provided dataset roots.")
+    if resolved_split_indices is not None and len(resolved_split_indices) != len(dataset_roots):
+        raise ValueError("resolved_split_indices must align with provided dataset roots.")
 
     results: list[DatasetBundle | None] = [None] * len(dataset_roots)
     valid_positions: list[int] = []
-    train_idx_cpu_list: list[torch.Tensor] = []
-    test_idx_cpu_list: list[torch.Tensor] = []
+    train_idx_list: list[torch.Tensor] = []
+    test_idx_list: list[torch.Tensor] = []
     postprocess_roots: list[KeyedRng] = []
     for batch_index, dataset_root in enumerate(dataset_roots):
-        attempt_root = dataset_root.keyed("attempt", attempt)
-        try:
-            train_idx_cpu, test_idx_cpu = _resolve_split_indices(
-                y[batch_index],
-                task=config.dataset.task,
-                n_train=n_train,
-                keyed_rng=attempt_root.keyed("split"),
-            )
-        except InfeasibleStratifiedSplitError:
-            continue
+        if resolved_split_indices is not None:
+            split_indices = resolved_split_indices[batch_index]
+            if split_indices is None:
+                continue
+            train_idx, test_idx = split_indices
+        else:
+            attempt_root = dataset_root.keyed("attempt", attempt)
+            try:
+                train_idx, test_idx = _resolve_split_indices(
+                    y[batch_index],
+                    task=config.dataset.task,
+                    n_train=n_train,
+                    keyed_rng=attempt_root.keyed("split"),
+                )
+            except InfeasibleStratifiedSplitError:
+                continue
 
         valid_positions.append(int(batch_index))
-        train_idx_cpu_list.append(train_idx_cpu)
-        test_idx_cpu_list.append(test_idx_cpu)
-        postprocess_roots.append(attempt_root.keyed("postprocess"))
+        train_idx_list.append(train_idx)
+        test_idx_list.append(test_idx)
+        postprocess_roots.append(dataset_root.keyed("attempt", attempt, "postprocess"))
 
     if not valid_positions:
         return results
@@ -364,8 +441,8 @@ def _finalize_generated_chunk_preserve_schema(
     valid_index = torch.as_tensor(valid_positions, dtype=torch.long, device=x.device)
     x_valid = x.index_select(0, valid_index)
     y_valid = y.index_select(0, valid_index)
-    train_idx = torch.stack(train_idx_cpu_list).to(device=x.device)
-    test_idx = torch.stack(test_idx_cpu_list).to(device=x.device)
+    train_idx = torch.stack([idx.to(device=x.device) for idx in train_idx_list])
+    test_idx = torch.stack([idx.to(device=x.device) for idx in test_idx_list])
 
     x_train_t = torch.gather(
         x_valid,
@@ -396,6 +473,7 @@ def _finalize_generated_chunk_preserve_schema(
             results[batch_index] = _finalize_processed_bundle(
                 config,
                 layout,
+                context=context,
                 dataset_seed=dataset_seed,
                 attempt=attempt,
                 attempts_used=attempts_used,
@@ -408,11 +486,7 @@ def _finalize_generated_chunk_preserve_schema(
                 y_train=y_train[local_index],
                 x_test=x_test[local_index],
                 y_test=y_test[local_index],
-                feature_types=context.feature_types,
-                feature_index_map=context.feature_index_map,
                 aux_meta=aux_meta_batch[batch_index],
-                config_payload=context.config_payload,
-                shift_metadata=context.shift_metadata,
                 noise_runtime_selection=noise_runtime_selection,
                 dtype=dtype,
             )
@@ -443,12 +517,13 @@ def _finalize_generated_tensors(
     noise_runtime_selection: NoiseRuntimeSelection,
     dtype: torch.dtype,
     preserve_feature_schema: bool = False,
+    finalization_context: _FixedSchemaFinalizationContext | None = None,
 ) -> DatasetBundle:
     """Finalize one raw `x`/`y` pair into the standard dataset bundle contract."""
 
     attempt_root = dataset_root.keyed("attempt", attempt)
     try:
-        train_idx_cpu, test_idx_cpu = _resolve_split_indices(
+        train_idx, test_idx = _resolve_split_indices(
             y,
             task=config.dataset.task,
             n_train=n_train,
@@ -460,8 +535,8 @@ def _finalize_generated_tensors(
     x_train_t, y_train_t, x_test_t, y_test_t = _split_raw_tensors(
         x,
         y,
-        train_idx_cpu=train_idx_cpu,
-        test_idx_cpu=test_idx_cpu,
+        train_idx=train_idx,
+        test_idx=test_idx,
     )
 
     x_train, y_train, x_test, y_test, feature_types, feature_index_map = postprocess_dataset(
@@ -476,18 +551,26 @@ def _finalize_generated_tensors(
         return_feature_index_map=True,
         preserve_feature_schema=preserve_feature_schema,
     )
-    shift_metadata = _build_shift_metadata(
-        shift_params=shift_params,
-        function_family_mix=config.mechanism.function_family_mix,
-    )
-    config_payload = _config_payload_for_metadata(
-        config,
-        n_train=n_train,
-        n_test=n_test,
-    )
+    if (
+        finalization_context is not None
+        and list(feature_types) == list(finalization_context.feature_types)
+        and [int(i) for i in feature_index_map] == list(finalization_context.feature_index_map)
+    ):
+        context = finalization_context
+    else:
+        context = _build_fixed_schema_finalization_context(
+            config,
+            layout,
+            n_train=n_train,
+            n_test=n_test,
+            shift_params=shift_params,
+            feature_types=feature_types,
+            feature_index_map=feature_index_map,
+        )
     return _finalize_processed_bundle(
         config,
         layout,
+        context=context,
         dataset_seed=dataset_seed,
         attempt=attempt,
         attempts_used=attempts_used,
@@ -500,11 +583,7 @@ def _finalize_generated_tensors(
         y_train=y_train,
         x_test=x_test,
         y_test=y_test,
-        feature_types=feature_types,
-        feature_index_map=feature_index_map,
         aux_meta=aux_meta,
-        config_payload=config_payload,
-        shift_metadata=shift_metadata,
         noise_runtime_selection=noise_runtime_selection,
         dtype=dtype,
     )

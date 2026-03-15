@@ -474,7 +474,7 @@ def test_generate_cli_handoff_root_preserves_rows_under_cuda_policy(
         (handoff_root / "generated" / "effective_config.yaml").read_text(encoding="utf-8")
     )
     assert effective_config["dataset"]["rows"]["mode"] == "fixed"
-    assert int(effective_config["runtime"]["fixed_layout_target_cells"]) == 160_000_000
+    assert int(effective_config["runtime"]["fixed_layout_target_cells"]) == 240_000_000
 
     handoff = json.loads((handoff_root / "handoff_manifest.json").read_text(encoding="utf-8"))
     validate_generate_handoff_manifest(handoff)

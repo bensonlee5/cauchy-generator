@@ -125,6 +125,73 @@ def _build_diagnostics_table(preset_results: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+def _build_bottleneck_evidence_lines(preset_results: list[dict[str, Any]]) -> list[str]:
+    """Create a compact markdown summary of bottleneck evidence per preset."""
+
+    lines = ["## Bottleneck Evidence", ""]
+    for result in preset_results:
+        lines.append(f"### {result.get('preset_key', '-')}")
+        lines.append(
+            "- Preparation: "
+            f"`wall={_format_float(result.get('prepare_elapsed_seconds'), 3)}s`, "
+            f"`cpu={_format_float(result.get('prepare_cpu_time_seconds'), 3)}s`, "
+            f"`cpu_busy_pct={_format_float(result.get('prepare_cpu_busy_pct_of_wall'), 2)}`"
+        )
+        lines.append(
+            "- Generation: "
+            f"`wall={_format_float(result.get('generation_elapsed_seconds'), 3)}s`, "
+            f"`cpu={_format_float(result.get('generation_cpu_time_seconds'), 3)}s`, "
+            f"`cpu_busy_pct={_format_float(result.get('generation_cpu_busy_pct_of_wall'), 2)}`"
+        )
+        lines.append(
+            "- Raw batch: "
+            f"`wall={_format_float(result.get('raw_batch_elapsed_seconds'), 3)}s`, "
+            f"`cpu={_format_float(result.get('raw_batch_cpu_time_seconds'), 3)}s`, "
+            f"`node_apply_wall={_format_float(result.get('node_apply_elapsed_seconds'), 3)}s`, "
+            f"`converter_wall={_format_float(result.get('converter_elapsed_seconds'), 3)}s`, "
+            f"`feature_wall={_format_float(result.get('feature_materialization_elapsed_seconds'), 3)}s`"
+        )
+        lines.append(
+            "- Fixed layout: "
+            f"`target_cells={result.get('fixed_layout_target_cells_effective', '-')}`, "
+            f"`per_dataset_cells={result.get('fixed_layout_per_dataset_cells', '-')}`, "
+            f"`batch={result.get('fixed_layout_realized_batch_size', '-')}`, "
+            f"`chunks={result.get('fixed_layout_chunk_count', '-')}`, "
+            f"`tail={result.get('fixed_layout_tail_chunk_size', '-')}`"
+        )
+        lines.append(
+            "- Write replay: "
+            f"`sample_datasets={result.get('stage_sample_datasets', '-')}`, "
+            f"`wall={_format_float(result.get('write_stage_elapsed_seconds'), 3)}s`, "
+            f"`cpu={_format_float(result.get('write_stage_cpu_time_seconds'), 3)}s`, "
+            f"`bytes={result.get('write_stage_bytes_written', '-')}`, "
+            f"`mib_per_s={_format_float(result.get('write_stage_mib_per_second'), 2)}`"
+        )
+        filter_elapsed = result.get("filter_stage_elapsed_seconds")
+        filter_cpu = result.get("filter_stage_cpu_time_seconds")
+        if filter_elapsed is None and filter_cpu is None:
+            lines.append("- Filter replay: `disabled`")
+        else:
+            lines.append(
+                "- Filter replay: "
+                f"`wall={_format_float(filter_elapsed, 3)}s`, "
+                f"`cpu={_format_float(filter_cpu, 3)}s`, "
+                f"`datasets_per_min={_format_float(result.get('filter_datasets_per_minute'), 2)}`"
+            )
+        peak_reserved = result.get("peak_cuda_reserved_mb")
+        peak_reserved_pct = result.get("peak_cuda_reserved_pct_of_total_memory")
+        peak_headroom = result.get("peak_cuda_headroom_mb")
+        if peak_reserved is not None or peak_headroom is not None:
+            lines.append(
+                "- CUDA memory: "
+                f"`reserved_mb={_format_float(peak_reserved, 2)}`, "
+                f"`reserved_pct={_format_float(peak_reserved_pct, 2)}`, "
+                f"`headroom_mb={_format_float(peak_headroom, 2)}`"
+            )
+        lines.append("")
+    return lines
+
+
 def write_suite_markdown(summary: dict[str, Any], out_path: str | Path) -> Path:
     """Write a concise markdown report for one benchmark suite run."""
 
@@ -148,6 +215,7 @@ def write_suite_markdown(summary: dict[str, Any], out_path: str | Path) -> Path:
         lines.append("## Presets")
         lines.extend(_build_preset_table(preset_results))
         lines.append("")
+        lines.extend(_build_bottleneck_evidence_lines(preset_results))
         if any(bool(result.get("diagnostics_enabled")) for result in preset_results):
             lines.append("## Diagnostics Artifacts")
             lines.extend(_build_diagnostics_table(preset_results))

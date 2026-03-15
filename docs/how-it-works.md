@@ -302,9 +302,9 @@ This section maps the runtime to module boundaries and data flow.
 Canonical postprocess behavior:
 
 - Public generation preserves emitted schema across a canonical run.
-- Classification runs may validate the requested run up front before the
-  first bundle is emitted so later dataset seeds cannot fail after
-  partial output.
+- Classification runs now emit bundles as they are finalized; a later
+  dataset can still exhaust the retry budget after earlier bundles have
+  already been emitted.
 
 ### 5) Metadata and output emission {#5-metadata-and-output-emission}
 

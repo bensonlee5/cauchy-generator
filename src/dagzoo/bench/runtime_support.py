@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import re
 import resource
@@ -9,6 +10,8 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+
+import torch
 
 from dagzoo.config import (
     MISSINGNESS_MECHANISM_NONE,
@@ -39,6 +42,41 @@ def _peak_rss_mb() -> float:
     if sys.platform == "darwin":
         return rss / MIB
     return rss / KIB
+
+
+def _resolved_device_type(device: str | None) -> str | None:
+    """Resolve one benchmark device hint to a concrete torch device type when possible."""
+
+    if device is None:
+        return None
+
+    normalized = str(device).strip().lower()
+    if not normalized:
+        return None
+    if normalized == "auto":
+        if torch.cuda.is_available():
+            return "cuda"
+        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
+
+    with contextlib.suppress(RuntimeError, TypeError, ValueError):
+        return torch.device(normalized).type
+    return None
+
+
+def _synchronize_accelerator(device: str | None) -> None:
+    """Wait for queued accelerator work on the resolved benchmark device."""
+
+    device_type = _resolved_device_type(device)
+    if device_type == "cuda" and torch.cuda.is_available():
+        with contextlib.suppress(Exception):
+            torch.cuda.synchronize()
+    if device_type == "mps":
+        mps_module = getattr(torch, "mps", None)
+        if mps_module is not None and hasattr(mps_module, "synchronize"):
+            with contextlib.suppress(Exception):
+                mps_module.synchronize()
 
 
 def _preset_counts(
@@ -86,10 +124,13 @@ def _collect_latency(
 
     latency_root = KeyedRng(int(config.seed)).keyed("bench", "suite", "latency")
     samples: list[float] = []
+    timing_device = device or config.runtime.device
     for i in range(max(1, num_samples)):
         seed = latency_root.child_seed("sample", i)
+        _synchronize_accelerator(timing_device)
         start = time.perf_counter()
         _ = generate_one(config, seed=seed, device=device)
+        _synchronize_accelerator(timing_device)
         samples.append(time.perf_counter() - start)
     return summarize_latencies(samples)
 
