@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 from dagzoo.config import GeneratorConfig
@@ -159,6 +159,7 @@ def _iter_prepared_canonical_batch_iter(
     prepared: CanonicalFixedLayoutRun,
     *,
     num_datasets: int,
+    on_raw_batch_metrics: Callable[[dict[str, float]], None] | None = None,
 ) -> Iterator[DatasetBundle]:
     """Yield annotated bundles from one already-prepared canonical fixed-layout run."""
 
@@ -169,6 +170,7 @@ def _iter_prepared_canonical_batch_iter(
             num_datasets=num_datasets,
             seed=prepared.run_seed,
             batch_size=prepared.batch_size,
+            on_raw_batch_metrics=on_raw_batch_metrics,
         )
     ):
         yield _annotate_canonical_batch_metadata(

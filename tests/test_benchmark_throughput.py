@@ -64,7 +64,13 @@ def test_run_throughput_benchmark_uses_streaming_generation(
             batch_size=num_datasets,
         )
 
-    def _stub_iter_prepared_canonical_batch_iter(prepared, *, num_datasets: int):
+    def _stub_iter_prepared_canonical_batch_iter(
+        prepared,
+        *,
+        num_datasets: int,
+        on_raw_batch_metrics=None,
+    ):
+        _ = on_raw_batch_metrics
         measure_calls.append((int(prepared.run_seed), int(num_datasets)))
         for _ in range(num_datasets):
             yield None
@@ -137,7 +143,13 @@ def test_run_throughput_benchmark_updates_callback_on_measured_generation(
             batch_size=num_datasets,
         )
 
-    def _stub_iter_prepared_canonical_batch_iter(_prepared, *, num_datasets: int):
+    def _stub_iter_prepared_canonical_batch_iter(
+        _prepared,
+        *,
+        num_datasets: int,
+        on_raw_batch_metrics=None,
+    ):
+        _ = on_raw_batch_metrics
         yield from range(num_datasets)
 
     monkeypatch.setattr(
@@ -197,7 +209,13 @@ def test_run_throughput_benchmark_uses_sequential_generation(
             batch_size=num_datasets,
         )
 
-    def _stub_iter_prepared_canonical_batch_iter(_prepared, *, num_datasets: int):
+    def _stub_iter_prepared_canonical_batch_iter(
+        _prepared,
+        *,
+        num_datasets: int,
+        on_raw_batch_metrics=None,
+    ):
+        _ = on_raw_batch_metrics
         yield from range(num_datasets)
 
     monkeypatch.setattr(
@@ -264,7 +282,13 @@ def test_run_throughput_benchmark_synchronizes_accelerator_for_timed_cuda_path(
             batch_size=num_datasets,
         )
 
-    def _stub_iter_prepared_canonical_batch_iter(_prepared, *, num_datasets: int):
+    def _stub_iter_prepared_canonical_batch_iter(
+        _prepared,
+        *,
+        num_datasets: int,
+        on_raw_batch_metrics=None,
+    ):
+        _ = on_raw_batch_metrics
         yield from range(num_datasets)
 
     monkeypatch.setattr(
@@ -326,7 +350,13 @@ def test_run_throughput_benchmark_reports_generation_cpu_time(
             batch_size=num_datasets,
         )
 
-    def _stub_iter_prepared_canonical_batch_iter(_prepared, *, num_datasets: int):
+    def _stub_iter_prepared_canonical_batch_iter(
+        _prepared,
+        *,
+        num_datasets: int,
+        on_raw_batch_metrics=None,
+    ):
+        _ = on_raw_batch_metrics
         yield from range(num_datasets)
 
     perf_counter_values = iter((0.0, 2.0, 5.0))
@@ -363,6 +393,88 @@ def test_run_throughput_benchmark_reports_generation_cpu_time(
     assert result["prepare_cpu_time_seconds"] == pytest.approx(0.25)
     assert result["elapsed_seconds"] == pytest.approx(5.0)
     assert result["cpu_time_seconds"] == pytest.approx(1.0)
+    assert result["raw_batch_elapsed_seconds"] == pytest.approx(0.0)
+    assert result["node_apply_elapsed_seconds"] == pytest.approx(0.0)
+
+
+def test_run_throughput_benchmark_aggregates_raw_batch_metrics(monkeypatch) -> None:
+    def _stub_generate_batch_iter(
+        _config,
+        *,
+        num_datasets: int,
+        seed: int | None = None,
+        device: str | None = None,
+    ):
+        _ = (num_datasets, seed, device)
+        if False:
+            yield None
+        return
+
+    def _stub_prepare_canonical_fixed_layout_run(
+        _config,
+        *,
+        num_datasets: int,
+        seed: int | None = None,
+        device: str | None = None,
+        batch_size: int | None = None,
+    ):
+        _ = batch_size
+        return SimpleNamespace(
+            config=_config,
+            plan=object(),
+            run_seed=int(seed or 0),
+            batch_size=num_datasets,
+        )
+
+    def _stub_iter_prepared_canonical_batch_iter(
+        _prepared,
+        *,
+        num_datasets: int,
+        on_raw_batch_metrics=None,
+    ):
+        assert on_raw_batch_metrics is not None
+        on_raw_batch_metrics(
+            {
+                "raw_batch_elapsed_seconds": 1.5,
+                "raw_batch_cpu_time_seconds": 0.75,
+                "node_apply_elapsed_seconds": 0.8,
+                "converter_elapsed_seconds": 0.2,
+            }
+        )
+        on_raw_batch_metrics(
+            {
+                "raw_batch_elapsed_seconds": 0.5,
+                "node_apply_elapsed_seconds": 0.3,
+                "feature_materialization_elapsed_seconds": 0.1,
+            }
+        )
+        yield from range(num_datasets)
+
+    monkeypatch.setattr(
+        "dagzoo.bench.throughput.generate_batch_iter",
+        _stub_generate_batch_iter,
+    )
+    monkeypatch.setattr(
+        "dagzoo.bench.throughput.prepare_canonical_fixed_layout_run",
+        _stub_prepare_canonical_fixed_layout_run,
+    )
+    monkeypatch.setattr(
+        "dagzoo.bench.throughput._iter_prepared_canonical_batch_iter",
+        _stub_iter_prepared_canonical_batch_iter,
+    )
+
+    result = run_throughput_benchmark(
+        GeneratorConfig(),
+        num_datasets=3,
+        warmup_datasets=0,
+        device="cpu",
+    )
+
+    assert result["raw_batch_elapsed_seconds"] == pytest.approx(2.0)
+    assert result["raw_batch_cpu_time_seconds"] == pytest.approx(0.75)
+    assert result["node_apply_elapsed_seconds"] == pytest.approx(1.1)
+    assert result["converter_elapsed_seconds"] == pytest.approx(0.2)
+    assert result["feature_materialization_elapsed_seconds"] == pytest.approx(0.1)
 
 
 def test_run_throughput_benchmark_callback_exception_does_not_hang_parallel_path() -> None:

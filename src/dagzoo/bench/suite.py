@@ -406,6 +406,26 @@ def run_preset_benchmark(
         cpu_time_seconds=generation_cpu_time_seconds,
         elapsed_seconds=generation_elapsed_seconds,
     )
+    result["raw_batch_elapsed_seconds"] = float(result.get("raw_batch_elapsed_seconds", 0.0) or 0.0)
+    result["raw_batch_cpu_time_seconds"] = float(
+        result.get("raw_batch_cpu_time_seconds", 0.0) or 0.0
+    )
+    result["node_apply_elapsed_seconds"] = float(
+        result.get("node_apply_elapsed_seconds", 0.0) or 0.0
+    )
+    result["node_apply_cpu_time_seconds"] = float(
+        result.get("node_apply_cpu_time_seconds", 0.0) or 0.0
+    )
+    result["converter_elapsed_seconds"] = float(result.get("converter_elapsed_seconds", 0.0) or 0.0)
+    result["converter_cpu_time_seconds"] = float(
+        result.get("converter_cpu_time_seconds", 0.0) or 0.0
+    )
+    result["feature_materialization_elapsed_seconds"] = float(
+        result.get("feature_materialization_elapsed_seconds", 0.0) or 0.0
+    )
+    result["feature_materialization_cpu_time_seconds"] = float(
+        result.get("feature_materialization_cpu_time_seconds", 0.0) or 0.0
+    )
     result["write_datasets_per_minute"] = float(write_dpm)
     result["write_stage_elapsed_seconds"] = float(
         getattr(write_stage_measurement, "elapsed_seconds", 0.0)

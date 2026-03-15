@@ -1,18 +1,21 @@
 import json
 from pathlib import Path
 
+import yaml
+
 from dagzoo.bench.gpu_telemetry import GpuTelemetrySample
 from dagzoo.bench.h100_validation import (
     ValidationPhase,
     _build_saturation_summary,
     _build_validation_phases,
     _run_validation_phase,
+    _write_saturation_config,
     run_h100_validation,
 )
 
 
 def test_build_validation_phases_orders_primary_and_feature_runs(tmp_path, monkeypatch) -> None:
-    repo_root = Path("/workspace/dagzoo")
+    repo_root = Path(__file__).resolve().parents[1]
     monkeypatch.setattr("dagzoo.bench.h100_validation._repo_root", lambda: repo_root)
 
     phases = _build_validation_phases(tmp_path, python_executable="/tmp/python")
@@ -32,6 +35,40 @@ def test_build_validation_phases_orders_primary_and_feature_runs(tmp_path, monke
     assert (
         tmp_path / "generated_configs" / "benchmark_cuda_h100_saturation_160000000.yaml"
     ).exists()
+
+
+def test_write_saturation_config_sets_target_cells_and_preserves_base_fields(tmp_path) -> None:
+    base_config_path = tmp_path / "benchmark_cuda_h100_saturation.yaml"
+    base_config_path.write_text(
+        "\n".join(
+            [
+                "dataset:",
+                "  n_train: 4096",
+                "runtime:",
+                "  device: cuda",
+                "benchmark:",
+                "  num_datasets: 1500",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    out_path = tmp_path / "generated" / "benchmark_cuda_h100_saturation_240000000.yaml"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    written_path = _write_saturation_config(
+        base_config_path=base_config_path,
+        out_path=out_path,
+        target_cells=240_000_000,
+    )
+
+    assert written_path == out_path
+    assert out_path.exists()
+    payload = yaml.safe_load(out_path.read_text(encoding="utf-8"))
+    assert payload["runtime"]["fixed_layout_target_cells"] == 240_000_000
+    assert payload["runtime"]["device"] == "cuda"
+    assert payload["dataset"]["n_train"] == 4096
+    assert payload["benchmark"]["num_datasets"] == 1500
 
 
 def test_build_saturation_summary_prefers_smaller_target_on_tie() -> None:

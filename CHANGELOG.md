@@ -10,6 +10,21 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.10.4] - 2026-03-15
+
+### Changed
+
+- Fixed-layout batched execution now caches compiled converter-group metadata,
+  reuses shared nested standardization work across higher-order function
+  branches, and assembles emitted feature tensors by ordered column
+  concatenation to cut repeated CPU work in the H100 path.
+- Throughput benchmarks and suite reports now record raw-batch substage timing
+  for node application, converter execution, and feature materialization so
+  H100 bottleneck analysis has direct stage evidence instead of only aggregate
+  throughput.
+- Fixed-layout runtime metric hooks now degrade cleanly when older internal
+  helper stubs do not accept the new optional timing kwargs.
+
 ## [0.10.3] - 2026-03-15
 
 ### Changed

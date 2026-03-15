@@ -31,6 +31,16 @@ _CPU_FIXED_LAYOUT_TARGET_CELLS_SWEEP: tuple[int, ...] = (
     16_000_000,
 )
 _CUDA_FIXED_LAYOUT_TARGET_CELLS_SWEEP_MULTIPLIERS: tuple[float, ...] = (1.0, 1.5, 2.0, 3.0)
+_RAW_BATCH_METRIC_KEYS: tuple[str, ...] = (
+    "raw_batch_elapsed_seconds",
+    "raw_batch_cpu_time_seconds",
+    "node_apply_elapsed_seconds",
+    "node_apply_cpu_time_seconds",
+    "converter_elapsed_seconds",
+    "converter_cpu_time_seconds",
+    "feature_materialization_elapsed_seconds",
+    "feature_materialization_cpu_time_seconds",
+)
 
 
 def _throughput_root(config: GeneratorConfig) -> KeyedRng:
@@ -203,6 +213,7 @@ def run_throughput_benchmark(
     _synchronize_accelerator(timing_device)
     start = time.perf_counter()
     start_cpu = time.process_time()
+    raw_batch_metric_totals = {key: 0.0 for key in _RAW_BATCH_METRIC_KEYS}
     prepared = prepare_canonical_fixed_layout_run(
         config,
         num_datasets=num_datasets,
@@ -212,7 +223,16 @@ def run_throughput_benchmark(
     _synchronize_accelerator(timing_device)
     prepare_elapsed_seconds = time.perf_counter() - start
     prepare_cpu_time_seconds = time.process_time() - start_cpu
-    for bundle in _iter_prepared_canonical_batch_iter(prepared, num_datasets=num_datasets):
+
+    def _on_raw_batch_metrics(metrics: dict[str, float]) -> None:
+        for key in _RAW_BATCH_METRIC_KEYS:
+            raw_batch_metric_totals[key] += float(metrics.get(key, 0.0) or 0.0)
+
+    for bundle in _iter_prepared_canonical_batch_iter(
+        prepared,
+        num_datasets=num_datasets,
+        on_raw_batch_metrics=_on_raw_batch_metrics,
+    ):
         if on_bundle is not None:
             on_bundle(bundle)
     _synchronize_accelerator(timing_device)
@@ -232,4 +252,5 @@ def run_throughput_benchmark(
         "datasets_per_minute": dpm,
         "slo_pass_100_datasets_per_min": dpm >= THROUGHPUT_SLO_DATASETS_PER_MINUTE,
         "generation_mode": "fixed_batched",
+        **raw_batch_metric_totals,
     }

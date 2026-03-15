@@ -216,6 +216,39 @@ FixedLayoutConverterGroup: TypeAlias = NumericConverterGroup | CategoricalConver
 
 
 @dataclass(frozen=True, slots=True)
+class FixedLayoutCompiledConverterSlice:
+    spec_index: int
+    key: str
+    column_start: int
+    column_end: int
+    width: int
+    cardinality: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledNumericConverterGroup:
+    spec_indices: tuple[int, ...]
+    slices: tuple[FixedLayoutCompiledConverterSlice, ...]
+    plans: tuple[NumericConverterPlan, ...]
+    warp_enabled: tuple[bool, ...]
+    all_unit_width: bool
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledCategoricalConverterGroup:
+    spec_indices: tuple[int, ...]
+    slices: tuple[FixedLayoutCompiledConverterSlice, ...]
+    plan: CategoricalConverterPlan
+    category_count: int
+    uses_center_random_fn: bool
+
+
+FixedLayoutCompiledConverterGroup: TypeAlias = (
+    CompiledNumericConverterGroup | CompiledCategoricalConverterGroup
+)
+
+
+@dataclass(frozen=True, slots=True)
 class RandomPointsNodeSource:
     base_kind: FixedLayoutRootBaseKind
     function: FixedLayoutFunctionPlan
@@ -244,6 +277,7 @@ class FixedLayoutNodePlan:
     converter_groups: tuple[FixedLayoutConverterGroup, ...]
     latent: FixedLayoutLatentPlan
     source: FixedLayoutNodeSource
+    compiled_converter_groups: tuple[FixedLayoutCompiledConverterGroup, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

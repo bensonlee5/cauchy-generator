@@ -458,6 +458,14 @@ def test_run_benchmark_suite_emits_stage_and_filter_pressure_metrics(
             "prepare_elapsed_seconds": 0.2,
             "prepare_cpu_time_seconds": 0.1,
             "elapsed_seconds": elapsed,
+            "raw_batch_elapsed_seconds": 0.6,
+            "raw_batch_cpu_time_seconds": 0.3,
+            "node_apply_elapsed_seconds": 0.4,
+            "node_apply_cpu_time_seconds": 0.2,
+            "converter_elapsed_seconds": 0.1,
+            "converter_cpu_time_seconds": 0.05,
+            "feature_materialization_elapsed_seconds": 0.08,
+            "feature_materialization_cpu_time_seconds": 0.04,
             "datasets_per_second": dps,
             "datasets_per_minute": dpm,
             "slo_pass_100_datasets_per_min": True,
@@ -530,6 +538,11 @@ def test_run_benchmark_suite_emits_stage_and_filter_pressure_metrics(
     assert result["generation_elapsed_seconds"] == pytest.approx(1.0)
     assert result["generation_cpu_time_seconds"] == pytest.approx(0.0)
     assert result["generation_cpu_busy_pct_of_wall"] == pytest.approx(0.0)
+    assert result["raw_batch_elapsed_seconds"] == pytest.approx(0.6)
+    assert result["raw_batch_cpu_time_seconds"] == pytest.approx(0.3)
+    assert result["node_apply_elapsed_seconds"] == pytest.approx(0.4)
+    assert result["converter_elapsed_seconds"] == pytest.approx(0.1)
+    assert result["feature_materialization_elapsed_seconds"] == pytest.approx(0.08)
     assert result["write_datasets_per_minute"] == pytest.approx(20.0)
     assert result["write_stage_elapsed_seconds"] == pytest.approx(0.5)
     assert result["write_stage_cpu_time_seconds"] == pytest.approx(0.25)
@@ -1788,6 +1801,14 @@ def test_write_suite_markdown_profile_table_includes_shift_and_noise_columns(
                 "generation_elapsed_seconds": 1.0,
                 "generation_cpu_time_seconds": 0.3,
                 "generation_cpu_busy_pct_of_wall": 30.0,
+                "raw_batch_elapsed_seconds": 0.7,
+                "raw_batch_cpu_time_seconds": 0.35,
+                "node_apply_elapsed_seconds": 0.5,
+                "node_apply_cpu_time_seconds": 0.25,
+                "converter_elapsed_seconds": 0.2,
+                "converter_cpu_time_seconds": 0.1,
+                "feature_materialization_elapsed_seconds": 0.12,
+                "feature_materialization_cpu_time_seconds": 0.06,
                 "fixed_layout_target_cells_effective": 4_000_000,
                 "fixed_layout_per_dataset_cells": 1024,
                 "fixed_layout_realized_batch_size": 4,
@@ -1831,6 +1852,8 @@ def test_write_suite_markdown_profile_table_includes_shift_and_noise_columns(
     assert "match" in text
     assert "mismatch" in text
     assert "## Bottleneck Evidence" in text
+    assert "- Raw batch:" in text
+    assert "node_apply_wall=0.500s" in text
     assert "target_cells=4000000" in text
     assert "reserved_mb=512.00" in text
     assert "| shift_smoke |" in text

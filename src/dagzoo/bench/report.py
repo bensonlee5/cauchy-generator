@@ -144,6 +144,14 @@ def _build_bottleneck_evidence_lines(preset_results: list[dict[str, Any]]) -> li
             f"`cpu_busy_pct={_format_float(result.get('generation_cpu_busy_pct_of_wall'), 2)}`"
         )
         lines.append(
+            "- Raw batch: "
+            f"`wall={_format_float(result.get('raw_batch_elapsed_seconds'), 3)}s`, "
+            f"`cpu={_format_float(result.get('raw_batch_cpu_time_seconds'), 3)}s`, "
+            f"`node_apply_wall={_format_float(result.get('node_apply_elapsed_seconds'), 3)}s`, "
+            f"`converter_wall={_format_float(result.get('converter_elapsed_seconds'), 3)}s`, "
+            f"`feature_wall={_format_float(result.get('feature_materialization_elapsed_seconds'), 3)}s`"
+        )
+        lines.append(
             "- Fixed layout: "
             f"`target_cells={result.get('fixed_layout_target_cells_effective', '-')}`, "
             f"`per_dataset_cells={result.get('fixed_layout_per_dataset_cells', '-')}`, "
