@@ -1,0 +1,90 @@
+{
+  "generated_at": "<TIMESTAMP>",
+  "preset_results": [
+    {
+      "converter_elapsed_seconds": "<SECONDS>",
+      "dataset_rows_total": 1024,
+      "datasets_per_minute": "<RATE>",
+      "diagnostics_artifacts": {
+        "json": "<ABSOLUTE_PATH>",
+        "markdown": "<ABSOLUTE_PATH>"
+      },
+      "diagnostics_enabled": true,
+      "device": "cpu",
+      "elapsed_seconds": "<SECONDS>",
+      "feature_materialization_elapsed_seconds": "<SECONDS>",
+      "filter_acceptance_rate_dataset_level": null,
+      "filter_accepted_datasets_per_minute": null,
+      "filter_datasets_per_minute": null,
+      "filter_stage_cpu_time_seconds": null,
+      "filter_stage_elapsed_seconds": null,
+      "filter_rejection_rate_attempt_level": null,
+      "filter_rejection_rate_dataset_level": null,
+      "filter_retry_dataset_rate": null,
+      "fixed_layout_chunk_count": 1,
+      "fixed_layout_per_dataset_cells": 32,
+      "fixed_layout_realized_batch_size": 2,
+      "fixed_layout_target_cells_effective": 1024,
+      "fixed_layout_tail_chunk_size": 0,
+      "generation_cpu_busy_pct_of_wall": "<PERCENT>",
+      "generation_cpu_time_seconds": "<SECONDS>",
+      "generation_datasets_per_minute": "<RATE>",
+      "generation_elapsed_seconds": "<SECONDS>",
+      "generation_mode": "fixed_batched",
+      "hardware_backend": "cpu",
+      "latency_p95_ms": "<MS>",
+      "lineage_guardrails": {
+        "enabled": true,
+        "status": "pass"
+      },
+      "missingness_guardrails": {
+        "enabled": false,
+        "status": "off"
+      },
+      "node_apply_elapsed_seconds": "<SECONDS>",
+      "noise_guardrails": {
+        "enabled": false,
+        "status": "off"
+      },
+      "peak_cuda_headroom_mb": "<MB>",
+      "peak_cuda_reserved_mb": "<MB>",
+      "peak_cuda_reserved_pct_of_total_memory": "<PERCENT>",
+      "peak_rss_mb": "<MB>",
+      "prepare_cpu_busy_pct_of_wall": "<PERCENT>",
+      "prepare_cpu_time_seconds": "<SECONDS>",
+      "prepare_elapsed_seconds": "<SECONDS>",
+      "preset_key": "cpu",
+      "raw_batch_cpu_time_seconds": "<SECONDS>",
+      "raw_batch_elapsed_seconds": "<SECONDS>",
+      "reproducibility_match": true,
+      "reproducibility_workload_match": false,
+      "shift_guardrails": {
+        "enabled": false,
+        "status": "off"
+      },
+      "stage_sample_datasets": 2,
+      "write_datasets_per_minute": "<RATE>",
+      "write_stage_bytes_written": 4096,
+      "write_stage_cpu_time_seconds": "<SECONDS>",
+      "write_stage_elapsed_seconds": "<SECONDS>",
+      "write_stage_mib_per_second": "<RATE>"
+    }
+  ],
+  "regression": {
+    "fail_threshold_pct": 20.0,
+    "hard_fail": false,
+    "issues": [
+      {
+        "baseline": 120.0,
+        "current": 100.0,
+        "degradation_pct": 16.6666666667,
+        "metric": "datasets_per_minute",
+        "preset": "cpu",
+        "severity": "warn"
+      }
+    ],
+    "status": "warn",
+    "warn_threshold_pct": 10.0
+  },
+  "suite": "smoke"
+}
