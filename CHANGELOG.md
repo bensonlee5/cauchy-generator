@@ -10,6 +10,21 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.10.3] - 2026-03-19
+
+### Changed
+
+- Added `./scripts/dev verify affected` plus impact-aware pytest target
+  selection so local and CI verification can choose narrower trusted test
+  slices for many code changes.
+- PR test workflow now runs an affected-change fast path, emits coverage XML,
+  and enforces changed-line coverage with `diff-cover` against `origin/main`.
+- Added normalized contract goldens for benchmark summaries, handoff manifests,
+  and diagnostics coverage artifacts, plus stricter import-linter product
+  surface contracts for `config`, `diagnostics`, and `bench`.
+- Benchmark PR workflow now renders comment markdown, step-summary markdown,
+  and `benchmark_delta.json` from benchmark summaries and checked-in baselines.
+
 ## [0.10.2] - 2026-03-15
 
 ### Changed

@@ -11,6 +11,34 @@ forbidden_modules =
     dagzoo.bench
     dagzoo.diagnostics
 
+[importlinter:contract:config_product_surface]
+name = dagzoo.config does not depend on product entrypoints
+type = forbidden
+source_modules =
+    dagzoo.config
+forbidden_modules =
+    dagzoo.cli
+    dagzoo.bench
+
+[importlinter:contract:diagnostics_product_surface]
+name = dagzoo.diagnostics does not depend on product entrypoints
+type = forbidden
+source_modules =
+    dagzoo.diagnostics
+forbidden_modules =
+    dagzoo.cli
+    dagzoo.bench
+ignore_imports =
+    dagzoo.diagnostics.effective_diversity.runner -> dagzoo.bench.corpus_probe
+
+[importlinter:contract:bench_product_surface]
+name = dagzoo.bench does not depend on product entrypoints
+type = forbidden
+source_modules =
+    dagzoo.bench
+forbidden_modules =
+    dagzoo.cli
+
 [importlinter:contract:library_product_surface]
 name = dagzoo libraries do not depend on product entrypoints
 type = forbidden

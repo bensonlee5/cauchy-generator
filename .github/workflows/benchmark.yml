@@ -47,13 +47,25 @@ jobs:
             --no-memory \
             --out-dir benchmarks/results/ci_smoke
 
-      - name: Upload smoke benchmark artifacts
+      - name: Render smoke benchmark PR report
         if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: benchmark-smoke-pr
-          path: benchmarks/results/ci_smoke
-          if-no-files-found: warn
+        run: |
+          uv run python scripts/ci/benchmark_pr_report.py \
+            --summary-json benchmarks/results/ci_smoke/summary.json \
+            --baseline-json benchmarks/baselines/cpu_smoke.json \
+            --title "Benchmark Smoke (CPU)" \
+            --comment-out benchmarks/results/ci_smoke/benchmark_pr_comment.md \
+            --step-summary-out benchmarks/results/ci_smoke/benchmark_pr_step_summary.md \
+            --delta-out benchmarks/results/ci_smoke/benchmark_delta.json
+
+      - name: Publish smoke benchmark step summary
+        if: always()
+        run: |
+          if [ -f benchmarks/results/ci_smoke/benchmark_pr_step_summary.md ]; then
+            cat benchmarks/results/ci_smoke/benchmark_pr_step_summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "benchmark_pr_step_summary.md was not generated." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Comment smoke benchmark summary on PR
         if: always()
@@ -62,14 +74,15 @@ jobs:
           script: |
             const fs = require('fs');
             const marker = '<!-- dagzoo-benchmark-smoke -->';
-            const summaryPath = 'benchmarks/results/ci_smoke/summary.md';
+            const commentPath = 'benchmarks/results/ci_smoke/benchmark_pr_comment.md';
 
-            let summary = 'Benchmark summary file was not generated.';
-            if (fs.existsSync(summaryPath)) {
-              summary = fs.readFileSync(summaryPath, 'utf8');
+            let body = `${marker}\n`;
+            if (fs.existsSync(commentPath)) {
+              body += fs.readFileSync(commentPath, 'utf8');
+            } else {
+              body += '# Benchmark Smoke (CPU)\n\n_Benchmark summary file was not generated._\n';
             }
 
-            const body = `${marker}\n## Benchmark Smoke (CPU)\n\n${summary}`;
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;
 
@@ -96,6 +109,14 @@ jobs:
                 body,
               });
             }
+
+      - name: Upload smoke benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-smoke-pr
+          path: benchmarks/results/ci_smoke
+          if-no-files-found: warn
 
   benchmark-standard-scheduled:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
