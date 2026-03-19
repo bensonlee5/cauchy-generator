@@ -1,0 +1,98 @@
+{
+  "generated_at": "<TIMESTAMP>",
+  "histogram_bins": 4,
+  "max_values_per_metric": 50000,
+  "mechanism_family_summary": {
+    "bundles_with_metadata": 0,
+    "mean_total_function_plans": 0.0,
+    "metadata_coverage_rate": 0.0
+  },
+  "metrics": {
+    "linearity_proxy": {
+      "count": 1,
+      "histogram": {
+        "covered_bins": 1,
+        "coverage_ratio": 0.25,
+        "num_bins": 4
+      },
+      "mean": 0.25,
+      "missing_count": 0,
+      "observed_max": 0.25,
+      "observed_min": 0.25,
+      "quantiles": {
+        "p25": 0.25,
+        "p50": 0.25,
+        "p75": 0.25
+      },
+      "sampled_count": 1,
+      "sampled_fraction": 1.0,
+      "target_band": {
+        "in_target_count": 1,
+        "in_target_fraction": 1.0,
+        "max": 1.0,
+        "min": 0.0
+      },
+      "std": 0.0,
+      "underrepresented_bins": [
+        {
+          "count": 0,
+          "fraction": 0.0,
+          "in_target_count": 0,
+          "in_target_fraction": 0.0,
+          "index": 0,
+          "lower": 0.0,
+          "upper": 0.25
+        },
+        {
+          "count": 0,
+          "fraction": 0.0,
+          "in_target_count": 0,
+          "in_target_fraction": 0.0,
+          "index": 2,
+          "lower": 0.5,
+          "upper": 0.75
+        },
+        {
+          "count": 0,
+          "fraction": 0.0,
+          "in_target_count": 0,
+          "in_target_fraction": 0.0,
+          "index": 3,
+          "lower": 0.75,
+          "upper": 1.0
+        }
+      ]
+    },
+    "wins_ratio_proxy": {
+      "count": 1,
+      "histogram": {
+        "covered_bins": 1,
+        "coverage_ratio": 0.25,
+        "num_bins": 4
+      },
+      "mean": 0.75,
+      "missing_count": 0,
+      "observed_max": 0.75,
+      "observed_min": 0.75,
+      "quantiles": {
+        "p25": 0.75,
+        "p50": 0.75,
+        "p75": 0.75
+      },
+      "sampled_count": 1,
+      "sampled_fraction": 1.0,
+      "target_band": null,
+      "std": 0.0,
+      "underrepresented_bins": []
+    }
+  },
+  "num_datasets": 1,
+  "quantiles": [
+    0.25,
+    0.5,
+    0.75
+  ],
+  "task_counts": {
+    "classification": 1
+  }
+}
