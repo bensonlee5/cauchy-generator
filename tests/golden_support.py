@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import mdformat
+
 GOLDENS_DIR = Path(__file__).resolve().parent / "goldens"
 
 _ABSOLUTE_PATH_PLACEHOLDER = "<ABSOLUTE_PATH>"
@@ -111,7 +113,7 @@ def normalize_benchmark_summary_markdown(text: str) -> str:
             )
             continue
         lines.append(_normalize_inline_paths(line))
-    return "\n".join(lines).rstrip() + "\n"
+    return mdformat.text("\n".join(lines).rstrip() + "\n")
 
 
 def normalize_handoff_manifest(payload: dict[str, Any]) -> dict[str, Any]:
