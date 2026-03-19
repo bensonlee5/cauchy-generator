@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from .deps import module_to_package
 from .review_policy import pytest_targets_for_path, requires_full_pytest
 
-DOCS_ONLY_PATH_PREFIXES = ("docs/", "site/")
+DOCS_ONLY_PATH_PREFIXES = ("docs/", "site/", "scripts/docs/")
 
 PACKAGE_PYTEST_TARGETS: dict[str, tuple[str, ...]] = {
     "dagzoo.cli": (
@@ -102,7 +102,7 @@ def build_pytest_selection(
     changed_modules: tuple[str, ...],
     impacted_packages: tuple[str, ...],
 ) -> PytestSelection:
-    if changed_files and _is_docs_only_change_set(changed_files):
+    if is_docs_only_change_set(changed_files):
         return PytestSelection(mode="skip", targets=(), reason="docs-only change set")
 
     for path in changed_files:
@@ -166,8 +166,8 @@ def build_pytest_selection(
     )
 
 
-def _is_docs_only_change_set(changed_files: tuple[str, ...]) -> bool:
-    return all(
+def is_docs_only_change_set(changed_files: tuple[str, ...]) -> bool:
+    return bool(changed_files) and all(
         path == "README.md" or path.startswith(DOCS_ONLY_PATH_PREFIXES) for path in changed_files
     )
 

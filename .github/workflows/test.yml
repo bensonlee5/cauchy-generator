@@ -25,6 +25,10 @@ jobs:
         run: python -m pip install --upgrade uv
       - name: Install dependencies
         run: uv sync --group dev
+      - name: Dead code
+        run: >
+          uv run vulture src/dagzoo tests
+          --ignore-names __getattr__
       - name: Fast affected verification
         run: ./scripts/dev verify affected --source base --base origin/main --incremental --parallel
 

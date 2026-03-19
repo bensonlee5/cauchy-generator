@@ -7,7 +7,7 @@ from .contract import evaluate_release_contract, render_contract_result
 from .deps import build_import_graph, dependency_docs_are_current
 from .doctor import doctor_passed, render_doctor_results, run_doctor
 from .impact import ImpactReport, build_impact_report, detect_changed_files
-from .test_selection import PytestSelection
+from .test_selection import PytestSelection, is_docs_only_change_set
 
 
 @dataclass(frozen=True)
@@ -30,7 +30,7 @@ def build_verify_plan(
     changed_files = detect_changed_files(source=source, base=base, files=files)
     graph = build_import_graph()
     report = build_impact_report(changed_files, graph=graph)
-    docs_only = set(report.tags) == {"docs"}
+    docs_only = is_docs_only_change_set(report.changed_files)
 
     commands: list[CommandSpec] = []
     headline = f"verify {mode}"

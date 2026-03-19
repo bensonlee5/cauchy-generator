@@ -179,7 +179,7 @@ def test_verify_plan_docs_only_uses_docs_commands() -> None:
         mode="quick",
         source="working-tree",
         base=None,
-        files=["README.md"],
+        files=["scripts/docs/check_links.py"],
         incremental=False,
         parallel=False,
     )
@@ -286,7 +286,7 @@ def test_verify_plan_affected_docs_only_uses_docs_commands() -> None:
         mode="affected",
         source="working-tree",
         base=None,
-        files=["README.md"],
+        files=["scripts/docs/check_links.py"],
         incremental=False,
         parallel=False,
     )
@@ -294,6 +294,24 @@ def test_verify_plan_affected_docs_only_uses_docs_commands() -> None:
     assert plan.headline == "verify affected (docs-only change set)"
     assert all(command.label.startswith("docs") for command in plan.commands)
     assert all(command.label != "pytest" for command in plan.commands)
+
+
+def test_impact_report_treats_scripts_docs_as_docs_only() -> None:
+    impact_module = _import_dev_module("devlib.impact")
+
+    report = impact_module.build_impact_report(("scripts/docs/check_links.py",))
+    payload = json.loads(impact_module.render_json(report))
+
+    assert report.tags == ("docs", "tooling")
+    assert report.recommended_modes == ("docs",)
+    assert report.pytest_selection.mode == "skip"
+    assert report.pytest_selection.reason == "docs-only change set"
+    assert payload["recommended_modes"] == ["docs"]
+    assert payload["pytest_selection"] == {
+        "mode": "skip",
+        "targets": [],
+        "reason": "docs-only change set",
+    }
 
 
 def test_verify_execute_dry_run_lists_commands(monkeypatch: pytest.MonkeyPatch) -> None:

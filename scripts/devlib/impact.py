@@ -8,7 +8,7 @@ from pathlib import Path
 from .common import REPO_ROOT, repo_relative
 from .deps import ImportGraph, build_import_graph, module_to_package, path_to_module
 from .review_policy import is_release_risk_path, suggested_pytest_targets
-from .test_selection import PytestSelection, build_pytest_selection
+from .test_selection import PytestSelection, build_pytest_selection, is_docs_only_change_set
 
 ARCHITECTURE_PATH_PREFIXES = (
     "src/dagzoo/core/",
@@ -126,7 +126,7 @@ def build_impact_report(
             changed_modules=changed_modules,
             impacted_packages=impacted_packages,
         ),
-        recommended_modes=recommend_modes(tags, module_summaries),
+        recommended_modes=recommend_modes(changed_files, tags, module_summaries),
         suggested_pytest_targets=suggested_pytest_targets(changed_files),
     )
 
@@ -172,13 +172,15 @@ def classify_tags(changed_files: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def recommend_modes(
-    tags: tuple[str, ...], module_summaries: tuple[ImpactModuleSummary, ...]
+    changed_files: tuple[str, ...],
+    tags: tuple[str, ...],
+    module_summaries: tuple[ImpactModuleSummary, ...],
 ) -> tuple[str, ...]:
     recommended: list[str] = []
     impacted_packages = {
         package for summary in module_summaries for package in summary.downstream_packages
     }
-    if "docs" in tags and tags == ("docs",):
+    if is_docs_only_change_set(changed_files):
         return ("docs",)
     recommended.append("quick")
     if "code" in tags:
