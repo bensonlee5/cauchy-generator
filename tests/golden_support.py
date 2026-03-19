@@ -113,7 +113,7 @@ def normalize_benchmark_summary_markdown(text: str) -> str:
             )
             continue
         lines.append(_normalize_inline_paths(line))
-    return mdformat.text("\n".join(lines).rstrip() + "\n")
+    return mdformat.text("\n".join(lines).rstrip() + "\n", extensions=("gfm",))
 
 
 def normalize_handoff_manifest(payload: dict[str, Any]) -> dict[str, Any]:
