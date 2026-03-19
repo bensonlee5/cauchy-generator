@@ -50,7 +50,9 @@ def build_parser() -> argparse.ArgumentParser:
     contract_parser.add_argument("--strict", action="store_true")
 
     verify_parser = subparsers.add_parser("verify")
-    verify_parser.add_argument("mode", choices=("quick", "code", "docs", "bench", "full"))
+    verify_parser.add_argument(
+        "mode", choices=("quick", "code", "docs", "bench", "full", "affected")
+    )
     _add_change_source_args(verify_parser)
     verify_parser.add_argument("--dry-run", action="store_true")
     verify_parser.add_argument("--incremental", action="store_true")

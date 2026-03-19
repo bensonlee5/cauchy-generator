@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -200,6 +201,21 @@ def test_impact_report_suggests_pytest_targets_for_cli_paths() -> None:
     )
 
 
+def test_impact_report_includes_pytest_selection_payload() -> None:
+    impact_module = _import_dev_module("devlib.impact")
+
+    report = impact_module.build_impact_report(("src/dagzoo/cli/entrypoint.py",))
+    payload = json.loads(impact_module.render_json(report))
+
+    assert report.pytest_selection.mode == "targeted"
+    assert "tests/test_cli_validation.py" in report.pytest_selection.targets
+    assert payload["pytest_selection"] == {
+        "mode": "targeted",
+        "targets": list(report.pytest_selection.targets),
+        "reason": report.pytest_selection.reason,
+    }
+
+
 def test_verify_plan_code_includes_incremental_parallel_pytest_and_architecture_checks() -> None:
     verify_module = _import_dev_module("devlib.verify")
 
@@ -221,6 +237,63 @@ def test_verify_plan_code_includes_incremental_parallel_pytest_and_architecture_
     assert "--testmon" in pytest_command.argv
     assert "-n" in pytest_command.argv
     assert "auto" in pytest_command.argv
+
+
+def test_verify_plan_affected_uses_targeted_pytest_when_safe() -> None:
+    verify_module = _import_dev_module("devlib.verify")
+
+    plan = verify_module.build_verify_plan(
+        mode="affected",
+        source="working-tree",
+        base=None,
+        files=["src/dagzoo/cli/entrypoint.py"],
+        incremental=True,
+        parallel=True,
+    )
+
+    pytest_command = next(command for command in plan.commands if command.label == "pytest")
+
+    assert plan.mode == "affected"
+    assert plan.report.pytest_selection.mode == "targeted"
+    assert "tests/test_cli_validation.py" in plan.report.pytest_selection.targets
+    assert pytest_command.argv[1:5] == ("-q", "--testmon", "-n", "auto")
+    assert "tests/test_cli_validation.py" in pytest_command.argv
+
+
+def test_verify_plan_affected_falls_back_to_full_for_tooling_changes() -> None:
+    verify_module = _import_dev_module("devlib.verify")
+
+    plan = verify_module.build_verify_plan(
+        mode="affected",
+        source="working-tree",
+        base=None,
+        files=["scripts/devlib/impact.py"],
+        incremental=True,
+        parallel=True,
+    )
+
+    pytest_command = next(command for command in plan.commands if command.label == "pytest")
+
+    assert plan.report.pytest_selection.mode == "full"
+    assert pytest_command.argv[1:5] == ("-q", "--testmon", "-n", "auto")
+    assert all(not arg.startswith("tests/") for arg in pytest_command.argv)
+
+
+def test_verify_plan_affected_docs_only_uses_docs_commands() -> None:
+    verify_module = _import_dev_module("devlib.verify")
+
+    plan = verify_module.build_verify_plan(
+        mode="affected",
+        source="working-tree",
+        base=None,
+        files=["README.md"],
+        incremental=False,
+        parallel=False,
+    )
+
+    assert plan.headline == "verify affected (docs-only change set)"
+    assert all(command.label.startswith("docs") for command in plan.commands)
+    assert all(command.label != "pytest" for command in plan.commands)
 
 
 def test_verify_execute_dry_run_lists_commands(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -286,15 +359,12 @@ def test_dev_cli_help_exposes_new_commands(capsys: pytest.CaptureFixture[str]) -
     module = _load_dev_cli()
 
     with pytest.raises(SystemExit) as exc_info:
-        module.main(["--help"])
+        module.main(["verify", "--help"])
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    assert "doctor" in captured.out
-    assert "deps" in captured.out
-    assert "impact" in captured.out
-    assert "contract" in captured.out
-    assert "verify" in captured.out
+    assert "quick" in captured.out
+    assert "affected" in captured.out
 
 
 def test_dev_cli_contract_accepts_staged_source(monkeypatch: pytest.MonkeyPatch) -> None:

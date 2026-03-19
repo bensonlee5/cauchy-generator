@@ -8,6 +8,7 @@ from pathlib import Path
 from .common import REPO_ROOT, repo_relative
 from .deps import ImportGraph, build_import_graph, module_to_package, path_to_module
 from .review_policy import is_release_risk_path, suggested_pytest_targets
+from .test_selection import PytestSelection, build_pytest_selection
 
 ARCHITECTURE_PATH_PREFIXES = (
     "src/dagzoo/core/",
@@ -33,6 +34,7 @@ class ImpactReport:
     tags: tuple[str, ...]
     changed_modules: tuple[str, ...]
     module_summaries: tuple[ImpactModuleSummary, ...]
+    pytest_selection: PytestSelection
     recommended_modes: tuple[str, ...]
     suggested_pytest_targets: tuple[str, ...]
 
@@ -111,11 +113,19 @@ def build_impact_report(
         )
         for module in changed_modules
     )
+    impacted_packages = tuple(
+        sorted({package for summary in module_summaries for package in summary.downstream_packages})
+    )
     return ImpactReport(
         changed_files=changed_files,
         tags=tags,
         changed_modules=changed_modules,
         module_summaries=module_summaries,
+        pytest_selection=build_pytest_selection(
+            changed_files=changed_files,
+            changed_modules=changed_modules,
+            impacted_packages=impacted_packages,
+        ),
         recommended_modes=recommend_modes(tags, module_summaries),
         suggested_pytest_targets=suggested_pytest_targets(changed_files),
     )
@@ -199,6 +209,18 @@ def render_text(report: ImpactReport) -> str:
                 "- " + ", ".join(f"`{target}`" for target in report.suggested_pytest_targets),
             ]
         )
+    lines.extend(
+        [
+            "",
+            "Pytest selection:",
+            f"- mode: `{report.pytest_selection.mode}`",
+            f"- reason: {report.pytest_selection.reason}",
+        ]
+    )
+    if report.pytest_selection.targets:
+        lines.append(
+            "- targets: " + ", ".join(f"`{target}`" for target in report.pytest_selection.targets)
+        )
     if report.module_summaries:
         lines.extend(["", "Module impact:"])
         for summary in report.module_summaries:
@@ -226,6 +248,11 @@ def render_json(report: ImpactReport) -> str:
         "tags": list(report.tags),
         "recommended_modes": list(report.recommended_modes),
         "suggested_pytest_targets": list(report.suggested_pytest_targets),
+        "pytest_selection": {
+            "mode": report.pytest_selection.mode,
+            "targets": list(report.pytest_selection.targets),
+            "reason": report.pytest_selection.reason,
+        },
         "modules": [
             {
                 "module": summary.module,

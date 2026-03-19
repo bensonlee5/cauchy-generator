@@ -7,10 +7,12 @@ from .contract import evaluate_release_contract, render_contract_result
 from .deps import build_import_graph, dependency_docs_are_current
 from .doctor import doctor_passed, render_doctor_results, run_doctor
 from .impact import ImpactReport, build_impact_report, detect_changed_files
+from .test_selection import PytestSelection
 
 
 @dataclass(frozen=True)
 class VerifyPlan:
+    mode: str
     headline: str
     commands: tuple[CommandSpec, ...]
     report: ImpactReport
@@ -28,21 +30,31 @@ def build_verify_plan(
     changed_files = detect_changed_files(source=source, base=base, files=files)
     graph = build_import_graph()
     report = build_impact_report(changed_files, graph=graph)
-    docs_only = bool(report.tags) and set(report.tags).issubset({"docs", "tooling"})
+    docs_only = set(report.tags) == {"docs"}
 
     commands: list[CommandSpec] = []
     headline = f"verify {mode}"
-    if mode in {"quick", "code", "full"} and not docs_only:
+    if mode in {"quick", "code", "full", "affected"} and not docs_only:
         commands.extend(_code_quick_commands(report, graph_changed=bool(report.changed_modules)))
     if mode in {"docs", "full"} or docs_only:
         commands.extend(_docs_commands())
     if mode in {"code", "full"} and not docs_only:
         commands.extend(_pytest_commands(incremental=incremental, parallel=parallel))
+    if mode == "affected" and not docs_only:
+        commands.extend(
+            _affected_pytest_commands(
+                selection=report.pytest_selection,
+                incremental=incremental,
+                parallel=parallel,
+            )
+        )
     if mode in {"bench", "full"}:
         commands.extend(_bench_commands())
     if mode == "quick" and docs_only:
         headline = "verify quick (docs-only change set)"
-    return VerifyPlan(headline=headline, commands=tuple(commands), report=report)
+    if mode == "affected" and docs_only:
+        headline = "verify affected (docs-only change set)"
+    return VerifyPlan(mode=mode, headline=headline, commands=tuple(commands), report=report)
 
 
 def execute_verify_plan(plan: VerifyPlan, *, dry_run: bool) -> str:
@@ -53,6 +65,12 @@ def execute_verify_plan(plan: VerifyPlan, *, dry_run: bool) -> str:
     ]
     if plan.report.suggested_pytest_targets:
         lines.append("suggested pytest targets: " + ", ".join(plan.report.suggested_pytest_targets))
+    if plan.mode == "affected":
+        selection = plan.report.pytest_selection
+        lines.append(f"pytest selection: {selection.mode}")
+        lines.append(f"pytest selection reason: {selection.reason}")
+        if selection.targets:
+            lines.append("pytest selection targets: " + ", ".join(selection.targets))
     code_results = run_doctor("code")
     needs_code_doctor = any(not command.label.startswith("docs") for command in plan.commands)
     if needs_code_doctor and not doctor_passed(code_results):
@@ -138,13 +156,34 @@ def _docs_commands() -> list[CommandSpec]:
 
 
 def _pytest_commands(*, incremental: bool, parallel: bool) -> list[CommandSpec]:
+    return [_build_pytest_command(targets=(), incremental=incremental, parallel=parallel)]
+
+
+def _affected_pytest_commands(
+    *, selection: PytestSelection, incremental: bool, parallel: bool
+) -> list[CommandSpec]:
+    if selection.mode == "skip":
+        return []
+    return [
+        _build_pytest_command(
+            targets=selection.targets if selection.mode == "targeted" else (),
+            incremental=incremental,
+            parallel=parallel,
+        )
+    ]
+
+
+def _build_pytest_command(
+    *, targets: tuple[str, ...], incremental: bool, parallel: bool
+) -> CommandSpec:
     argv = [python_tool("pytest")]
+    argv.append("-q")
     if incremental:
         argv.append("--testmon")
-    argv.append("-q")
     if parallel:
         argv.extend(("-n", "auto"))
-    return [CommandSpec(label="pytest", argv=tuple(argv))]
+    argv.extend(targets)
+    return CommandSpec(label="pytest", argv=tuple(argv))
 
 
 def _bench_commands() -> list[CommandSpec]:
