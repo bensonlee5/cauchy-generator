@@ -28,3 +28,5 @@
 
 - For behavior/schema changes under `src/dagzoo`, bump version in `pyproject.toml` just before merging into main so that the version reflects the latest changes (patch by default; minor for intentionally broad user-facing breaks). Docs/tests-only changes do not require a bump.
 - On every version bump, update `CHANGELOG.md` in the same PR.
+- When `roadmap.md` is updated, update the associated GitHub issues with links to the relevant sections of `roadmap.md`, and link to the relevant GitHub issues from `roadmap.md`, to keep the web of context connected.
+- If a response would close a Github issue, please say so explicitly in the response, and link to the issue number, so that the user can verify that the issue is being closed as expected.
