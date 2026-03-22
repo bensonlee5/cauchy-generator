@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from dagzoo.filter_thresholds import validate_filter_threshold
 from dagzoo.rng import SEED32_MAX, SEED32_MIN
 
 from .constants import (
@@ -277,6 +278,10 @@ def _normalize_benchmark_fields(_benchmark: BenchmarkConfig) -> None:
 def _normalize_filter_fields(filter_cfg: FilterConfig) -> None:
     """Stage 1: normalize filter scalar fields."""
 
+    filter_cfg.threshold = validate_filter_threshold(
+        filter_cfg.threshold,
+        field_name="filter.threshold",
+    )
     filter_cfg.n_jobs = _validate_int_field(
         field_name="filter.n_jobs",
         value=filter_cfg.n_jobs,

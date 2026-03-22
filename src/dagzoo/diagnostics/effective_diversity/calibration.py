@@ -6,13 +6,17 @@ import math
 from typing import Any, Sequence
 
 from dagzoo.config import GeneratorConfig, clone_generator_config
-from dagzoo.filtering.availability import raise_filtering_unsupported
+from dagzoo.filter_thresholds import (
+    FILTER_THRESHOLD_MAX,
+    FILTER_THRESHOLD_MIN,
+    validate_filter_threshold,
+)
 
 from .runner import run_effective_diversity_audit
 
 DEFAULT_FILTER_CALIBRATION_DELTAS: tuple[float, ...] = (-0.15, -0.10, -0.05, 0.0, 0.05)
-_CALIBRATION_THRESHOLD_MIN = 0.0
-_CALIBRATION_THRESHOLD_MAX = 1.5
+_CALIBRATION_THRESHOLD_MIN = FILTER_THRESHOLD_MIN
+_CALIBRATION_THRESHOLD_MAX = FILTER_THRESHOLD_MAX
 
 
 def validate_filter_calibration_threshold(
@@ -22,12 +26,7 @@ def validate_filter_calibration_threshold(
 ) -> float:
     """Validate one calibration threshold value."""
 
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-        raise ValueError(f"{field_name} must be a finite value in [0.0, 1.5].")
-    as_float = float(value)
-    if not (_CALIBRATION_THRESHOLD_MIN <= as_float <= _CALIBRATION_THRESHOLD_MAX):
-        raise ValueError(f"{field_name} must be a finite value in [0.0, 1.5].")
-    return as_float
+    return validate_filter_threshold(value, field_name=field_name)
 
 
 def _normalize_threshold_candidate(value: float) -> float:
@@ -171,8 +170,6 @@ def run_filter_calibration(
     fail_threshold_pct: float,
 ) -> dict[str, Any]:
     """Run threshold-only filter calibration against the rewritten audit engine."""
-
-    raise_filtering_unsupported()
 
     if not bool(config.filter.enabled):
         raise ValueError("filter-calibration requires filter.enabled: true in the resolved config.")

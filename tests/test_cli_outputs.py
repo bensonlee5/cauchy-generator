@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -52,29 +53,39 @@ def test_filter_cli_prints_curated_output_summary(
 ) -> None:
     monkeypatch.setattr(
         "dagzoo.cli.run_deferred_filter",
-        lambda **_kwargs: (_ for _ in ()).throw(
-            NotImplementedError(
-                "Deferred filtering is temporarily disabled; generated outputs are the only supported corpus artifact for now."
-            )
+        lambda **_kwargs: SimpleNamespace(
+            manifest_path=tmp_path / "filter_out" / "filter_manifest.ndjson",
+            summary_path=tmp_path / "filter_out" / "filter_summary.json",
+            total_datasets=4,
+            accepted_datasets=3,
+            rejected_datasets=1,
+            elapsed_seconds=2.0,
+            datasets_per_minute=120.0,
+            curated_out_dir=tmp_path / "curated_out",
+            curated_accepted_datasets=3,
         ),
     )
 
-    with pytest.raises(SystemExit) as exc:
-        main(
-            [
-                "filter",
-                "--in",
-                "input_shards",
-                "--out",
-                str(tmp_path / "filter_out"),
-                "--curated-out",
-                str(tmp_path / "curated_out"),
-            ]
-        )
+    code = main(
+        [
+            "filter",
+            "--in",
+            "input_shards",
+            "--out",
+            str(tmp_path / "filter_out"),
+            "--curated-out",
+            str(tmp_path / "curated_out"),
+            "--threshold",
+            "0.0",
+        ]
+    )
 
-    assert int(exc.value.code) == 2
+    assert code == 0
     captured = capsys.readouterr()
-    assert "Deferred filtering is temporarily disabled" in captured.err
+    assert "Wrote filter manifest:" in captured.out
+    assert "Wrote filter summary:" in captured.out
+    assert "Deferred filter summary: total=4 accepted=3 rejected=1 dpm=120.00" in captured.out
+    assert "Wrote curated accepted-only shards:" in captured.out
 
 
 def test_generate_cli_prints_handoff_execution_summary(
@@ -248,32 +259,46 @@ def test_diversity_audit_cli_fail_on_regression_treats_insufficient_metrics_as_e
     assert code == 1
 
 
-def test_filter_calibration_cli_reports_unsupported_status(
+def test_filter_calibration_cli_reports_status(
     tmp_path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
         "dagzoo.cli.run_filter_calibration",
-        lambda **_kwargs: (_ for _ in ()).throw(
-            NotImplementedError(
-                "Deferred filtering is temporarily disabled; generated outputs are the only supported corpus artifact for now."
-            )
-        ),
+        lambda **_kwargs: {
+            "summary": {
+                "overall_status": "pass",
+                "best_overall_diversity_status": "pass",
+                "best_overall_threshold_requested": 0.8,
+                "best_passing_threshold_requested": 0.8,
+                "num_candidates": 3,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        "dagzoo.cli.write_filter_calibration_artifacts",
+        lambda _report, out_dir: {
+            "summary_json": Path(out_dir) / "summary.json",
+            "summary_md": Path(out_dir) / "summary.md",
+        },
     )
 
-    with pytest.raises(SystemExit) as exc:
-        main(
-            [
-                "filter-calibration",
-                "--config",
-                "configs/preset_filter_benchmark_smoke.yaml",
-                "--out-dir",
-                str(tmp_path / "filter_calibration"),
-            ]
-        )
+    code = main(
+        [
+            "filter-calibration",
+            "--config",
+            "configs/preset_filter_benchmark_smoke.yaml",
+            "--out-dir",
+            str(tmp_path / "filter_calibration"),
+        ]
+    )
 
-    assert int(exc.value.code) == 2
+    assert code == 0
     captured = capsys.readouterr()
-    assert "Deferred filtering is temporarily disabled" in captured.err
+    assert "Wrote filter calibration artifact [summary_json]:" in captured.out
+    assert (
+        "Filter calibration status=pass best_overall=0.8 best_passing=0.8 candidates=3"
+        in captured.out
+    )
 
 
 def test_hardware_cli_prints_detected_hardware(

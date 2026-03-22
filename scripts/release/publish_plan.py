@@ -6,31 +6,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-_PYPROJECT_VERSION_RE = re.compile(r'^version = "([^"]+)"$', re.MULTILINE)
+SCRIPT_DIR = Path(__file__).resolve().parents[1]
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
-
-@dataclass(frozen=True, order=True)
-class SemVer:
-    major: int
-    minor: int
-    patch: int
-
-    @classmethod
-    def parse(cls, value: str) -> "SemVer":
-        match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", str(value).strip())
-        if match is None:
-            raise ValueError(f"Unsupported version format: {value!r}")
-        return cls(*(int(part) for part in match.groups()))
-
-    def __str__(self) -> str:
-        return f"{self.major}.{self.minor}.{self.patch}"
+from devlib.semver import SemVer, allowed_release_successors, read_pyproject_version  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -38,14 +24,6 @@ class PublishDecision:
     should_publish: bool
     version: str
     reason: str
-
-
-def read_pyproject_version(pyproject_path: str) -> str:
-    text = Path(pyproject_path).read_text(encoding="utf-8")
-    match = _PYPROJECT_VERSION_RE.search(text)
-    if match is None:
-        raise ValueError(f"Could not parse version from {pyproject_path!r}")
-    return match.group(1)
 
 
 def parse_tag_version(tag_name: str) -> str:
@@ -58,11 +36,7 @@ def parse_tag_version(tag_name: str) -> str:
 
 
 def allowed_successors(previous: SemVer) -> set[SemVer]:
-    return {
-        SemVer(previous.major, previous.minor, previous.patch + 1),
-        SemVer(previous.major, previous.minor + 1, 0),
-        SemVer(previous.major + 1, 0, 0),
-    }
+    return allowed_release_successors(previous)
 
 
 def fetch_published_versions(package_name: str) -> set[str]:
@@ -124,7 +98,7 @@ def resolve_publish_decision(
         )
 
     previous = max(parsed_published)
-    allowed = allowed_successors(previous)
+    allowed = allowed_release_successors(previous)
     if current not in allowed:
         allowed_list = ", ".join(str(version) for version in sorted(allowed))
         raise ValueError(
