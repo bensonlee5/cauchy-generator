@@ -16,6 +16,7 @@ def run_filter_command(args: argparse.Namespace) -> int:
             in_dir=args.in_dir,
             out_dir=args.out,
             curated_out_dir=args.curated_out,
+            threshold_override=args.threshold,
             n_jobs_override=args.n_jobs,
         )
     except NotImplementedError as exc:

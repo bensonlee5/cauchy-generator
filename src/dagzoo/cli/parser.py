@@ -22,6 +22,7 @@ from .parsing import (
     filter_n_jobs,
     non_negative_int,
     parse_fail_threshold_pct_arg,
+    parse_filter_threshold_arg,
     parse_missing_mar_logit_scale_arg,
     parse_missing_mar_observed_fraction_arg,
     parse_missing_mechanism_arg,
@@ -141,7 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     f = sub.add_parser(
         "filter",
-        help="Deferred filtering is temporarily unsupported.",
+        help="Replay deferred filtering over generated shard outputs.",
     )
     f.set_defaults(handler=run_filter_command)
     f.add_argument(
@@ -158,7 +159,13 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument(
         "--curated-out",
         default=None,
-        help="Reserved output directory flag; filtering is temporarily unsupported.",
+        help="Optional output directory for accepted-only curated shards.",
+    )
+    f.add_argument(
+        "--threshold",
+        type=parse_filter_threshold_arg,
+        default=None,
+        help="Optional threshold override in [0, 1]; 0 bypasses model scoring and accepts all.",
     )
     f.add_argument(
         "--n-jobs",
@@ -332,7 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     c = sub.add_parser(
         "filter-calibration",
-        help="Filter calibration is temporarily unsupported while deferred filtering is disabled.",
+        help="Sweep filter thresholds and compare accepted-throughput under diversity guardrails.",
     )
     c.set_defaults(handler=run_filter_calibration_command)
     c.add_argument("--config", required=True, help="Filter-enabled generator config YAML path.")

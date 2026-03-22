@@ -12,6 +12,11 @@ from dagzoo.config import (
     MISSINGNESS_MECHANISM_NONE,
     normalize_missing_mechanism,
 )
+from dagzoo.filter_thresholds import (
+    FILTER_THRESHOLD_EXPECTATION,
+    FILTER_THRESHOLD_MAX,
+    FILTER_THRESHOLD_MIN,
+)
 from dagzoo.hardware_policy import list_hardware_policies
 from dagzoo.rng import SEED32_MAX, SEED32_MIN
 
@@ -156,25 +161,39 @@ def parse_missing_mnar_logit_scale_arg(raw: str) -> float:
 
 
 def parse_thresholds_csv_arg(raw: str) -> list[float]:
-    """argparse type: parse threshold sweep CSV values in [0, 1.5]."""
+    """argparse type: parse threshold sweep CSV values in [0, 1]."""
 
     parts = [part.strip() for part in str(raw).split(",")]
     if not parts or any(part == "" for part in parts):
         raise argparse.ArgumentTypeError(
-            "Invalid --thresholds value. Expected a CSV list of finite values in [0, 1.5]."
+            "Invalid --thresholds value. Expected a CSV list of finite values in [0.0, 1.0]."
         )
     return [
         parse_bounded_float(
             part,
             flag="--thresholds",
-            lo=0.0,
-            hi=1.5,
+            lo=FILTER_THRESHOLD_MIN,
+            hi=FILTER_THRESHOLD_MAX,
             lo_inclusive=True,
             hi_inclusive=True,
-            expectation="a finite value in [0, 1.5]",
+            expectation=FILTER_THRESHOLD_EXPECTATION,
         )
         for part in parts
     ]
+
+
+def parse_filter_threshold_arg(raw: str) -> float:
+    """argparse type: parse one deferred-filter threshold in [0, 1]."""
+
+    return parse_bounded_float(
+        raw,
+        flag="--threshold",
+        lo=FILTER_THRESHOLD_MIN,
+        hi=FILTER_THRESHOLD_MAX,
+        lo_inclusive=True,
+        hi_inclusive=True,
+        expectation=FILTER_THRESHOLD_EXPECTATION,
+    )
 
 
 def parse_warn_threshold_pct_arg(raw: str) -> float:

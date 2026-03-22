@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from dagzoo.config import FilterConfig
+from dagzoo.filter_thresholds import validate_filter_threshold
 from dagzoo.rng import SEED32_MAX, SEED32_MIN
 
 
@@ -41,6 +42,7 @@ def _resolve_filter_seed(metadata_payload: Mapping[str, Any], *, dataset_index: 
 def _resolve_task_and_filter_config(
     *,
     metadata_payload: Mapping[str, Any],
+    threshold_override: float | None,
     n_jobs_override: int | None,
 ) -> tuple[str, FilterConfig]:
     """Resolve task + filter config for one dataset record."""
@@ -73,6 +75,11 @@ def _resolve_task_and_filter_config(
         )
 
     filter_cfg.enabled = True
+    if threshold_override is not None:
+        filter_cfg.threshold = validate_filter_threshold(
+            threshold_override,
+            field_name="threshold_override",
+        )
     if n_jobs_override is not None:
         filter_cfg.n_jobs = int(n_jobs_override)
         filter_cfg.__post_init__()

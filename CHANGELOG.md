@@ -10,6 +10,21 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.11.0] - 2026-03-21
+
+### Changed
+
+- `dagzoo filter` and `dagzoo filter-calibration` are supported again. Deferred
+  filtering now accepts an explicit `--threshold` override, and
+  `threshold=0.0` runs as a provenance-preserving bypass that accepts every
+  dataset without fitting ExtraTrees.
+- **BREAKING:** filter thresholds are now constrained to the public range
+  `[0.0, 1.0]` across config validation, deferred filter CLI overrides, and
+  filter-calibration threshold sweeps.
+- Pull request CI now validates `pyproject.toml` version bumps against
+  `origin/main` and only allows unchanged versions or a single patch/minor step
+  per PR.
+
 ## [0.10.3] - 2026-03-19
 
 ### Changed

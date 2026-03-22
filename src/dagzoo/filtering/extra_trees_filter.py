@@ -10,6 +10,12 @@ import numpy as np
 import torch
 from sklearn.ensemble import ExtraTreesRegressor
 
+from dagzoo.filter_thresholds import (
+    ZERO_FILTER_THRESHOLD_BACKEND,
+    ZERO_FILTER_THRESHOLD_POLICY,
+    is_filter_threshold_bypass,
+    validate_filter_threshold,
+)
 from dagzoo.rng import validate_seed32
 
 _CLASS_AWARE_THRESHOLD_POLICY = "class_aware_piecewise_v1"
@@ -197,9 +203,24 @@ def _apply_extra_trees_filter_numpy(
             f"x has {n_rows} rows, y has {int(y_np.shape[0])} rows."
         )
 
+    requested_threshold = validate_filter_threshold(
+        threshold,
+        field_name="threshold",
+    )
+    if is_filter_threshold_bypass(requested_threshold):
+        return True, {
+            "backend": ZERO_FILTER_THRESHOLD_BACKEND,
+            "bypass": True,
+            "threshold_requested": float(requested_threshold),
+            "threshold_effective": float(requested_threshold),
+            "threshold_policy": ZERO_FILTER_THRESHOLD_POLICY,
+            "threshold_delta": 0.0,
+            "n_jobs": int(n_jobs),
+        }
+
     threshold_details = _resolve_threshold_diagnostics(
         task=task,
-        requested_threshold=float(threshold),
+        requested_threshold=float(requested_threshold),
         class_count=class_count,
     )
     effective_threshold = float(threshold_details["threshold_effective"])

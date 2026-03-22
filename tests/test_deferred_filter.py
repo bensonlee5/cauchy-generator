@@ -12,9 +12,7 @@ from dagzoo.types import DatasetBundle
 
 
 def _allow_deferred_filter_impl(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "dagzoo.filtering.deferred_filter.raise_filtering_unsupported", lambda: None
-    )
+    _ = monkeypatch
 
 
 def _bundle_with_embedded_config(
@@ -348,6 +346,115 @@ def test_run_deferred_filter_prefers_dataset_seed_when_present(
     assert result.total_datasets == 2
     assert result.accepted_datasets == 2
     assert replay_seeds == [501, 502]
+
+
+def test_run_deferred_filter_applies_threshold_override_and_records_summary_provenance(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_deferred_filter_impl(monkeypatch)
+    pytest.importorskip("pyarrow.parquet")
+
+    in_dir = tmp_path / "input"
+    out_dir = tmp_path / "filter_out"
+    bundles = [_bundle_with_embedded_config(301), _bundle_with_embedded_config(302)]
+    _ = write_packed_parquet_shards_stream(bundles, in_dir, shard_size=2, compression="zstd")
+
+    seen_thresholds: list[float] = []
+
+    def _stub_filter(*_args, **_kwargs):
+        threshold = float(_kwargs["threshold"])
+        seen_thresholds.append(threshold)
+        return True, {
+            "wins_ratio": 1.0,
+            "n_valid_oob": 128,
+            "threshold_requested": threshold,
+            "threshold_effective": threshold,
+            "threshold_policy": "test_override",
+            "threshold_delta": 0.0,
+        }
+
+    monkeypatch.setattr(
+        "dagzoo.filtering.deferred_filter._apply_extra_trees_filter_numpy", _stub_filter
+    )
+
+    result = run_deferred_filter(
+        in_dir=in_dir,
+        out_dir=out_dir,
+        threshold_override=0.4,
+    )
+
+    assert result.accepted_datasets == 2
+    assert seen_thresholds == [0.4, 0.4]
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    assert summary["threshold_requested_override"] == pytest.approx(0.4)
+    manifest_records = _load_ndjson(result.manifest_path)
+    assert manifest_records[0]["filter"]["threshold_requested"] == pytest.approx(0.4)
+    assert manifest_records[0]["filter"]["threshold_effective"] == pytest.approx(0.4)
+
+
+def test_run_deferred_filter_uses_embedded_threshold_when_override_is_omitted(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_deferred_filter_impl(monkeypatch)
+    pytest.importorskip("pyarrow.parquet")
+
+    in_dir = tmp_path / "input"
+    out_dir = tmp_path / "filter_out"
+    bundles = [_bundle_with_embedded_config(401)]
+    bundles[0].metadata["config"]["filter"]["threshold"] = 0.6
+    _ = write_packed_parquet_shards_stream(bundles, in_dir, shard_size=1, compression="zstd")
+
+    seen_thresholds: list[float] = []
+
+    def _stub_filter(*_args, **_kwargs):
+        seen_thresholds.append(float(_kwargs["threshold"]))
+        return True, {"wins_ratio": 1.0, "n_valid_oob": 128}
+
+    monkeypatch.setattr(
+        "dagzoo.filtering.deferred_filter._apply_extra_trees_filter_numpy", _stub_filter
+    )
+
+    _ = run_deferred_filter(in_dir=in_dir, out_dir=out_dir)
+
+    assert seen_thresholds == [0.6]
+
+
+def test_run_deferred_filter_zero_threshold_bypass_accepts_all_and_writes_curated_output(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_deferred_filter_impl(monkeypatch)
+    pytest.importorskip("pyarrow.parquet")
+
+    in_dir = tmp_path / "input"
+    out_dir = tmp_path / "filter_out"
+    curated_out = tmp_path / "curated"
+    bundles = [_bundle_with_embedded_config(501), _bundle_with_embedded_config(502)]
+    _ = write_packed_parquet_shards_stream(bundles, in_dir, shard_size=2, compression="zstd")
+
+    result = run_deferred_filter(
+        in_dir=in_dir,
+        out_dir=out_dir,
+        curated_out_dir=curated_out,
+        threshold_override=0.0,
+    )
+
+    assert result.accepted_datasets == 2
+    assert result.rejected_datasets == 0
+    assert result.curated_accepted_datasets == 2
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    assert summary["threshold_requested_override"] == pytest.approx(0.0)
+    manifest_records = _load_ndjson(result.manifest_path)
+    assert {record["status"] for record in manifest_records} == {"accepted"}
+    for record in manifest_records:
+        filter_payload = record["filter"]
+        assert filter_payload["backend"] == "filter_threshold_bypass"
+        assert filter_payload["bypass"] is True
+        assert filter_payload["threshold_requested"] == pytest.approx(0.0)
+        assert filter_payload["threshold_effective"] == pytest.approx(0.0)
+    assert (curated_out / "shard_00000" / "metadata.ndjson").exists()
 
 
 def test_run_deferred_filter_rejects_stale_filter_output_dir(

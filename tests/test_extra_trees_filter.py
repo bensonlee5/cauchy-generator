@@ -193,12 +193,48 @@ def test_extra_trees_filter_excludes_rows_with_no_oob_votes() -> None:
         max_depth=6,
         min_samples_leaf=1,
         n_bootstrap=8,
-        threshold=0.0,
+        threshold=0.1,
     )
 
     assert accepted is False
     assert details["reason"] == "insufficient_oob_predictions"
     assert 0 <= int(details["n_valid_oob"]) < n_rows
+
+
+def test_extra_trees_filter_zero_threshold_bypasses_model_scoring(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    x, y = _make_regression_data(seed=13, n_rows=64, n_features=8)
+
+    def _fail_model_init(*_args, **_kwargs):
+        raise AssertionError("ExtraTreesRegressor should not be instantiated in bypass mode")
+
+    monkeypatch.setattr(
+        "dagzoo.filtering.extra_trees_filter.ExtraTreesRegressor",
+        _fail_model_init,
+    )
+
+    accepted, details = apply_extra_trees_filter(
+        x,
+        y,
+        task="regression",
+        seed=115,
+        n_estimators=1,
+        max_depth=6,
+        min_samples_leaf=1,
+        n_bootstrap=8,
+        threshold=0.0,
+    )
+
+    assert accepted is True
+    assert details["backend"] == "filter_threshold_bypass"
+    assert details["bypass"] is True
+    assert details["threshold_requested"] == pytest.approx(0.0)
+    assert details["threshold_effective"] == pytest.approx(0.0)
+    assert details["threshold_policy"] == "zero_bypass_v1"
+    assert details["threshold_delta"] == pytest.approx(0.0)
+    assert "wins_ratio" not in details
+    assert "n_valid_oob" not in details
 
 
 def test_extra_trees_filter_classification_smoke() -> None:
@@ -289,8 +325,14 @@ def test_extra_trees_filter_regression_threshold_diagnostics_are_not_applicable(
     assert details["threshold_delta"] == pytest.approx(0.0)
 
 
-def test_extra_trees_filter_rejected_scored_run_keeps_threshold_diagnostics() -> None:
+def test_extra_trees_filter_rejected_scored_run_keeps_threshold_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     x, y = _make_classification_data(seed=77, n_rows=384, n_features=12, n_classes=32)
+    monkeypatch.setattr(
+        "dagzoo.filtering.extra_trees_filter._bootstrap_wins_ratio",
+        lambda **_kwargs: 0.5,
+    )
     accepted, details = apply_extra_trees_filter(
         x,
         y,
@@ -300,13 +342,13 @@ def test_extra_trees_filter_rejected_scored_run_keeps_threshold_diagnostics() ->
         max_depth=4,
         min_samples_leaf=2,
         n_bootstrap=16,
-        threshold=2.0,
+        threshold=1.0,
     )
 
     assert accepted is False
     assert "wins_ratio" in details
-    assert details["threshold_requested"] == pytest.approx(2.0)
-    assert details["threshold_effective"] == pytest.approx(1.85)
+    assert details["threshold_requested"] == pytest.approx(1.0)
+    assert details["threshold_effective"] == pytest.approx(0.85)
     assert details["threshold_policy"] == "class_aware_piecewise_v1"
     assert details["class_bucket"] == "25-32"
     assert int(details["class_count"]) == 32
@@ -442,4 +484,20 @@ def test_extra_trees_filter_rejects_invalid_n_jobs(bad_n_jobs: int | bool) -> No
             n_bootstrap=8,
             threshold=0.5,
             n_jobs=bad_n_jobs,
+        )
+
+
+@pytest.mark.parametrize("bad_threshold", [float("nan"), float("inf"), -0.1, 1.1, True])
+def test_extra_trees_filter_rejects_invalid_thresholds(bad_threshold: float | bool) -> None:
+    x, y = _make_regression_data(seed=123)
+    with pytest.raises(ValueError, match=r"threshold must be a finite value in \[0.0, 1.0\]"):
+        apply_extra_trees_filter(
+            x,
+            y,
+            task="regression",
+            seed=42,
+            n_estimators=4,
+            max_depth=3,
+            n_bootstrap=8,
+            threshold=bad_threshold,
         )

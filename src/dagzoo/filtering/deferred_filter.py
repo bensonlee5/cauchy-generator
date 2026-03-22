@@ -16,7 +16,7 @@ from dagzoo.config import FilterConfig
 from dagzoo.core.staged_artifacts import cleanup_path as _cleanup_path
 from dagzoo.core.staged_artifacts import promote_staged_path as _promote_staged_path
 from dagzoo.core.staged_artifacts import staged_output_path as _staged_output_path
-from dagzoo.filtering.availability import raise_filtering_unsupported
+from dagzoo.filter_thresholds import validate_filter_threshold
 from dagzoo.filtering.deferred_filter_artifacts import (
     _close_curated_shard_writer,
     _consume_expected_split,
@@ -324,11 +324,10 @@ def run_deferred_filter(
     in_dir: str | Path,
     out_dir: str | Path,
     curated_out_dir: str | Path | None = None,
+    threshold_override: float | None = None,
     n_jobs_override: int | None = None,
 ) -> DeferredFilterRunResult:
     """Replay ExtraTrees filter over persisted shard outputs."""
-
-    raise_filtering_unsupported()
 
     _require_pyarrow()
 
@@ -349,6 +348,12 @@ def run_deferred_filter(
     rejected_total = 0
     total_elapsed_seconds = 0.0
     curated_accepted_total = 0
+    validated_threshold_override: float | None = None
+    if threshold_override is not None:
+        validated_threshold_override = validate_filter_threshold(
+            threshold_override,
+            field_name="threshold_override",
+        )
 
     manifest_path = output_path / MANIFEST_FILENAME
     summary_path = output_path / SUMMARY_FILENAME
@@ -429,6 +434,7 @@ def run_deferred_filter(
 
                         task, filter_cfg = _resolve_task_and_filter_config(
                             metadata_payload=metadata_payload,
+                            threshold_override=validated_threshold_override,
                             n_jobs_override=n_jobs_override,
                         )
                         seed = _resolve_filter_seed(metadata_payload, dataset_index=dataset_index)
@@ -539,6 +545,8 @@ def run_deferred_filter(
             "curated_out_dir": str(curated_path.resolve()) if curated_path is not None else None,
             "curated_accepted_datasets": int(curated_accepted_total),
         }
+        if validated_threshold_override is not None:
+            summary_payload["threshold_requested_override"] = float(validated_threshold_override)
         staged_summary_path.write_text(
             json.dumps(_sanitize_json(summary_payload), indent=2, sort_keys=True, allow_nan=False)
             + "\n",

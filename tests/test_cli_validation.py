@@ -257,21 +257,10 @@ def test_diversity_audit_cli_rejects_swapped_warn_and_fail_thresholds() -> None:
     assert int(exc.value.code) == 2
 
 
-def test_filter_calibration_cli_reports_unsupported_when_runner_raises(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_filter_calibration_cli_rejects_filter_disabled_config(tmp_path) -> None:
     cfg = load_repo_config()
     cfg.filter.enabled = False
     config_path = write_config(tmp_path, cfg, "filter_disabled.yaml")
-    monkeypatch.setattr(
-        "dagzoo.cli.run_filter_calibration",
-        lambda **_kwargs: (_ for _ in ()).throw(
-            NotImplementedError(
-                "Deferred filtering is temporarily disabled; generated outputs are the only supported corpus artifact for now."
-            )
-        ),
-    )
 
     with pytest.raises(SystemExit) as exc:
         main(
@@ -285,7 +274,7 @@ def test_filter_calibration_cli_reports_unsupported_when_runner_raises(
     assert int(exc.value.code) == 2
 
 
-@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), -0.1, 2.0])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), -0.1, 1.1])
 def test_filter_calibration_cli_rejects_invalid_baseline_filter_threshold(
     tmp_path,
     value: float,
@@ -352,7 +341,7 @@ def test_filter_calibration_cli_rejects_invalid_threshold_csv() -> None:
                 "--config",
                 "configs/preset_filter_benchmark_smoke.yaml",
                 "--thresholds",
-                "0.8,2.0",
+                "0.8,1.1",
             ]
         )
 
@@ -375,31 +364,69 @@ def test_filter_cli_rejects_invalid_n_jobs() -> None:
     assert int(exc.value.code) == 2
 
 
-def test_filter_cli_reports_unsupported_when_runner_raises(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(
-        "dagzoo.cli.run_deferred_filter",
-        lambda **_kwargs: (_ for _ in ()).throw(
-            NotImplementedError(
-                "Deferred filtering is temporarily disabled; generated outputs are the only supported corpus artifact for now."
-            )
-        ),
-    )
+def test_filter_cli_rejects_invalid_threshold() -> None:
     with pytest.raises(SystemExit) as exc:
         main(
             [
                 "filter",
                 "--in",
-                "input_shards",
+                "input",
                 "--out",
-                str(tmp_path / "filter_out"),
-                "--n-jobs",
-                "4",
+                "out",
+                "--threshold",
+                "1.1",
             ]
         )
-
     assert int(exc.value.code) == 2
+
+
+def test_filter_cli_passes_threshold_override_to_runner(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _Result:
+        def __init__(self) -> None:
+            self.manifest_path = tmp_path / "filter_out" / "filter_manifest.ndjson"
+            self.summary_path = tmp_path / "filter_out" / "filter_summary.json"
+            self.total_datasets = 2
+            self.accepted_datasets = 2
+            self.rejected_datasets = 0
+            self.elapsed_seconds = 1.0
+            self.datasets_per_minute = 120.0
+            self.curated_out_dir = None
+            self.curated_accepted_datasets = 0
+
+    def _stub_run_deferred_filter(**kwargs):
+        captured["kwargs"] = kwargs
+        return _Result()
+
+    monkeypatch.setattr(
+        "dagzoo.cli.run_deferred_filter",
+        _stub_run_deferred_filter,
+    )
+
+    code = main(
+        [
+            "filter",
+            "--in",
+            "input_shards",
+            "--out",
+            str(tmp_path / "filter_out"),
+            "--n-jobs",
+            "4",
+            "--threshold",
+            "0.4",
+        ]
+    )
+
+    assert code == 0
+    kwargs = captured["kwargs"]
+    assert kwargs["in_dir"] == "input_shards"
+    assert kwargs["out_dir"] == str(tmp_path / "filter_out")
+    assert kwargs["curated_out_dir"] is None
+    assert kwargs["threshold_override"] == pytest.approx(0.4)
+    assert kwargs["n_jobs_override"] == 4
 
 
 def test_filter_cli_rejects_removed_config_flag() -> None:
