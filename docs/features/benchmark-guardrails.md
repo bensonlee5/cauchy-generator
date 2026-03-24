@@ -91,6 +91,10 @@ dagzoo benchmark \
   --out-dir benchmarks/results/smoke_filter
 ```
 
+This preset intentionally sets `filter.use_lineage_veto=false` and
+`filter.stump_skill_threshold=0.04` so the smoke run measures learned-filter
+throughput and yield instead of being dominated by structural no-path vetoes.
+
 Inspect these `summary.json` preset-result fields first:
 
 - `filter_datasets_per_minute`
@@ -138,11 +142,10 @@ ______________________________________________________________________
 
 ## Filter calibration workflow
 
-`dagzoo filter-calibration` is temporarily unsupported while deferred
-filtering is disabled. Artifact-producing deferred filtering is the unsupported
-piece; filter-enabled benchmark presets and `dagzoo diversity-audit`
-comparisons still work because they replay filter metrics analytically without
-calling `dagzoo filter`.
+`dagzoo filter-calibration` is temporarily unsupported until a dedicated
+calibration workflow exists for the small-shot ease filter. Filter-enabled
+benchmark presets and `dagzoo diversity-audit` comparisons still work because
+they replay filter metrics analytically without calling `dagzoo filter`.
 
 Like the rewritten diversity audit, filter calibration persists only
 `summary.json` and `summary.md`.

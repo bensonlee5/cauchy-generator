@@ -116,11 +116,13 @@ Generation retries cover split-validity and generation exceptions only.
 - Generated outputs mark `metadata.filter.mode=deferred` and
   `metadata.filter.status=not_run`.
 
-Data-quality acceptance remains reserved for future support:
+Data-quality acceptance is a separate deferred stage:
 
 - Generated outputs still carry deferred-filter metadata for traceability.
-- `dagzoo filter` and `dagzoo filter-calibration` currently fail fast with an
-  unsupported-feature error.
+- `dagzoo filter` replays the small-shot ease ExtraTrees probe over emitted
+  shards and writes accepted/rejected outcomes after generation.
+- `dagzoo filter-calibration` is still unsupported until a calibration
+  workflow exists for the small-shot ease filter.
 - Request-driven handoff currently publishes generated shards only.
 
 ### 4. Effective config and traceability {#4-effective-config-and-traceability}
@@ -377,9 +379,11 @@ These are related but distinct runtime surfaces.
 - **node pipeline**: per-node transform and converter execution path.
 - **converter spec**: instruction for extracting observable
   feature/target slices.
-- **deferred filter**: ExtraTrees-based post-generation gate for signal
-  quality.
-- **wins ratio**: bootstrap fraction where model beats baseline.
+- **deferred filter**: ExtraTrees-based post-generation gate that rejects
+  trivial small-shot tasks, pure garbage tasks, and optional structural
+  no-path cases.
+- **small-shot skill**: normalized held-out skill of the filter probe relative
+  to a constant baseline.
 - **shift runtime params**: resolved graph/mechanism/noise drift
   controls.
 - **noise runtime selection**: per-dataset resolved noise family/params.

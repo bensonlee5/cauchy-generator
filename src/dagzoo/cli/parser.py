@@ -21,13 +21,16 @@ from .parsing import (
     MISSINGNESS_MECHANISM_CLI_CHOICES,
     filter_n_jobs,
     non_negative_int,
+    parse_easy_gain_threshold_arg,
+    parse_easy_skill_threshold_arg,
     parse_fail_threshold_pct_arg,
-    parse_filter_threshold_arg,
+    parse_hard_skill_threshold_arg,
     parse_missing_mar_logit_scale_arg,
     parse_missing_mar_observed_fraction_arg,
     parse_missing_mechanism_arg,
     parse_missing_mnar_logit_scale_arg,
     parse_missing_rate_arg,
+    parse_stump_skill_threshold_arg,
     parse_thresholds_csv_arg,
     parse_warn_threshold_pct_arg,
     positive_int,
@@ -162,10 +165,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional output directory for accepted-only curated shards.",
     )
     f.add_argument(
-        "--threshold",
-        type=parse_filter_threshold_arg,
+        "--ease-k-small",
+        type=positive_int,
         default=None,
-        help="Optional threshold override in [0, 1]; 0 bypasses model scoring and accepts all.",
+        help="Optional override for the small-shot probe train-set size.",
+    )
+    f.add_argument(
+        "--easy-skill-threshold",
+        type=parse_easy_skill_threshold_arg,
+        default=None,
+        help="Optional override for the small-shot ease threshold in [0, 1].",
+    )
+    f.add_argument(
+        "--easy-gain-threshold",
+        type=parse_easy_gain_threshold_arg,
+        default=None,
+        help="Optional override for the full-vs-small gain threshold in [0, 1].",
+    )
+    f.add_argument(
+        "--hard-skill-threshold",
+        type=parse_hard_skill_threshold_arg,
+        default=None,
+        help="Optional override for the loose hard-side garbage threshold in [0, 1].",
+    )
+    f.add_argument(
+        "--stump-skill-threshold",
+        type=parse_stump_skill_threshold_arg,
+        default=None,
+        help="Optional override for the best-single-feature stump veto threshold in [0, 1].",
+    )
+    f.add_argument(
+        "--lineage-veto",
+        dest="lineage_veto_override",
+        action="store_const",
+        const=True,
+        default=None,
+        help="Force-enable the lineage feature-to-target path veto during deferred replay.",
+    )
+    f.add_argument(
+        "--no-lineage-veto",
+        dest="lineage_veto_override",
+        action="store_const",
+        const=False,
+        help="Force-disable the lineage feature-to-target path veto during deferred replay.",
     )
     f.add_argument(
         "--n-jobs",

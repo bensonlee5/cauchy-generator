@@ -223,7 +223,7 @@ def test_replay_filter_stage_metrics_streams_and_invokes_accept_callback(
 
     def _stub_filter(*_args, **kwargs):
         accepted = int(kwargs["seed"]) % 2 == 0
-        details = {"reason": "insufficient_oob_predictions"} if not accepted else {}
+        details = {"reason": "too_hard_garbage"} if not accepted else {}
         return accepted, details
 
     monkeypatch.setattr("dagzoo.bench.stage_metrics._apply_extra_trees_filter_numpy", _stub_filter)
@@ -238,7 +238,7 @@ def test_replay_filter_stage_metrics_streams_and_invokes_accept_callback(
     assert measurement.filter_attempts_total == 3
     assert measurement.filter_accepted_datasets == 2
     assert measurement.filter_rejected_datasets == 1
-    assert measurement.reason_counts == {"insufficient_oob_predictions": 1}
+    assert measurement.reason_counts == {"too_hard_garbage": 1}
     assert accepted_markers == [10, 12]
 
 

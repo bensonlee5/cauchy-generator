@@ -4,6 +4,7 @@ import torch
 
 from dagzoo.config import GeneratorConfig
 from dagzoo.core.dataset import generate_batch, generate_one
+from dagzoo.core.metrics_torch import _compute_wins_ratio_proxy
 from dagzoo.diagnostics import extract_dataset_metrics, extract_metrics_batch
 from dagzoo.types import DatasetBundle
 
@@ -36,10 +37,10 @@ def _tiny_shift_config(*, profile: str, scale_field: str, scale_value: float) ->
 def test_extract_dataset_metrics_classification_invariants(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _stub_filter(*_args, **_kwargs):
-        return True, {"wins_ratio": 0.75, "n_valid_oob": 64, "backend": "extra_trees_cpu"}
-
-    monkeypatch.setattr("dagzoo.core.metrics_torch.apply_extra_trees_filter", _stub_filter)
+    monkeypatch.setattr(
+        "dagzoo.core.metrics_torch._compute_wins_ratio_proxy",
+        lambda **_kwargs: 0.75,
+    )
     bundle = generate_one(_tiny_config("classification"), seed=7, device="cpu")
 
     metrics = extract_dataset_metrics(bundle, include_spearman=True)
@@ -51,7 +52,9 @@ def test_extract_dataset_metrics_classification_invariants(
     assert metrics.majority_minority_ratio is not None and metrics.majority_minority_ratio >= 1.0
     assert metrics.linearity_proxy is not None and 0.0 <= metrics.linearity_proxy <= 1.0
     assert metrics.wins_ratio_proxy == pytest.approx(0.75)
-    assert metrics.nonlinearity_proxy is not None and metrics.nonlinearity_proxy >= 0.0
+    assert metrics.nonlinearity_proxy == pytest.approx(
+        max(0.0, float(metrics.wins_ratio_proxy) - float(metrics.linearity_proxy))
+    )
     assert 0.0 <= metrics.categorical_ratio <= 1.0
     assert metrics.graph_edge_density is not None and 0.0 <= metrics.graph_edge_density <= 1.0
     assert metrics.shift_enabled in {0.0, 1.0}
@@ -71,10 +74,10 @@ def test_extract_dataset_metrics_classification_invariants(
 def test_extract_dataset_metrics_regression_branch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _stub_filter(*_args, **_kwargs):
-        return True, {"wins_ratio": 0.55, "n_valid_oob": 64, "backend": "extra_trees_cpu"}
-
-    monkeypatch.setattr("dagzoo.core.metrics_torch.apply_extra_trees_filter", _stub_filter)
+    monkeypatch.setattr(
+        "dagzoo.core.metrics_torch._compute_wins_ratio_proxy",
+        lambda **_kwargs: 0.55,
+    )
     bundle = generate_one(_tiny_config("regression"), seed=17, device="cpu")
 
     metrics = extract_dataset_metrics(bundle)
@@ -84,6 +87,9 @@ def test_extract_dataset_metrics_regression_branch(
     assert metrics.majority_minority_ratio is None
     assert metrics.linearity_proxy is not None and 0.0 <= metrics.linearity_proxy <= 1.0
     assert metrics.wins_ratio_proxy == pytest.approx(0.55)
+    assert metrics.nonlinearity_proxy == pytest.approx(
+        max(0.0, float(metrics.wins_ratio_proxy) - float(metrics.linearity_proxy))
+    )
     assert metrics.snr_proxy_db is None or np.isfinite(metrics.snr_proxy_db)
     assert metrics.shift_enabled == pytest.approx(0.0)
     assert metrics.shift_graph_scale == pytest.approx(0.0)
@@ -96,10 +102,10 @@ def test_extract_dataset_metrics_regression_branch(
 def test_extract_dataset_metrics_spearman_toggle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _stub_filter(*_args, **_kwargs):
-        return True, {"wins_ratio": 0.61, "n_valid_oob": 6, "backend": "extra_trees_cpu"}
-
-    monkeypatch.setattr("dagzoo.core.metrics_torch.apply_extra_trees_filter", _stub_filter)
+    monkeypatch.setattr(
+        "dagzoo.core.metrics_torch._compute_wins_ratio_proxy",
+        lambda **_kwargs: 0.61,
+    )
     bundle = DatasetBundle(
         X_train=np.asarray([[0.0, 10.0], [1.0, 20.0], [2.0, 30.0], [3.0, 40.0]], dtype=np.float32),
         y_train=np.asarray([0.0, 1.0, 2.0, 3.0], dtype=np.float32),
@@ -122,10 +128,10 @@ def test_extract_dataset_metrics_spearman_toggle(
 def test_extract_dataset_metrics_reproducible_for_fixed_input(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _stub_filter(*_args, **_kwargs):
-        return True, {"wins_ratio": 0.42, "n_valid_oob": 64, "backend": "extra_trees_cpu"}
-
-    monkeypatch.setattr("dagzoo.core.metrics_torch.apply_extra_trees_filter", _stub_filter)
+    monkeypatch.setattr(
+        "dagzoo.core.metrics_torch._compute_wins_ratio_proxy",
+        lambda **_kwargs: 0.42,
+    )
     cfg = _tiny_config("classification")
     bundle_a = generate_one(cfg, seed=123, device="cpu")
     bundle_b = generate_one(cfg, seed=123, device="cpu")
@@ -201,10 +207,10 @@ def test_extract_dataset_metrics_shift_profiles_move_in_expected_directions() ->
 def test_extract_dataset_metrics_handles_degenerate_constant_columns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _stub_filter(*_args, **_kwargs):
-        return False, {"reason": "insufficient_oob_predictions", "n_valid_oob": 0}
-
-    monkeypatch.setattr("dagzoo.core.metrics_torch.apply_extra_trees_filter", _stub_filter)
+    monkeypatch.setattr(
+        "dagzoo.core.metrics_torch._compute_wins_ratio_proxy",
+        lambda **_kwargs: None,
+    )
     bundle = DatasetBundle(
         X_train=np.ones((8, 3), dtype=np.float32),
         y_train=np.linspace(0.0, 1.0, num=8, dtype=np.float32),
@@ -230,10 +236,10 @@ def test_extract_dataset_metrics_handles_degenerate_constant_columns(
 def test_extract_metrics_batch_preserves_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _stub_filter(*_args, **_kwargs):
-        return True, {"wins_ratio": 0.8, "n_valid_oob": 64, "backend": "extra_trees_cpu"}
-
-    monkeypatch.setattr("dagzoo.core.metrics_torch.apply_extra_trees_filter", _stub_filter)
+    monkeypatch.setattr(
+        "dagzoo.core.metrics_torch._compute_wins_ratio_proxy",
+        lambda **_kwargs: 0.6,
+    )
     cfg = _tiny_config("classification")
     bundles = generate_batch(cfg, num_datasets=2, seed=900, device="cpu")
 
@@ -317,3 +323,22 @@ def test_extract_dataset_metrics_normalizes_bundle_to_cpu_before_extraction(
     assert metrics.graph_edge_density == pytest.approx(0.3)
     assert metrics.shift_enabled == pytest.approx(1.0)
     assert metrics.shift_edge_odds_multiplier == pytest.approx(1.2)
+
+
+def test_compute_wins_ratio_proxy_uses_bootstrap_wins_ratio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    x = torch.arange(6, dtype=torch.float32).reshape(-1, 1)
+    y = x[:, 0].clone()
+
+    def _stub_fit(*, x_test: np.ndarray, **_kwargs) -> np.ndarray:
+        return np.asarray(x_test[:, :1], dtype=np.float32)
+
+    monkeypatch.setattr(
+        "dagzoo.core.metrics_torch._fit_extra_trees_predictions",
+        _stub_fit,
+    )
+
+    wins_ratio = _compute_wins_ratio_proxy(x=x, y=y, task="regression")
+
+    assert wins_ratio == pytest.approx(1.0)

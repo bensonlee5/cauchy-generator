@@ -8,7 +8,6 @@ from typing import Any
 
 import yaml
 
-from dagzoo.filter_thresholds import validate_filter_threshold
 from dagzoo.rng import SEED32_MAX, SEED32_MIN
 
 from .constants import (
@@ -278,10 +277,56 @@ def _normalize_benchmark_fields(_benchmark: BenchmarkConfig) -> None:
 def _normalize_filter_fields(filter_cfg: FilterConfig) -> None:
     """Stage 1: normalize filter scalar fields."""
 
-    filter_cfg.threshold = validate_filter_threshold(
-        filter_cfg.threshold,
-        field_name="filter.threshold",
+    filter_cfg.ease_k_small = _validate_int_field(
+        field_name="filter.ease_k_small",
+        value=filter_cfg.ease_k_small,
+        minimum=1,
     )
+    filter_cfg.easy_skill_threshold = _validate_finite_float_field(
+        field_name="filter.easy_skill_threshold",
+        value=filter_cfg.easy_skill_threshold,
+        lo=0.0,
+        hi=1.0,
+        lo_inclusive=True,
+        hi_inclusive=True,
+        expectation="a finite value in [0, 1]",
+    )
+    filter_cfg.easy_gain_threshold = _validate_finite_float_field(
+        field_name="filter.easy_gain_threshold",
+        value=filter_cfg.easy_gain_threshold,
+        lo=0.0,
+        hi=1.0,
+        lo_inclusive=True,
+        hi_inclusive=True,
+        expectation="a finite value in [0, 1]",
+    )
+    filter_cfg.hard_skill_threshold = _validate_finite_float_field(
+        field_name="filter.hard_skill_threshold",
+        value=filter_cfg.hard_skill_threshold,
+        lo=0.0,
+        hi=1.0,
+        lo_inclusive=True,
+        hi_inclusive=True,
+        expectation="a finite value in [0, 1]",
+    )
+    filter_cfg.stump_skill_threshold = _validate_optional_finite_float_field(
+        field_name="filter.stump_skill_threshold",
+        value=filter_cfg.stump_skill_threshold,
+        lo=0.0,
+        hi=1.0,
+        lo_inclusive=True,
+        hi_inclusive=True,
+        expectation="a finite value in [0, 1]",
+    )
+    filter_cfg.max_attempts = _validate_int_field(
+        field_name="filter.max_attempts",
+        value=filter_cfg.max_attempts,
+        minimum=1,
+    )
+    if not isinstance(filter_cfg.use_lineage_veto, bool):
+        raise ValueError(
+            f"filter.use_lineage_veto must be a boolean, got {filter_cfg.use_lineage_veto!r}."
+        )
     filter_cfg.n_jobs = _validate_int_field(
         field_name="filter.n_jobs",
         value=filter_cfg.n_jobs,
@@ -649,7 +694,12 @@ class FilterConfig:
     max_leaf_nodes: int | None = None
     max_features: str | int | float = "auto"
     n_bootstrap: int = 200
-    threshold: float = 0.95
+    ease_k_small: int = 16
+    easy_skill_threshold: float = 0.8
+    easy_gain_threshold: float = 0.1
+    hard_skill_threshold: float = 0.0
+    stump_skill_threshold: float | None = None
+    use_lineage_veto: bool = True
     max_attempts: int = 3
     n_jobs: int = -1
 
@@ -709,7 +759,13 @@ class GeneratorConfig:
         output = OutputConfig(**(data.get("output") or {}))
         diagnostics = DiagnosticsConfig(**(data.get("diagnostics") or {}))
         benchmark = BenchmarkConfig(**(data.get("benchmark") or {}))
-        filter_cfg = FilterConfig(**(data.get("filter") or {}))
+        filter_payload = dict(data.get("filter") or {})
+        if "threshold" in filter_payload:
+            raise ValueError(
+                "filter.threshold has been removed. Use filter.easy_skill_threshold, "
+                "filter.easy_gain_threshold, and filter.hard_skill_threshold instead."
+            )
+        filter_cfg = FilterConfig(**filter_payload)
         seed = data.get("seed", 1)
         return cls(
             seed=seed,

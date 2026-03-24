@@ -35,6 +35,8 @@ filter:
   enabled: true
   n_estimators: 10
   max_depth: 4
-  threshold: 0.05
+  easy_skill_threshold: 0.8
+  easy_gain_threshold: 0.1
+  hard_skill_threshold: 0.0
   max_attempts: 20
   n_jobs: -1

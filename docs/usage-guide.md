@@ -36,9 +36,9 @@ Each generate run writes `effective_config.yaml` and `effective_config_trace.yam
 under the resolved output directory.
 `dagzoo generate` samples one internal fixed-layout plan per run, so all
 datasets emitted in the same run share one layout signature / plan signature.
-Filtering is temporarily unsupported, so generated outputs are the only
-supported corpus artifact for now. Keep `filter.enabled: false` for generate
-flows.
+Inline filtering is removed from `dagzoo generate`. Keep `filter.enabled: false`
+for generate flows, then run `dagzoo filter` as a separate replay stage on the
+emitted shards when you want acceptance decisions.
 Generate configs must not include `runtime.worker_count` or
 `runtime.worker_index`.
 
@@ -46,14 +46,20 @@ ______________________________________________________________________
 
 ## 2. Deferred filtering (`dagzoo filter`)
 
-Deferred filtering is temporarily unsupported.
+Deferred filtering replays the small-shot ease filter from shard metadata and
+lineage artifacts. The main tuning knobs are `ease_k_small`,
+`easy_skill_threshold`, `easy_gain_threshold`, `hard_skill_threshold`, the
+optional `stump_skill_threshold`, and `use_lineage_veto`. Replay-time CLI
+overrides include both `--lineage-veto` and `--no-lineage-veto` when you need
+to force structural veto behavior instead of inheriting the embedded shard
+config.
 
 ```bash
 dagzoo filter --in data/run1 --out data/run1_filter
 ```
 
-The command remains present so existing workflows fail with a clear error
-message instead of silently producing partially supported artifacts.
+Accepted and rejected outputs are written as a separate curated run; generated
+shards themselves still start with `metadata.filter.status=not_run`.
 
 ______________________________________________________________________
 
@@ -239,6 +245,9 @@ passing a shared CLI device override.
 Artifact-producing deferred filtering is disabled, but filter-enabled benchmark
 configs and `dagzoo diversity-audit` runs still replay filter metrics
 analytically.
+The canonical `preset_filter_benchmark_smoke` run intentionally sets
+`filter.use_lineage_veto=false` so the benchmark measures learned-filter
+throughput and acceptance yield instead of structural no-path rejection.
 
 Detailed guide: [Benchmark Workflows and Guardrails](features/benchmark-guardrails.md)
 
@@ -247,7 +256,8 @@ When you need to compare accepted-corpus diversity between configs, use
 `--variant-config` values. The audit writes `summary.json` and `summary.md`
 with per-variant diversity status and throughput deltas.
 
-`dagzoo filter-calibration` is also temporarily unsupported.
+`dagzoo filter-calibration` is also temporarily unsupported until a dedicated
+calibration workflow exists for the small-shot ease filter.
 
 ______________________________________________________________________
 

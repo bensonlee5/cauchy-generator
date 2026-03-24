@@ -8,7 +8,6 @@ from pathlib import Path
 from dagzoo.diagnostics.effective_diversity import (
     format_filter_calibration_threshold,
     validate_diversity_thresholds,
-    validate_filter_calibration_threshold,
 )
 
 from ..common import get_cli_public_api, load_config_or_usage_error, raise_usage_error
@@ -82,11 +81,6 @@ def run_filter_calibration_command(args: argparse.Namespace) -> int:
     if args.device is not None:
         config.runtime.device = str(args.device)
     try:
-        if bool(config.filter.enabled):
-            validate_filter_calibration_threshold(
-                config.filter.threshold,
-                field_name="filter.threshold",
-            )
         report = cli_api.run_filter_calibration(
             config=config,
             config_path=str(args.config),

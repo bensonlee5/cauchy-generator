@@ -112,6 +112,10 @@ Run deferred filtering on generated shards:
 dagzoo filter --in data/run1 --out data/run1_filter
 ```
 
+`dagzoo filter` now applies the small-shot ease filter as a separate replay
+stage, while benchmark smoke presets may override lineage-veto behavior when
+the goal is throughput measurement rather than structural rejection.
+
 Run a downstream handoff workflow from `generate`:
 
 ```bash

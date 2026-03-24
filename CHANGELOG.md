@@ -10,6 +10,44 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.12.0] - 2026-03-24
+
+### Changed
+
+- **BREAKING:** Removed the threshold-based ExtraTrees deferred filter. `dagzoo filter`
+  now uses a small-shot ease filter with held-out ExtraTrees skill, an optional
+  stump veto, and a lineage no-path veto. Public filter cutoffs are now
+  `ease_k_small`, `easy_skill_threshold`, `easy_gain_threshold`,
+  `hard_skill_threshold`, `stump_skill_threshold`, and `use_lineage_veto`.
+- **BREAKING:** Removed the `--threshold` deferred-filter CLI override and the
+  persisted `filter.threshold` config key. Old configs now fail with a clear
+  migration error pointing to the new ease-filter parameters.
+- `filter-calibration` remains exposed as a command entrypoint, but it now
+  fails immediately with an explicit unsupported-mode error until a dedicated
+  calibration workflow exists for the small-shot ease filter.
+- Deferred-filter manifests, summaries, and benchmark replay telemetry now
+  record small-shot ease metrics (`skill_small`, `skill_full`, `skill_gain`,
+  bootstrap bounds, stump skill, and lineage-veto status) instead of OOB
+  threshold-era `wins_ratio` diagnostics.
+- Added explicit `dagzoo filter` CLI overrides for both `--lineage-veto` and
+  `--no-lineage-veto`, and documented the replay-time lineage-veto control.
+- Tuned the canonical `preset_filter_benchmark_smoke` benchmark preset to
+  disable the lineage veto, enable a stump veto, and use a deterministic seed
+  that yields both accepted and rejected datasets in the smoke-stage replay
+  sample.
+- Corrected diagnostics `wins_ratio_proxy` back to a direct bootstrap
+  win-ratio estimate over held-out ExtraTrees predictions instead of deriving
+  it indirectly from the small-shot ease score.
+- Deferred filtering now verifies compact lineage adjacency blob checksums
+  before applying the no-path veto so stale or corrupted shard lineage
+  artifacts fail fast instead of silently changing filter outcomes.
+- Removed dead threshold-era calibration helpers and zero-bypass constants that
+  were still tripping `vulture` after the small-shot ease filter rewrite.
+- Updated the docs to reflect the current branch state: `dagzoo filter` is
+  supported again as a deferred small-shot ease replay stage, while
+  `filter-calibration` remains unsupported until a dedicated calibration
+  workflow exists.
+
 ## [0.11.0] - 2026-03-21
 
 ### Changed
