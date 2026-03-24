@@ -9,6 +9,11 @@ from typing import Any
 from dagzoo.config import FilterConfig
 from dagzoo.rng import SEED32_MAX, SEED32_MIN
 
+_REMOVED_FILTER_THRESHOLD_MESSAGE = (
+    "filter.threshold has been removed. Use filter.easy_skill_threshold, "
+    "filter.easy_gain_threshold, and filter.hard_skill_threshold instead."
+)
+
 
 def _coerce_seed(raw_seed: object, *, dataset_index: int) -> int:
     """Resolve a valid seed32 for filter replay."""
@@ -72,7 +77,10 @@ def _resolve_task_and_filter_config(
         )
 
     if embedded_filter is not None:
-        filter_cfg = FilterConfig(**dict(embedded_filter))
+        embedded_filter_payload = dict(embedded_filter)
+        if "threshold" in embedded_filter_payload:
+            raise ValueError(_REMOVED_FILTER_THRESHOLD_MESSAGE)
+        filter_cfg = FilterConfig(**embedded_filter_payload)
     else:
         raise ValueError(
             "Deferred filter requires embedded metadata.config.filter in shard metadata."

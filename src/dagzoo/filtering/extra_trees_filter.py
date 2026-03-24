@@ -19,6 +19,10 @@ from dagzoo.rng import validate_seed32
 _BACKEND = "extra_trees_cpu"
 _FILTER_MODE = "small_shot_ease_v1"
 _SKILL_EPS = 1e-12
+_LINEAGE_BLOB_PATH_ERROR = (
+    "metadata.lineage.graph.adjacency_ref.blob_path must be a relative path "
+    "that resolves inside the shard lineage directory."
+)
 
 
 def _validate_unit_interval(value: object, *, field_name: str) -> float:
@@ -228,6 +232,20 @@ def _fit_best_stump_skill(
     return float(best_skill)
 
 
+def _resolve_safe_lineage_blob_path(*, lineage_base_dir: Path, blob_path_hint: str) -> Path:
+    hinted = Path(blob_path_hint)
+    if hinted.is_absolute():
+        raise ValueError(_LINEAGE_BLOB_PATH_ERROR)
+
+    lineage_root = (lineage_base_dir / "lineage").resolve()
+    resolved = resolve_lineage_path(lineage_base_dir, blob_path_hint).resolve()
+    try:
+        resolved.relative_to(lineage_root)
+    except ValueError as exc:
+        raise ValueError(_LINEAGE_BLOB_PATH_ERROR) from exc
+    return resolved
+
+
 def _resolve_lineage_adjacency(
     *,
     lineage_payload: Mapping[str, Any],
@@ -250,7 +268,10 @@ def _resolve_lineage_adjacency(
         raise ValueError(
             "Compact lineage payload requires lineage_base_dir to resolve adjacency artifacts."
         )
-    blob_path = resolve_lineage_path(lineage_base_dir, str(adjacency_ref["blob_path"]))
+    blob_path = _resolve_safe_lineage_blob_path(
+        lineage_base_dir=lineage_base_dir,
+        blob_path_hint=str(adjacency_ref["blob_path"]),
+    )
     bit_offset = int(adjacency_ref["bit_offset"])
     bit_length = int(adjacency_ref["bit_length"])
     byte_offset = bit_offset // 8
