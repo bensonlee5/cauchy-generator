@@ -108,10 +108,10 @@ ______________________________________________________________________
 
 ## Filter-calibration workflow
 
-`dagzoo filter-calibration` is temporarily unsupported while deferred
-filtering is disabled. Use `dagzoo diversity-audit` for current filter-enabled
-mechanism comparisons; that workflow still replays accepted-corpus metrics
-without requiring deferred-filter artifacts.
+`dagzoo filter-calibration` is temporarily unsupported until a calibration
+workflow exists for the small-shot ease filter. Use `dagzoo diversity-audit`
+for current filter-enabled mechanism comparisons; that workflow still replays
+accepted-corpus metrics without requiring deferred-filter artifacts.
 
 ______________________________________________________________________
 

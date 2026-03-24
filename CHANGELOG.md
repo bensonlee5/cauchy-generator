@@ -10,6 +10,21 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.12.1] - 2026-03-24
+
+### Changed
+
+- Removed dead threshold-era calibration helpers and zero-bypass constants that
+  were still tripping `vulture` after the small-shot ease filter rewrite.
+- Tuned the canonical `preset_filter_benchmark_smoke` benchmark preset to
+  disable the lineage veto, enable a stump veto, and use a deterministic seed
+  that yields both accepted and rejected datasets in the smoke-stage replay
+  sample.
+- Updated the docs to reflect the current branch state: `dagzoo filter` is
+  supported again as a deferred small-shot ease replay stage, while
+  `filter-calibration` remains unsupported until a dedicated calibration
+  workflow exists.
+
 ## [0.12.0] - 2026-03-24
 
 ### Changed

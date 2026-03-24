@@ -193,12 +193,15 @@ def test_benchmark_cli_filter_smoke_config_reports_accepted_corpus_throughput(tm
     assert code == 0
     payload = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
     profile = payload["preset_results"][0]
+    filter_cfg = profile["effective_config"]["filter"]
     assert profile["filter_datasets_per_minute"] is not None
     assert float(profile["filter_accepted_datasets_per_minute"]) > 0.0
     assert int(profile["filter_accepted_datasets_measured"]) > 0
     assert int(profile["filter_rejected_datasets_measured"]) > 0
     assert 0.0 < float(profile["filter_acceptance_rate_dataset_level"]) < 1.0
     assert 0.0 < float(profile["filter_rejection_rate_dataset_level"]) < 1.0
+    assert filter_cfg["use_lineage_veto"] is False
+    assert filter_cfg["stump_skill_threshold"] == 0.04
 
 
 def test_benchmark_cli_fail_on_regression(tmp_path) -> None:

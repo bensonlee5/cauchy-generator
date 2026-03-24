@@ -1,4 +1,4 @@
-seed: 1
+seed: 3
 
 dataset:
   task: classification
@@ -48,5 +48,7 @@ filter:
   easy_skill_threshold: 0.8
   easy_gain_threshold: 0.1
   hard_skill_threshold: 0.0
+  stump_skill_threshold: 0.04
+  use_lineage_veto: false
   max_attempts: 3
   n_jobs: -1

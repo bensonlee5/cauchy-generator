@@ -164,7 +164,7 @@ workflow persists handoff-associated diversity outputs alongside the run.
 Downstream consumers should prefer `artifacts_relative` over absolute-path
 `artifacts` when portability matters, and should treat
 `defaults.recommended_training_corpus=generated` as the canonical training
-target while deferred filtering remains disabled.
+target until a separate deferred-filter stage materializes a curated corpus.
 
 ______________________________________________________________________
 
@@ -337,22 +337,19 @@ Present for all generated bundles.
 
 ### Filter sub-object
 
-| Key                   | Type        | Description                                                                                  |
-| --------------------- | ----------- | -------------------------------------------------------------------------------------------- |
-| `mode`                | str         | Filter execution mode. Current value is `deferred`.                                          |
-| `status`              | str         | `not_run` for freshly generated outputs. Replay statuses remain reserved for future support. |
-| `enabled`             | bool        | Reserved for future deferred-filter replay support.                                          |
-| `accepted`            | bool        | Reserved for future deferred-filter replay support.                                          |
-| `wins_ratio`          | float       | Reserved for future deferred-filter replay support.                                          |
-| `n_valid_oob`         | int         | Reserved for future deferred-filter replay support.                                          |
-| `backend`             | str         | Reserved for future deferred-filter replay support.                                          |
-| `threshold_requested` | float       | Reserved for future deferred-filter replay support.                                          |
-| `threshold_effective` | float       | Reserved for future deferred-filter replay support.                                          |
-| `threshold_policy`    | str         | Reserved for future deferred-filter replay support.                                          |
-| `class_count`         | int or null | Reserved for future deferred-filter replay support.                                          |
-| `class_bucket`        | str         | Reserved for future deferred-filter replay support.                                          |
-| `threshold_delta`     | float       | Reserved for future deferred-filter replay support.                                          |
-| `reason`              | str         | Reserved for future deferred-filter replay support.                                          |
+Generated bundles guarantee only the deferred-filter trace fields below.
+
+| Key      | Type | Description                                                     |
+| -------- | ---- | --------------------------------------------------------------- |
+| `mode`   | str  | Filter execution mode. Current value is `deferred`.             |
+| `status` | str  | `not_run` on freshly generated outputs before replay filtering. |
+
+When `dagzoo filter` rewrites accepted/rejected metadata, it adds replay
+telemetry such as `enabled`, `accepted`, `backend`, `filter_mode`,
+`skill_small`, `skill_full`, `skill_gain`, `skill_small_lb95`,
+`skill_gain_ub95`, `skill_full_ub95`, `stump_skill`,
+`lineage_veto_applied`, and `reason`. The same small-shot-ease fields also
+appear in deferred-filter summaries and benchmark filter summaries.
 
 ### Class Structure sub-object (classification only)
 
