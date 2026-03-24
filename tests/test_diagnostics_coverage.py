@@ -189,10 +189,10 @@ def test_generate_no_write_with_coverage_enabled_emits_artifacts(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _stub_filter(*_args, **_kwargs):
-        return True, {"skill_full": 0.6, "backend": "extra_trees_cpu"}
-
-    monkeypatch.setattr("dagzoo.core.metrics_torch.apply_extra_trees_filter", _stub_filter)
+    monkeypatch.setattr(
+        "dagzoo.core.metrics_torch._compute_wins_ratio_proxy",
+        lambda **_kwargs: 0.6,
+    )
     cfg = GeneratorConfig.from_yaml("configs/default.yaml")
     cfg.runtime.device = "cpu"
     cfg.dataset.task = "regression"

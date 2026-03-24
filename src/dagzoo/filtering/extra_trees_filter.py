@@ -12,7 +12,11 @@ import torch
 from sklearn.ensemble import ExtraTreesRegressor
 from sklearn.tree import DecisionTreeRegressor
 
-from dagzoo.io.lineage_artifact import resolve_lineage_path, unpack_upper_triangle_adjacency
+from dagzoo.io.lineage_artifact import (
+    resolve_lineage_path,
+    sha256_hex,
+    unpack_upper_triangle_adjacency,
+)
 from dagzoo.io.lineage_schema import validate_lineage_payload
 from dagzoo.rng import validate_seed32
 
@@ -22,6 +26,9 @@ _SKILL_EPS = 1e-12
 _LINEAGE_BLOB_PATH_ERROR = (
     "metadata.lineage.graph.adjacency_ref.blob_path must be a relative path "
     "that resolves inside the shard lineage directory."
+)
+_LINEAGE_BLOB_SHA256_ERROR = (
+    "metadata.lineage.graph.adjacency_ref.sha256 must match the resolved adjacency blob slice."
 )
 
 
@@ -118,6 +125,26 @@ def _skill_from_predictions(
     return float(_clip_skill(loss_probe, loss_const))
 
 
+def _shared_baseline_skill_gain(
+    *,
+    pred_small: np.ndarray,
+    pred_full: np.ndarray,
+    target: np.ndarray,
+    baseline_mean: np.ndarray,
+) -> float:
+    skill_small = _skill_from_predictions(
+        pred=pred_small,
+        target=target,
+        baseline_mean=baseline_mean,
+    )
+    skill_full = _skill_from_predictions(
+        pred=pred_full,
+        target=target,
+        baseline_mean=baseline_mean,
+    )
+    return float(skill_full - skill_small)
+
+
 def _bootstrap_skill_summary(
     *,
     pred_small: np.ndarray,
@@ -125,6 +152,7 @@ def _bootstrap_skill_summary(
     target: np.ndarray,
     baseline_small_mean: np.ndarray,
     baseline_full_mean: np.ndarray,
+    baseline_gain_mean: np.ndarray,
     seed: int,
     n_bootstrap: int,
 ) -> dict[str, float]:
@@ -148,11 +176,15 @@ def _bootstrap_skill_summary(
         loss_full = np.mean((sampled_full - sampled_target) ** 2, axis=(1, 2))
         loss_const_small = np.mean((baseline_small_mean - sampled_target) ** 2, axis=(1, 2))
         loss_const_full = np.mean((baseline_full_mean - sampled_target) ** 2, axis=(1, 2))
+        loss_const_gain = np.mean((baseline_gain_mean - sampled_target) ** 2, axis=(1, 2))
         chunk_small = np.asarray(_clip_skill(loss_small, loss_const_small), dtype=np.float32)
         chunk_full = np.asarray(_clip_skill(loss_full, loss_const_full), dtype=np.float32)
         small_samples[start : start + bs] = chunk_small
         full_samples[start : start + bs] = chunk_full
-        gain_samples[start : start + bs] = chunk_full - chunk_small
+        gain_samples[start : start + bs] = np.asarray(
+            _clip_skill(loss_full, loss_const_gain) - _clip_skill(loss_small, loss_const_gain),
+            dtype=np.float32,
+        )
 
     return {
         "skill_small_lb95": float(np.quantile(small_samples, 0.05)),
@@ -279,6 +311,8 @@ def _resolve_lineage_adjacency(
     with blob_path.open("rb") as handle:
         handle.seek(byte_offset)
         payload = handle.read(byte_length)
+    if len(payload) == byte_length and sha256_hex(payload) != str(adjacency_ref["sha256"]):
+        raise ValueError(_LINEAGE_BLOB_SHA256_ERROR)
     return unpack_upper_triangle_adjacency(payload, n_nodes=n_nodes, bit_length=bit_length)
 
 
@@ -572,7 +606,12 @@ def _apply_extra_trees_filter_numpy(
         target=y_test_target,
         baseline_mean=baseline_full_mean,
     )
-    skill_gain = float(skill_full - skill_small)
+    skill_gain = _shared_baseline_skill_gain(
+        pred_small=pred_small,
+        pred_full=pred_full,
+        target=y_test_target,
+        baseline_mean=baseline_full_mean,
+    )
     details["skill_small"] = float(skill_small)
     details["skill_full"] = float(skill_full)
     details["skill_gain"] = float(skill_gain)
@@ -583,6 +622,7 @@ def _apply_extra_trees_filter_numpy(
             target=y_test_target,
             baseline_small_mean=baseline_small_mean,
             baseline_full_mean=baseline_full_mean,
+            baseline_gain_mean=baseline_full_mean,
             seed=seed,
             n_bootstrap=int(n_bootstrap),
         )

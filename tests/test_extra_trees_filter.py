@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pytest
 import torch
 
@@ -195,6 +196,62 @@ def test_extra_trees_filter_accepts_task_when_full_data_adds_meaningful_skill() 
     assert "reason" not in details
     assert float(details["skill_full"]) > float(details["skill_small"])
     assert float(details["skill_gain"]) > 0.5
+
+
+def test_extra_trees_filter_uses_shared_baseline_for_skill_gain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    x_train = torch.zeros((4, 1), dtype=torch.float32)
+    x_test = torch.zeros((2, 1), dtype=torch.float32)
+    y_train = torch.tensor([2.0, 2.0, -2.0, -2.0], dtype=torch.float32)
+    y_test = torch.tensor([1.0, 3.0], dtype=torch.float32)
+
+    call_count = {"value": 0}
+
+    def _stub_fit(*, x_test: np.ndarray, **_kwargs) -> np.ndarray:
+        _ = x_test
+        call_count["value"] += 1
+        if call_count["value"] == 1:
+            return np.asarray([[2.0], [2.0]], dtype=np.float32)
+        return np.asarray([[2.1], [2.1]], dtype=np.float32)
+
+    class _FixedSmallSampleRng:
+        def __init__(self, seed: int) -> None:
+            self._rng = np.random.Generator(np.random.PCG64(seed))
+
+        def choice(self, a, size=None, replace=True):  # noqa: ANN001
+            assert int(a) == 4
+            assert int(size) == 2
+            assert replace is False
+            return np.asarray([0, 1], dtype=np.int64)
+
+        def integers(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            return self._rng.integers(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "dagzoo.filtering.extra_trees_filter._fit_extra_trees_predictions",
+        _stub_fit,
+    )
+    monkeypatch.setattr(
+        "dagzoo.filtering.extra_trees_filter.np.random.default_rng",
+        lambda seed: _FixedSmallSampleRng(int(seed)),
+    )
+
+    accepted, details = apply_extra_trees_filter(
+        x_train,
+        y_train,
+        x_test,
+        y_test,
+        task="regression",
+        seed=17,
+        n_bootstrap=16,
+        ease_k_small=2,
+        use_lineage_veto=False,
+    )
+
+    assert accepted is True
+    assert float(details["skill_full"]) > float(details["skill_small"])
+    assert float(details["skill_gain"]) < 0.0
 
 
 def test_extra_trees_filter_rejects_garbage_classification_on_hard_side() -> None:

@@ -21,7 +21,7 @@ def run_filter_command(args: argparse.Namespace) -> int:
             easy_gain_threshold_override=args.easy_gain_threshold,
             hard_skill_threshold_override=args.hard_skill_threshold,
             stump_skill_threshold_override=args.stump_skill_threshold,
-            use_lineage_veto_override=(False if bool(args.no_lineage_veto) else None),
+            use_lineage_veto_override=args.lineage_veto_override,
             n_jobs_override=args.n_jobs,
         )
     except NotImplementedError as exc:

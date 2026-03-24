@@ -49,7 +49,10 @@ ______________________________________________________________________
 Deferred filtering replays the small-shot ease filter from shard metadata and
 lineage artifacts. The main tuning knobs are `ease_k_small`,
 `easy_skill_threshold`, `easy_gain_threshold`, `hard_skill_threshold`, the
-optional `stump_skill_threshold`, and `use_lineage_veto`.
+optional `stump_skill_threshold`, and `use_lineage_veto`. Replay-time CLI
+overrides include both `--lineage-veto` and `--no-lineage-veto` when you need
+to force structural veto behavior instead of inheriting the embedded shard
+config.
 
 ```bash
 dagzoo filter --in data/run1 --out data/run1_filter

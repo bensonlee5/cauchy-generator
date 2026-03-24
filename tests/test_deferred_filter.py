@@ -512,6 +512,49 @@ def test_run_deferred_filter_decodes_compact_lineage_and_applies_no_path_veto(
     assert manifest_records[0]["filter"]["lineage_veto_applied"] is True
 
 
+def test_run_deferred_filter_rejects_compact_lineage_checksum_mismatch(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_deferred_filter_impl(monkeypatch)
+    pytest.importorskip("pyarrow.parquet")
+
+    in_dir = tmp_path / "input"
+    out_dir = tmp_path / "filter_out"
+    bundles = [_bundle_with_embedded_config(541, lineage=_dense_lineage_payload())]
+    _ = write_packed_parquet_shards_stream(bundles, in_dir, shard_size=1, compression="zstd")
+
+    metadata_path = in_dir / "shard_00000" / "metadata.ndjson"
+    records = _load_ndjson(metadata_path)
+    record = records[0]
+    metadata = record["metadata"]
+    assert isinstance(metadata, dict)
+    lineage = metadata["lineage"]
+    assert isinstance(lineage, dict)
+    graph = lineage["graph"]
+    assert isinstance(graph, dict)
+    adjacency_ref = graph["adjacency_ref"]
+    assert isinstance(adjacency_ref, dict)
+    adjacency_ref["sha256"] = "f" * 64
+    _write_ndjson_records(metadata_path, records)
+
+    monkeypatch.setattr(
+        "dagzoo.filtering.extra_trees_filter.ExtraTreesRegressor",
+        lambda *_args, **_kwargs: pytest.fail(
+            "model fit should not run after checksum-mismatch rejection"
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "metadata.lineage.graph.adjacency_ref.sha256 must match the resolved adjacency "
+            "blob slice."
+        ),
+    ):
+        _ = run_deferred_filter(in_dir=in_dir, out_dir=out_dir)
+
+
 @pytest.mark.parametrize("blob_path_mode", ["relative_escape", "absolute"])
 def test_run_deferred_filter_rejects_compact_lineage_blob_paths_outside_shard_tree(
     tmp_path,

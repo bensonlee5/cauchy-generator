@@ -461,6 +461,81 @@ def test_filter_cli_passes_ease_overrides_to_runner(
     assert kwargs["n_jobs_override"] == 4
 
 
+def test_filter_cli_passes_lineage_veto_enable_override_to_runner(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _Result:
+        def __init__(self) -> None:
+            self.manifest_path = tmp_path / "filter_out" / "filter_manifest.ndjson"
+            self.summary_path = tmp_path / "filter_out" / "filter_summary.json"
+            self.total_datasets = 1
+            self.accepted_datasets = 1
+            self.rejected_datasets = 0
+            self.elapsed_seconds = 1.0
+            self.datasets_per_minute = 60.0
+            self.curated_out_dir = None
+            self.curated_accepted_datasets = 0
+
+    def _stub_run_deferred_filter(**kwargs):
+        captured["kwargs"] = kwargs
+        return _Result()
+
+    monkeypatch.setattr("dagzoo.cli.run_deferred_filter", _stub_run_deferred_filter)
+
+    code = main(
+        [
+            "filter",
+            "--in",
+            "input_shards",
+            "--out",
+            str(tmp_path / "filter_out"),
+            "--lineage-veto",
+        ]
+    )
+
+    assert code == 0
+    assert captured["kwargs"]["use_lineage_veto_override"] is True
+
+
+def test_filter_cli_leaves_lineage_veto_override_unset_by_default(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _Result:
+        def __init__(self) -> None:
+            self.manifest_path = tmp_path / "filter_out" / "filter_manifest.ndjson"
+            self.summary_path = tmp_path / "filter_out" / "filter_summary.json"
+            self.total_datasets = 1
+            self.accepted_datasets = 1
+            self.rejected_datasets = 0
+            self.elapsed_seconds = 1.0
+            self.datasets_per_minute = 60.0
+            self.curated_out_dir = None
+            self.curated_accepted_datasets = 0
+
+    def _stub_run_deferred_filter(**kwargs):
+        captured["kwargs"] = kwargs
+        return _Result()
+
+    monkeypatch.setattr("dagzoo.cli.run_deferred_filter", _stub_run_deferred_filter)
+
+    code = main(
+        [
+            "filter",
+            "--in",
+            "input_shards",
+            "--out",
+            str(tmp_path / "filter_out"),
+        ]
+    )
+
+    assert code == 0
+    assert captured["kwargs"]["use_lineage_veto_override"] is None
+
+
 def test_filter_cli_rejects_removed_config_flag() -> None:
     with pytest.raises(SystemExit) as exc:
         main(

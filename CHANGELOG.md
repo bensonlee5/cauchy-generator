@@ -10,6 +10,19 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.12.2] - 2026-03-24
+
+### Changed
+
+- Added explicit `dagzoo filter` CLI overrides for both `--lineage-veto` and
+  `--no-lineage-veto`, and documented the replay-time lineage-veto control.
+- Corrected diagnostics `wins_ratio_proxy` back to a direct bootstrap
+  win-ratio estimate over held-out ExtraTrees predictions instead of deriving
+  it indirectly from the small-shot ease score.
+- Deferred filtering now verifies compact lineage adjacency blob checksums
+  before applying the no-path veto so stale or corrupted shard lineage
+  artifacts fail fast instead of silently changing filter outcomes.
+
 ## [0.12.1] - 2026-03-24
 
 ### Changed

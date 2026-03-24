@@ -195,9 +195,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional override for the best-single-feature stump veto threshold in [0, 1].",
     )
     f.add_argument(
+        "--lineage-veto",
+        dest="lineage_veto_override",
+        action="store_const",
+        const=True,
+        default=None,
+        help="Force-enable the lineage feature-to-target path veto during deferred replay.",
+    )
+    f.add_argument(
         "--no-lineage-veto",
-        action="store_true",
-        help="Disable the lineage feature-to-target path veto during deferred replay.",
+        dest="lineage_veto_override",
+        action="store_const",
+        const=False,
+        help="Force-disable the lineage feature-to-target path veto during deferred replay.",
     )
     f.add_argument(
         "--n-jobs",

@@ -31,7 +31,7 @@ from dagzoo.core.metric_constants import (
     validate_metric_shapes,
 )
 from dagzoo.core.shift import mechanism_nonlinear_mass
-from dagzoo.filtering import apply_extra_trees_filter
+from dagzoo.filtering.extra_trees_filter import _fit_extra_trees_predictions
 from dagzoo.math import (
     coerce_optional_finite_float as _coerce_optional_finite_float,
 )
@@ -443,34 +443,40 @@ def _compute_wins_ratio_proxy(*, x: torch.Tensor, y: torch.Tensor, task: str) ->
         train_idx = perm[:n_train]
         test_idx = perm[n_train:]
         if task == _TASK_CLASSIFICATION:
-            labels = _classification_labels(y)
-            _, dense = torch.unique(labels, sorted=True, return_inverse=True)
-            y_tensor = dense.to(torch.int64)
+            y_train_targets, y_test_targets, _ = _classification_targets_for_splits(
+                y[train_idx],
+                y[test_idx],
+            )
         elif task == _TASK_REGRESSION:
-            y_matrix = _regression_target_matrix(y).to(torch.float32)
-            y_tensor = y_matrix[:, 0] if y_matrix.shape[1] == 1 else y_matrix
+            y_train_targets = _regression_target_matrix(y[train_idx])
+            y_test_targets = _regression_target_matrix(y[test_idx])
         else:
             raise ValueError(f"Unsupported task '{task}'.")
-        _, details = apply_extra_trees_filter(
-            x_tensor[train_idx],
-            y_tensor[train_idx],
-            x_tensor[test_idx],
-            y_tensor[test_idx],
-            task=task,
-            seed=0,
-            easy_skill_threshold=1.0,
-            easy_gain_threshold=0.0,
-            hard_skill_threshold=0.0,
-            stump_skill_threshold=None,
-            use_lineage_veto=False,
+        pred_test = torch.from_numpy(
+            _fit_extra_trees_predictions(
+                x_train=x_tensor[train_idx].detach().to(device="cpu", dtype=torch.float32).numpy(),
+                y_train=y_train_targets.detach().to(device="cpu").numpy(),
+                x_test=x_tensor[test_idx].detach().to(device="cpu", dtype=torch.float32).numpy(),
+                task=task,
+                seed=0,
+                n_estimators=25,
+                max_depth=6,
+                min_samples_leaf=1,
+                max_leaf_nodes=None,
+                max_features="auto",
+                n_jobs=-1,
+            )
+        ).to(dtype=torch.float64)
+        baseline = torch.mean(y_train_targets, dim=0, keepdim=True)
+        wins_ratio = _bootstrap_wins_ratio(
+            pred=pred_test,
+            target=y_test_targets,
+            baseline=baseline,
         )
     except Exception:
         return None
 
-    value = details.get("skill_full")
-    if isinstance(value, (int, float)):
-        return _finite_or_none(0.5 * (float(value) + 1.0))
-    return None
+    return _finite_or_none(wins_ratio)
 
 
 def _compute_snr_proxy_db(
