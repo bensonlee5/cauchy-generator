@@ -7,7 +7,6 @@ from collections.abc import Mapping
 from typing import Any
 
 from dagzoo.config import FilterConfig
-from dagzoo.filter_thresholds import validate_filter_threshold
 from dagzoo.rng import SEED32_MAX, SEED32_MIN
 
 
@@ -42,7 +41,12 @@ def _resolve_filter_seed(metadata_payload: Mapping[str, Any], *, dataset_index: 
 def _resolve_task_and_filter_config(
     *,
     metadata_payload: Mapping[str, Any],
-    threshold_override: float | None,
+    ease_k_small_override: int | None,
+    easy_skill_threshold_override: float | None,
+    easy_gain_threshold_override: float | None,
+    hard_skill_threshold_override: float | None,
+    stump_skill_threshold_override: float | None,
+    use_lineage_veto_override: bool | None,
     n_jobs_override: int | None,
 ) -> tuple[str, FilterConfig]:
     """Resolve task + filter config for one dataset record."""
@@ -75,14 +79,21 @@ def _resolve_task_and_filter_config(
         )
 
     filter_cfg.enabled = True
-    if threshold_override is not None:
-        filter_cfg.threshold = validate_filter_threshold(
-            threshold_override,
-            field_name="threshold_override",
-        )
+    if ease_k_small_override is not None:
+        filter_cfg.ease_k_small = int(ease_k_small_override)
+    if easy_skill_threshold_override is not None:
+        filter_cfg.easy_skill_threshold = float(easy_skill_threshold_override)
+    if easy_gain_threshold_override is not None:
+        filter_cfg.easy_gain_threshold = float(easy_gain_threshold_override)
+    if hard_skill_threshold_override is not None:
+        filter_cfg.hard_skill_threshold = float(hard_skill_threshold_override)
+    if stump_skill_threshold_override is not None:
+        filter_cfg.stump_skill_threshold = float(stump_skill_threshold_override)
+    if use_lineage_veto_override is not None:
+        filter_cfg.use_lineage_veto = bool(use_lineage_veto_override)
     if n_jobs_override is not None:
         filter_cfg.n_jobs = int(n_jobs_override)
-        filter_cfg.__post_init__()
+    filter_cfg.__post_init__()
 
     return task, filter_cfg
 

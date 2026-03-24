@@ -430,6 +430,18 @@ def _compute_linearity_proxy(
 def _compute_wins_ratio_proxy(*, x: torch.Tensor, y: torch.Tensor, task: str) -> float | None:
     try:
         x_tensor = x.to(torch.float32)
+        n_rows = int(x_tensor.shape[0])
+        if n_rows < 4:
+            return None
+        n_test = max(1, n_rows // 4)
+        n_train = n_rows - n_test
+        if n_train <= 0:
+            return None
+        gen = torch.Generator(device=x_tensor.device)
+        gen.manual_seed(0)
+        perm = torch.randperm(n_rows, generator=gen, device=x_tensor.device)
+        train_idx = perm[:n_train]
+        test_idx = perm[n_train:]
         if task == _TASK_CLASSIFICATION:
             labels = _classification_labels(y)
             _, dense = torch.unique(labels, sorted=True, return_inverse=True)
@@ -440,18 +452,24 @@ def _compute_wins_ratio_proxy(*, x: torch.Tensor, y: torch.Tensor, task: str) ->
         else:
             raise ValueError(f"Unsupported task '{task}'.")
         _, details = apply_extra_trees_filter(
-            x_tensor,
-            y_tensor,
+            x_tensor[train_idx],
+            y_tensor[train_idx],
+            x_tensor[test_idx],
+            y_tensor[test_idx],
             task=task,
             seed=0,
-            threshold=0.0,
+            easy_skill_threshold=1.0,
+            easy_gain_threshold=0.0,
+            hard_skill_threshold=0.0,
+            stump_skill_threshold=None,
+            use_lineage_veto=False,
         )
     except Exception:
         return None
 
-    value = details.get("wins_ratio")
+    value = details.get("skill_full")
     if isinstance(value, (int, float)):
-        return _finite_or_none(float(value))
+        return _finite_or_none(0.5 * (float(value) + 1.0))
     return None
 
 

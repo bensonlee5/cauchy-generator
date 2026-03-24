@@ -37,7 +37,7 @@ def test_extract_dataset_metrics_classification_invariants(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def _stub_filter(*_args, **_kwargs):
-        return True, {"wins_ratio": 0.75, "n_valid_oob": 64, "backend": "extra_trees_cpu"}
+        return True, {"skill_full": 0.5, "backend": "extra_trees_cpu"}
 
     monkeypatch.setattr("dagzoo.core.metrics_torch.apply_extra_trees_filter", _stub_filter)
     bundle = generate_one(_tiny_config("classification"), seed=7, device="cpu")
@@ -72,7 +72,7 @@ def test_extract_dataset_metrics_regression_branch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def _stub_filter(*_args, **_kwargs):
-        return True, {"wins_ratio": 0.55, "n_valid_oob": 64, "backend": "extra_trees_cpu"}
+        return True, {"skill_full": 0.1, "backend": "extra_trees_cpu"}
 
     monkeypatch.setattr("dagzoo.core.metrics_torch.apply_extra_trees_filter", _stub_filter)
     bundle = generate_one(_tiny_config("regression"), seed=17, device="cpu")
@@ -97,7 +97,7 @@ def test_extract_dataset_metrics_spearman_toggle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def _stub_filter(*_args, **_kwargs):
-        return True, {"wins_ratio": 0.61, "n_valid_oob": 6, "backend": "extra_trees_cpu"}
+        return True, {"skill_full": 0.22, "backend": "extra_trees_cpu"}
 
     monkeypatch.setattr("dagzoo.core.metrics_torch.apply_extra_trees_filter", _stub_filter)
     bundle = DatasetBundle(
@@ -123,7 +123,7 @@ def test_extract_dataset_metrics_reproducible_for_fixed_input(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def _stub_filter(*_args, **_kwargs):
-        return True, {"wins_ratio": 0.42, "n_valid_oob": 64, "backend": "extra_trees_cpu"}
+        return True, {"skill_full": -0.16, "backend": "extra_trees_cpu"}
 
     monkeypatch.setattr("dagzoo.core.metrics_torch.apply_extra_trees_filter", _stub_filter)
     cfg = _tiny_config("classification")
@@ -202,7 +202,7 @@ def test_extract_dataset_metrics_handles_degenerate_constant_columns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def _stub_filter(*_args, **_kwargs):
-        return False, {"reason": "insufficient_oob_predictions", "n_valid_oob": 0}
+        return False, {"reason": "too_hard_garbage"}
 
     monkeypatch.setattr("dagzoo.core.metrics_torch.apply_extra_trees_filter", _stub_filter)
     bundle = DatasetBundle(
@@ -231,7 +231,7 @@ def test_extract_metrics_batch_preserves_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def _stub_filter(*_args, **_kwargs):
-        return True, {"wins_ratio": 0.8, "n_valid_oob": 64, "backend": "extra_trees_cpu"}
+        return True, {"skill_full": 0.6, "backend": "extra_trees_cpu"}
 
     monkeypatch.setattr("dagzoo.core.metrics_torch.apply_extra_trees_filter", _stub_filter)
     cfg = _tiny_config("classification")

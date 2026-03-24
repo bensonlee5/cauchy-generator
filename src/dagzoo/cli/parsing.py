@@ -182,12 +182,54 @@ def parse_thresholds_csv_arg(raw: str) -> list[float]:
     ]
 
 
-def parse_filter_threshold_arg(raw: str) -> float:
-    """argparse type: parse one deferred-filter threshold in [0, 1]."""
+def parse_easy_skill_threshold_arg(raw: str) -> float:
+    """argparse type: parse small-shot ease threshold in [0, 1]."""
 
     return parse_bounded_float(
         raw,
-        flag="--threshold",
+        flag="--easy-skill-threshold",
+        lo=FILTER_THRESHOLD_MIN,
+        hi=FILTER_THRESHOLD_MAX,
+        lo_inclusive=True,
+        hi_inclusive=True,
+        expectation=FILTER_THRESHOLD_EXPECTATION,
+    )
+
+
+def parse_easy_gain_threshold_arg(raw: str) -> float:
+    """argparse type: parse full-vs-small gain threshold in [0, 1]."""
+
+    return parse_bounded_float(
+        raw,
+        flag="--easy-gain-threshold",
+        lo=FILTER_THRESHOLD_MIN,
+        hi=FILTER_THRESHOLD_MAX,
+        lo_inclusive=True,
+        hi_inclusive=True,
+        expectation=FILTER_THRESHOLD_EXPECTATION,
+    )
+
+
+def parse_hard_skill_threshold_arg(raw: str) -> float:
+    """argparse type: parse hard-side garbage threshold in [0, 1]."""
+
+    return parse_bounded_float(
+        raw,
+        flag="--hard-skill-threshold",
+        lo=FILTER_THRESHOLD_MIN,
+        hi=FILTER_THRESHOLD_MAX,
+        lo_inclusive=True,
+        hi_inclusive=True,
+        expectation=FILTER_THRESHOLD_EXPECTATION,
+    )
+
+
+def parse_stump_skill_threshold_arg(raw: str) -> float:
+    """argparse type: parse stump-veto threshold in [0, 1]."""
+
+    return parse_bounded_float(
+        raw,
+        flag="--stump-skill-threshold",
         lo=FILTER_THRESHOLD_MIN,
         hi=FILTER_THRESHOLD_MAX,
         lo_inclusive=True,

@@ -274,14 +274,15 @@ def test_filter_calibration_cli_rejects_filter_disabled_config(tmp_path) -> None
     assert int(exc.value.code) == 2
 
 
-@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), -0.1, 1.1])
-def test_filter_calibration_cli_rejects_invalid_baseline_filter_threshold(
+def test_filter_calibration_cli_rejects_removed_filter_threshold_config(
     tmp_path,
-    value: float,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    cfg = load_repo_config("preset_filter_benchmark_smoke.yaml")
-    cfg.filter.threshold = value
-    config_path = write_config(tmp_path, cfg, "invalid_filter_threshold.yaml")
+    config_path = tmp_path / "invalid_filter_threshold.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"filter": {"enabled": True, "threshold": 0.95}}),
+        encoding="utf-8",
+    )
 
     with pytest.raises(SystemExit) as exc:
         main(
@@ -293,6 +294,7 @@ def test_filter_calibration_cli_rejects_invalid_baseline_filter_threshold(
         )
 
     assert int(exc.value.code) == 2
+    assert "filter.threshold has been removed" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
@@ -364,7 +366,23 @@ def test_filter_cli_rejects_invalid_n_jobs() -> None:
     assert int(exc.value.code) == 2
 
 
-def test_filter_cli_rejects_invalid_threshold() -> None:
+def test_filter_cli_rejects_invalid_easy_skill_threshold() -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "filter",
+                "--in",
+                "input",
+                "--out",
+                "out",
+                "--easy-skill-threshold",
+                "1.1",
+            ]
+        )
+    assert int(exc.value.code) == 2
+
+
+def test_filter_cli_rejects_removed_threshold_flag() -> None:
     with pytest.raises(SystemExit) as exc:
         main(
             [
@@ -374,13 +392,13 @@ def test_filter_cli_rejects_invalid_threshold() -> None:
                 "--out",
                 "out",
                 "--threshold",
-                "1.1",
+                "0.4",
             ]
         )
     assert int(exc.value.code) == 2
 
 
-def test_filter_cli_passes_threshold_override_to_runner(
+def test_filter_cli_passes_ease_overrides_to_runner(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     captured: dict[str, object] = {}
@@ -415,8 +433,17 @@ def test_filter_cli_passes_threshold_override_to_runner(
             str(tmp_path / "filter_out"),
             "--n-jobs",
             "4",
-            "--threshold",
-            "0.4",
+            "--ease-k-small",
+            "8",
+            "--easy-skill-threshold",
+            "0.7",
+            "--easy-gain-threshold",
+            "0.15",
+            "--hard-skill-threshold",
+            "0.05",
+            "--stump-skill-threshold",
+            "0.6",
+            "--no-lineage-veto",
         ]
     )
 
@@ -425,7 +452,12 @@ def test_filter_cli_passes_threshold_override_to_runner(
     assert kwargs["in_dir"] == "input_shards"
     assert kwargs["out_dir"] == str(tmp_path / "filter_out")
     assert kwargs["curated_out_dir"] is None
-    assert kwargs["threshold_override"] == pytest.approx(0.4)
+    assert kwargs["ease_k_small_override"] == 8
+    assert kwargs["easy_skill_threshold_override"] == pytest.approx(0.7)
+    assert kwargs["easy_gain_threshold_override"] == pytest.approx(0.15)
+    assert kwargs["hard_skill_threshold_override"] == pytest.approx(0.05)
+    assert kwargs["stump_skill_threshold_override"] == pytest.approx(0.6)
+    assert kwargs["use_lineage_veto_override"] is False
     assert kwargs["n_jobs_override"] == 4
 
 

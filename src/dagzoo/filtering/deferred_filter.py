@@ -16,7 +16,6 @@ from dagzoo.config import FilterConfig
 from dagzoo.core.staged_artifacts import cleanup_path as _cleanup_path
 from dagzoo.core.staged_artifacts import promote_staged_path as _promote_staged_path
 from dagzoo.core.staged_artifacts import staged_output_path as _staged_output_path
-from dagzoo.filter_thresholds import validate_filter_threshold
 from dagzoo.filtering.deferred_filter_artifacts import (
     _close_curated_shard_writer,
     _consume_expected_split,
@@ -291,28 +290,34 @@ def _filter_dataset(
     y_test: np.ndarray,
     task: str,
     seed: int,
+    lineage_payload: Mapping[str, Any] | None,
+    lineage_base_dir: Path | None,
     filter_cfg: FilterConfig,
 ) -> tuple[bool, dict[str, Any], float]:
     """Replay ExtraTrees filter on persisted train/test rows for one dataset."""
 
-    x_all = np.concatenate([x_train, x_test], axis=0).astype(np.float32, copy=False)
-    y_all = np.concatenate([y_train, y_test], axis=0)
-    y_dtype = np.int64 if task == "classification" else np.float32
-    y_all = y_all.astype(y_dtype, copy=False)
-
     start = time.perf_counter()
     accepted, details = _apply_extra_trees_filter_numpy(
-        x_all,
-        y_all,
+        x_train.astype(np.float32, copy=False),
+        y_train.astype(np.int64 if task == "classification" else np.float32, copy=False),
+        x_test.astype(np.float32, copy=False),
+        y_test.astype(np.int64 if task == "classification" else np.float32, copy=False),
         task=task,
         seed=seed,
+        lineage_payload=lineage_payload,
+        lineage_base_dir=lineage_base_dir,
         n_estimators=filter_cfg.n_estimators,
         max_depth=filter_cfg.max_depth,
         min_samples_leaf=filter_cfg.min_samples_leaf,
         max_leaf_nodes=filter_cfg.max_leaf_nodes,
         max_features=filter_cfg.max_features,
         n_bootstrap=filter_cfg.n_bootstrap,
-        threshold=filter_cfg.threshold,
+        ease_k_small=filter_cfg.ease_k_small,
+        easy_skill_threshold=filter_cfg.easy_skill_threshold,
+        easy_gain_threshold=filter_cfg.easy_gain_threshold,
+        hard_skill_threshold=filter_cfg.hard_skill_threshold,
+        stump_skill_threshold=filter_cfg.stump_skill_threshold,
+        use_lineage_veto=filter_cfg.use_lineage_veto,
         n_jobs=filter_cfg.n_jobs,
     )
     elapsed_seconds = max(0.0, time.perf_counter() - start)
@@ -324,7 +329,12 @@ def run_deferred_filter(
     in_dir: str | Path,
     out_dir: str | Path,
     curated_out_dir: str | Path | None = None,
-    threshold_override: float | None = None,
+    ease_k_small_override: int | None = None,
+    easy_skill_threshold_override: float | None = None,
+    easy_gain_threshold_override: float | None = None,
+    hard_skill_threshold_override: float | None = None,
+    stump_skill_threshold_override: float | None = None,
+    use_lineage_veto_override: bool | None = None,
     n_jobs_override: int | None = None,
 ) -> DeferredFilterRunResult:
     """Replay ExtraTrees filter over persisted shard outputs."""
@@ -348,12 +358,6 @@ def run_deferred_filter(
     rejected_total = 0
     total_elapsed_seconds = 0.0
     curated_accepted_total = 0
-    validated_threshold_override: float | None = None
-    if threshold_override is not None:
-        validated_threshold_override = validate_filter_threshold(
-            threshold_override,
-            field_name="threshold_override",
-        )
 
     manifest_path = output_path / MANIFEST_FILENAME
     summary_path = output_path / SUMMARY_FILENAME
@@ -434,7 +438,12 @@ def run_deferred_filter(
 
                         task, filter_cfg = _resolve_task_and_filter_config(
                             metadata_payload=metadata_payload,
-                            threshold_override=validated_threshold_override,
+                            ease_k_small_override=ease_k_small_override,
+                            easy_skill_threshold_override=easy_skill_threshold_override,
+                            easy_gain_threshold_override=easy_gain_threshold_override,
+                            hard_skill_threshold_override=hard_skill_threshold_override,
+                            stump_skill_threshold_override=stump_skill_threshold_override,
+                            use_lineage_veto_override=use_lineage_veto_override,
                             n_jobs_override=n_jobs_override,
                         )
                         seed = _resolve_filter_seed(metadata_payload, dataset_index=dataset_index)
@@ -446,6 +455,12 @@ def run_deferred_filter(
                             y_test=test_split.y,
                             task=task,
                             seed=seed,
+                            lineage_payload=(
+                                metadata_payload.get("lineage")
+                                if isinstance(metadata_payload.get("lineage"), Mapping)
+                                else None
+                            ),
+                            lineage_base_dir=shard_dir,
                             filter_cfg=filter_cfg,
                         )
                         total_elapsed_seconds += elapsed_seconds
@@ -469,7 +484,7 @@ def run_deferred_filter(
                         )
                         if not accepted:
                             rejected_total += 1
-                            rejected_reason_counts[reason or "below_threshold"] += 1
+                            rejected_reason_counts[reason or "rejected"] += 1
                         else:
                             accepted_total += 1
                             if curated_path is not None:
@@ -531,6 +546,7 @@ def run_deferred_filter(
             "input_dir": str(input_path.resolve()),
             "out_dir": str(output_path.resolve()),
             "manifest_path": str(manifest_path.resolve()),
+            "filter_mode": "small_shot_ease_v1",
             "total_datasets": int(total_datasets),
             "accepted_datasets": int(accepted_total),
             "rejected_datasets": int(rejected_total),
@@ -545,8 +561,22 @@ def run_deferred_filter(
             "curated_out_dir": str(curated_path.resolve()) if curated_path is not None else None,
             "curated_accepted_datasets": int(curated_accepted_total),
         }
-        if validated_threshold_override is not None:
-            summary_payload["threshold_requested_override"] = float(validated_threshold_override)
+        if ease_k_small_override is not None:
+            summary_payload["ease_k_small_override"] = int(ease_k_small_override)
+        if easy_skill_threshold_override is not None:
+            summary_payload["easy_skill_threshold_override"] = float(easy_skill_threshold_override)
+        if easy_gain_threshold_override is not None:
+            summary_payload["easy_gain_threshold_override"] = float(easy_gain_threshold_override)
+        if hard_skill_threshold_override is not None:
+            summary_payload["hard_skill_threshold_override"] = float(hard_skill_threshold_override)
+        if stump_skill_threshold_override is not None:
+            summary_payload["stump_skill_threshold_override"] = float(
+                stump_skill_threshold_override
+            )
+        if use_lineage_veto_override is not None:
+            summary_payload["use_lineage_veto_override"] = bool(use_lineage_veto_override)
+        if n_jobs_override is not None:
+            summary_payload["n_jobs_override"] = int(n_jobs_override)
         staged_summary_path.write_text(
             json.dumps(_sanitize_json(summary_payload), indent=2, sort_keys=True, allow_nan=False)
             + "\n",

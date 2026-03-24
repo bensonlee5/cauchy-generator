@@ -5,14 +5,12 @@ from __future__ import annotations
 import math
 from typing import Any, Sequence
 
-from dagzoo.config import GeneratorConfig, clone_generator_config
+from dagzoo.config import GeneratorConfig
 from dagzoo.filter_thresholds import (
     FILTER_THRESHOLD_MAX,
     FILTER_THRESHOLD_MIN,
     validate_filter_threshold,
 )
-
-from .runner import run_effective_diversity_audit
 
 DEFAULT_FILTER_CALIBRATION_DELTAS: tuple[float, ...] = (-0.15, -0.10, -0.05, 0.0, 0.05)
 _CALIBRATION_THRESHOLD_MIN = FILTER_THRESHOLD_MIN
@@ -96,9 +94,10 @@ def resolve_filter_calibration_thresholds(
 def _build_threshold_variant(config: GeneratorConfig, *, threshold: float) -> GeneratorConfig:
     """Clone one config and override only the requested filter threshold."""
 
-    variant = clone_generator_config(config, revalidate=False)
-    variant.filter.threshold = float(threshold)
-    return variant
+    _ = (config, threshold)
+    raise NotImplementedError(
+        "filter-calibration is not supported for the small-shot ease filter yet."
+    )
 
 
 def _candidate_entry(
@@ -171,110 +170,17 @@ def run_filter_calibration(
 ) -> dict[str, Any]:
     """Run threshold-only filter calibration against the rewritten audit engine."""
 
-    if not bool(config.filter.enabled):
-        raise ValueError("filter-calibration requires filter.enabled: true in the resolved config.")
-
-    baseline_threshold = _normalize_threshold_candidate(
-        validate_filter_calibration_threshold(
-            config.filter.threshold,
-            field_name="filter.threshold",
-        )
+    _ = (
+        config,
+        config_path,
+        thresholds,
+        suite,
+        num_datasets,
+        warmup,
+        device,
+        warn_threshold_pct,
+        fail_threshold_pct,
     )
-    threshold_candidates = resolve_filter_calibration_thresholds(
-        baseline_threshold=baseline_threshold,
-        thresholds=thresholds,
+    raise NotImplementedError(
+        "filter-calibration is not supported for the small-shot ease filter yet."
     )
-    variant_thresholds = [value for value in threshold_candidates if value != baseline_threshold]
-    variant_labels = [_threshold_label(value) for value in variant_thresholds]
-    audit_report = run_effective_diversity_audit(
-        baseline_config=config,
-        baseline_config_path=config_path,
-        variant_configs=[
-            _build_threshold_variant(config, threshold=value) for value in variant_thresholds
-        ],
-        variant_config_paths=[config_path] * len(variant_thresholds),
-        variant_labels=variant_labels,
-        suite=suite,
-        num_datasets=num_datasets,
-        warmup=warmup,
-        device=device,
-        warn_threshold_pct=warn_threshold_pct,
-        fail_threshold_pct=fail_threshold_pct,
-    )
-
-    baseline_entry = audit_report["baseline"]
-    variant_entries = audit_report.get("variants", [])
-    comparisons = audit_report.get("comparisons", [])
-    if len(variant_entries) != len(variant_thresholds):
-        raise ValueError("audit_report variants length did not match calibration thresholds.")
-    if len(comparisons) != len(variant_thresholds):
-        raise ValueError("audit_report comparisons length did not match calibration thresholds.")
-
-    baseline_candidate = _candidate_entry(
-        baseline_entry,
-        threshold_requested=baseline_threshold,
-        diversity_status="reference",
-        comparison=None,
-    )
-    candidates = [baseline_candidate]
-    for threshold, variant_entry, comparison in zip(
-        variant_thresholds,
-        variant_entries,
-        comparisons,
-        strict=True,
-    ):
-        candidates.append(
-            _candidate_entry(
-                variant_entry,
-                threshold_requested=threshold,
-                diversity_status=str(
-                    comparison.get("diversity_status", "insufficient_metrics")
-                    if isinstance(comparison, dict)
-                    else "insufficient_metrics"
-                ),
-                comparison=comparison,
-            )
-        )
-    candidates.sort(
-        key=lambda item: (
-            float(item.get("threshold_requested", 0.0)),
-            str(item.get("label", "")),
-        )
-    )
-
-    best_overall = max(candidates, key=_ranking_value)
-    passing_candidates = [
-        candidate for candidate in candidates if str(candidate.get("diversity_status")) == "pass"
-    ]
-    best_passing = max(passing_candidates, key=_ranking_value) if passing_candidates else None
-    overall_status = (
-        str(audit_report.get("summary", {}).get("overall_status", "insufficient_metrics"))
-        if comparisons
-        else "reference"
-    )
-
-    return {
-        "schema_name": "dagzoo_filter_calibration_report",
-        "schema_version": 1,
-        "generated_at": audit_report.get("generated_at"),
-        "baseline": baseline_candidate,
-        "candidates": candidates,
-        "comparisons": comparisons,
-        "summary": {
-            "overall_status": overall_status,
-            "warn_threshold_pct": float(warn_threshold_pct),
-            "fail_threshold_pct": float(fail_threshold_pct),
-            "num_candidates": len(candidates),
-            "baseline_threshold_requested": float(baseline_threshold),
-            "best_overall_threshold_requested": float(best_overall["threshold_requested"]),
-            "best_overall_diversity_status": str(best_overall["diversity_status"]),
-            "best_passing_threshold_requested": (
-                float(best_passing["threshold_requested"]) if best_passing is not None else None
-            ),
-            "probe_num_datasets": audit_report.get("summary", {}).get("probe_num_datasets"),
-            "probe_warmup_datasets": audit_report.get("summary", {}).get("probe_warmup_datasets"),
-            "threshold_candidates_requested": [
-                float(candidate["threshold_requested"]) for candidate in candidates
-            ],
-        },
-    }

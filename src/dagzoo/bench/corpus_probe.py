@@ -80,15 +80,33 @@ def build_corpus_probe_coverage_config(config: GeneratorConfig) -> CoverageAggre
     )
 
 
-def _build_filter_summary(measurement: FilterStageMeasurement) -> dict[str, Any]:
+def _build_filter_summary(
+    measurement: FilterStageMeasurement,
+    *,
+    config: GeneratorConfig,
+) -> dict[str, Any]:
     """Normalize filter replay telemetry into the audit report shape."""
 
     return {
+        "filter_mode": "small_shot_ease_v1",
+        "ease_k_small": int(config.filter.ease_k_small),
+        "easy_skill_threshold": float(config.filter.easy_skill_threshold),
+        "easy_gain_threshold": float(config.filter.easy_gain_threshold),
+        "hard_skill_threshold": float(config.filter.hard_skill_threshold),
+        "stump_skill_threshold": (
+            None
+            if config.filter.stump_skill_threshold is None
+            else float(config.filter.stump_skill_threshold)
+        ),
+        "use_lineage_veto": bool(config.filter.use_lineage_veto),
         "accepted_true_fraction": measurement.accepted_true_fraction,
-        "wins_ratio_mean": measurement.wins_ratio_mean,
-        "threshold_effective_mean": measurement.threshold_effective_mean,
-        "threshold_delta_mean": measurement.threshold_delta_mean,
-        "n_valid_oob_mean": measurement.n_valid_oob_mean,
+        "skill_small_mean": measurement.skill_small_mean,
+        "skill_full_mean": measurement.skill_full_mean,
+        "skill_gain_mean": measurement.skill_gain_mean,
+        "skill_small_lb95_mean": measurement.skill_small_lb95_mean,
+        "skill_gain_ub95_mean": measurement.skill_gain_ub95_mean,
+        "skill_full_ub95_mean": measurement.skill_full_ub95_mean,
+        "stump_skill_mean": measurement.stump_skill_mean,
         "reason_counts": dict(sorted(measurement.reason_counts.items())),
     }
 
@@ -173,7 +191,7 @@ def run_corpus_probe(
             if filter_acceptance_rate_dataset_level is not None
             else None
         )
-        filter_summary = _build_filter_summary(filter_measurement)
+        filter_summary = _build_filter_summary(filter_measurement, config=realized_config)
     else:
         for bundle in analysis_stream:
             coverage_aggregator.update_bundle(bundle)

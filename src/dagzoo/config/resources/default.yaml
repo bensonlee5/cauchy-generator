@@ -66,5 +66,10 @@ filter:
   max_depth: 6
   max_features: auto
   n_bootstrap: 200
-  threshold: 0.95
+  ease_k_small: 16
+  easy_skill_threshold: 0.8
+  easy_gain_threshold: 0.1
+  hard_skill_threshold: 0.0
+  stump_skill_threshold: null
+  use_lineage_veto: true
   max_attempts: 3

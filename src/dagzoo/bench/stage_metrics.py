@@ -9,8 +9,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 from dagzoo.bench.constants import SECONDS_PER_MINUTE
 from dagzoo.config import GeneratorConfig
 from dagzoo.filtering.extra_trees_filter import _apply_extra_trees_filter_numpy
@@ -46,10 +44,13 @@ class FilterStageMeasurement:
     filter_rejections_total: int
     filter_rejected_datasets: int
     accepted_true_fraction: float | None = None
-    wins_ratio_mean: float | None = None
-    threshold_effective_mean: float | None = None
-    threshold_delta_mean: float | None = None
-    n_valid_oob_mean: float | None = None
+    skill_small_mean: float | None = None
+    skill_full_mean: float | None = None
+    skill_gain_mean: float | None = None
+    skill_small_lb95_mean: float | None = None
+    skill_gain_ub95_mean: float | None = None
+    skill_full_ub95_mean: float | None = None
+    stump_skill_mean: float | None = None
     elapsed_seconds: float = 0.0
     cpu_time_seconds: float = 0.0
     reason_counts: dict[str, int] = field(default_factory=dict)
@@ -179,10 +180,13 @@ def replay_filter_stage_metrics(
     attempts_total = 0
     accepted_total = 0
     rejections_total = 0
-    wins_ratio_values: list[float] = []
-    threshold_effective_values: list[float] = []
-    threshold_delta_values: list[float] = []
-    n_valid_oob_values: list[float] = []
+    skill_small_values: list[float] = []
+    skill_full_values: list[float] = []
+    skill_gain_values: list[float] = []
+    skill_small_lb95_values: list[float] = []
+    skill_gain_ub95_values: list[float] = []
+    skill_full_ub95_values: list[float] = []
+    stump_skill_values: list[float] = []
     reason_counts: dict[str, int] = {}
     start = time.perf_counter()
     start_cpu = time.process_time()
@@ -193,30 +197,35 @@ def replay_filter_stage_metrics(
         x_test = _to_numpy(bundle.X_test).astype("float32", copy=False)
         y_train = _to_numpy(bundle.y_train)
         y_test = _to_numpy(bundle.y_test)
-        x_all = x_train
-        if x_test.size > 0:
-            x_all = np.concatenate([x_train, x_test], axis=0)
-        y_all = y_train
-        if y_test.size > 0:
-            y_all = np.concatenate([y_train, y_test], axis=0)
-        if str(config.dataset.task) == "classification":
-            y_all = y_all.astype("int64", copy=False)
-        else:
-            y_all = y_all.astype("float32", copy=False)
-
         attempts_total += 1
         accepted, _details = _apply_extra_trees_filter_numpy(
-            x_all,
-            y_all,
+            x_train,
+            y_train.astype("int64" if str(config.dataset.task) == "classification" else "float32"),
+            x_test,
+            y_test.astype("int64" if str(config.dataset.task) == "classification" else "float32"),
             task=str(config.dataset.task),
             seed=_coerce_bundle_seed(bundle, fallback_seed=config.seed + idx),
+            lineage_payload=(
+                bundle.metadata.get("lineage")
+                if isinstance(bundle.metadata.get("lineage"), dict)
+                else None
+            ),
             n_estimators=int(config.filter.n_estimators),
             max_depth=int(config.filter.max_depth),
             min_samples_leaf=int(config.filter.min_samples_leaf),
             max_leaf_nodes=config.filter.max_leaf_nodes,
             max_features=config.filter.max_features,
             n_bootstrap=int(config.filter.n_bootstrap),
-            threshold=float(config.filter.threshold),
+            ease_k_small=int(config.filter.ease_k_small),
+            easy_skill_threshold=float(config.filter.easy_skill_threshold),
+            easy_gain_threshold=float(config.filter.easy_gain_threshold),
+            hard_skill_threshold=float(config.filter.hard_skill_threshold),
+            stump_skill_threshold=(
+                None
+                if config.filter.stump_skill_threshold is None
+                else float(config.filter.stump_skill_threshold)
+            ),
+            use_lineage_veto=bool(config.filter.use_lineage_veto),
             n_jobs=int(config.filter.n_jobs),
         )
         if bool(accepted):
@@ -229,18 +238,27 @@ def replay_filter_stage_metrics(
                 callback_cpu_elapsed += max(0.0, time.process_time() - callback_start_cpu)
         else:
             rejections_total += 1
-        wins_ratio = _coerce_optional_finite_float(_details.get("wins_ratio"))
-        if wins_ratio is not None:
-            wins_ratio_values.append(float(wins_ratio))
-        threshold_effective = _coerce_optional_finite_float(_details.get("threshold_effective"))
-        if threshold_effective is not None:
-            threshold_effective_values.append(float(threshold_effective))
-        threshold_delta = _coerce_optional_finite_float(_details.get("threshold_delta"))
-        if threshold_delta is not None:
-            threshold_delta_values.append(float(threshold_delta))
-        n_valid_oob = _coerce_optional_finite_float(_details.get("n_valid_oob"))
-        if n_valid_oob is not None:
-            n_valid_oob_values.append(float(n_valid_oob))
+        skill_small = _coerce_optional_finite_float(_details.get("skill_small"))
+        if skill_small is not None:
+            skill_small_values.append(float(skill_small))
+        skill_full = _coerce_optional_finite_float(_details.get("skill_full"))
+        if skill_full is not None:
+            skill_full_values.append(float(skill_full))
+        skill_gain = _coerce_optional_finite_float(_details.get("skill_gain"))
+        if skill_gain is not None:
+            skill_gain_values.append(float(skill_gain))
+        skill_small_lb95 = _coerce_optional_finite_float(_details.get("skill_small_lb95"))
+        if skill_small_lb95 is not None:
+            skill_small_lb95_values.append(float(skill_small_lb95))
+        skill_gain_ub95 = _coerce_optional_finite_float(_details.get("skill_gain_ub95"))
+        if skill_gain_ub95 is not None:
+            skill_gain_ub95_values.append(float(skill_gain_ub95))
+        skill_full_ub95 = _coerce_optional_finite_float(_details.get("skill_full_ub95"))
+        if skill_full_ub95 is not None:
+            skill_full_ub95_values.append(float(skill_full_ub95))
+        stump_skill = _coerce_optional_finite_float(_details.get("stump_skill"))
+        if stump_skill is not None:
+            stump_skill_values.append(float(stump_skill))
         reason = _details.get("reason")
         if isinstance(reason, str) and reason:
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
@@ -257,10 +275,13 @@ def replay_filter_stage_metrics(
         accepted_true_fraction=(
             float(accepted_total) / float(attempts_total) if attempts_total > 0 else None
         ),
-        wins_ratio_mean=_mean_or_none(wins_ratio_values),
-        threshold_effective_mean=_mean_or_none(threshold_effective_values),
-        threshold_delta_mean=_mean_or_none(threshold_delta_values),
-        n_valid_oob_mean=_mean_or_none(n_valid_oob_values),
+        skill_small_mean=_mean_or_none(skill_small_values),
+        skill_full_mean=_mean_or_none(skill_full_values),
+        skill_gain_mean=_mean_or_none(skill_gain_values),
+        skill_small_lb95_mean=_mean_or_none(skill_small_lb95_values),
+        skill_gain_ub95_mean=_mean_or_none(skill_gain_ub95_values),
+        skill_full_ub95_mean=_mean_or_none(skill_full_ub95_values),
+        stump_skill_mean=_mean_or_none(stump_skill_values),
         elapsed_seconds=float(elapsed),
         cpu_time_seconds=float(cpu_time_seconds),
         reason_counts=dict(sorted(reason_counts.items())),

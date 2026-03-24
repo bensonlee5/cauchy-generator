@@ -10,6 +10,26 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.12.0] - 2026-03-24
+
+### Changed
+
+- **BREAKING:** Removed the threshold-based ExtraTrees deferred filter. `dagzoo filter`
+  now uses a small-shot ease filter with held-out ExtraTrees skill, an optional
+  stump veto, and a lineage no-path veto. Public filter cutoffs are now
+  `ease_k_small`, `easy_skill_threshold`, `easy_gain_threshold`,
+  `hard_skill_threshold`, `stump_skill_threshold`, and `use_lineage_veto`.
+- **BREAKING:** Removed the `--threshold` deferred-filter CLI override and the
+  persisted `filter.threshold` config key. Old configs now fail with a clear
+  migration error pointing to the new ease-filter parameters.
+- `filter-calibration` remains exposed as a command entrypoint, but it now
+  fails immediately with an explicit unsupported-mode error until a dedicated
+  calibration workflow exists for the small-shot ease filter.
+- Deferred-filter manifests, summaries, and benchmark replay telemetry now
+  record small-shot ease metrics (`skill_small`, `skill_full`, `skill_gain`,
+  bootstrap bounds, stump skill, and lineage-veto status) instead of OOB
+  threshold-era `wins_ratio` diagnostics.
+
 ## [0.11.0] - 2026-03-21
 
 ### Changed

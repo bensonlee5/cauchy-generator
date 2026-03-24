@@ -22,13 +22,18 @@ def _bundle_with_embedded_config(
     dataset_index: int | None = None,
     dataset_id: str | None = None,
     split_groups: dict[str, str] | None = None,
+    filter_overrides: dict[str, object] | None = None,
+    lineage: dict[str, object] | None = None,
 ) -> DatasetBundle:
+    embedded_filter = {"enabled": True}
+    if filter_overrides is not None:
+        embedded_filter.update(filter_overrides)
     metadata = {
         "seed": seed,
         "filter": {"mode": "deferred", "status": "not_run"},
         "config": {
             "dataset": {"task": "classification"},
-            "filter": {"enabled": True},
+            "filter": embedded_filter,
         },
     }
     if dataset_seed is not None:
@@ -39,6 +44,8 @@ def _bundle_with_embedded_config(
         metadata["dataset_id"] = str(dataset_id)
     if split_groups is not None:
         metadata["split_groups"] = dict(split_groups)
+    if lineage is not None:
+        metadata["lineage"] = dict(lineage)
 
     return DatasetBundle(
         X_train=np.array(
@@ -76,6 +83,26 @@ def _write_ndjson_records(path, records: list[dict[str, object]]) -> None:
         "".join(json.dumps(record, sort_keys=True) + "\n" for record in records),
         encoding="utf-8",
     )
+
+
+def _dense_lineage_payload() -> dict[str, object]:
+    return {
+        "schema_name": "dagzoo.dag_lineage",
+        "schema_version": "1.0.0",
+        "graph": {
+            "n_nodes": 4,
+            "adjacency": [
+                [0, 0, 1, 0],
+                [0, 0, 0, 0],
+                [0, 0, 0, 0],
+                [0, 0, 0, 0],
+            ],
+        },
+        "assignments": {
+            "feature_to_node": [0, 0],
+            "target_to_node": 3,
+        },
+    }
 
 
 def _write_split_table(
@@ -198,9 +225,9 @@ def test_run_deferred_filter_writes_manifest_and_summary(
     def _stub_filter(*_args, **_kwargs):
         seed = int(_kwargs["seed"])
         accepted = bool(seed % 2)
-        details = {"wins_ratio": 1.0 if accepted else 0.0, "n_valid_oob": 128}
+        details = {"skill_full": 0.9 if accepted else -0.1, "filter_mode": "small_shot_ease_v1"}
         if not accepted:
-            details["reason"] = "below_threshold"
+            details["reason"] = "too_easy_small_shot"
         return accepted, details
 
     monkeypatch.setattr(
@@ -215,7 +242,8 @@ def test_run_deferred_filter_writes_manifest_and_summary(
     summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
     assert summary["accepted_datasets"] == 1
     assert summary["rejected_datasets"] == 1
-    assert summary["rejected_reason_counts"]["below_threshold"] == 1
+    assert summary["filter_mode"] == "small_shot_ease_v1"
+    assert summary["rejected_reason_counts"]["too_easy_small_shot"] == 1
 
     manifest_records = _load_ndjson(result.manifest_path)
     assert len(manifest_records) == 2
@@ -260,7 +288,7 @@ def test_run_deferred_filter_writes_curated_output_for_accepted_only(
     def _stub_filter(*_args, **_kwargs):
         seed = int(_kwargs["seed"])
         accepted = bool(seed % 2)
-        return accepted, {"wins_ratio": 1.0 if accepted else 0.0, "n_valid_oob": 128}
+        return accepted, {"skill_full": 0.9 if accepted else -0.1}
 
     monkeypatch.setattr(
         "dagzoo.filtering.deferred_filter._apply_extra_trees_filter_numpy", _stub_filter
@@ -309,7 +337,7 @@ def test_run_deferred_filter_requires_embedded_filter_config(
 
     monkeypatch.setattr(
         "dagzoo.filtering.deferred_filter._apply_extra_trees_filter_numpy",
-        lambda *_args, **_kwargs: (True, {"wins_ratio": 1.0, "n_valid_oob": 128}),
+        lambda *_args, **_kwargs: (True, {"skill_full": 0.9}),
     )
 
     with pytest.raises(ValueError, match="requires embedded metadata\\.config\\.filter"):
@@ -335,7 +363,7 @@ def test_run_deferred_filter_prefers_dataset_seed_when_present(
 
     def _stub_filter(*_args, **_kwargs):
         replay_seeds.append(int(_kwargs["seed"]))
-        return True, {"wins_ratio": 1.0, "n_valid_oob": 128}
+        return True, {"skill_full": 0.9}
 
     monkeypatch.setattr(
         "dagzoo.filtering.deferred_filter._apply_extra_trees_filter_numpy", _stub_filter
@@ -348,7 +376,7 @@ def test_run_deferred_filter_prefers_dataset_seed_when_present(
     assert replay_seeds == [501, 502]
 
 
-def test_run_deferred_filter_applies_threshold_override_and_records_summary_provenance(
+def test_run_deferred_filter_applies_ease_overrides_and_records_summary_provenance(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -360,18 +388,19 @@ def test_run_deferred_filter_applies_threshold_override_and_records_summary_prov
     bundles = [_bundle_with_embedded_config(301), _bundle_with_embedded_config(302)]
     _ = write_packed_parquet_shards_stream(bundles, in_dir, shard_size=2, compression="zstd")
 
-    seen_thresholds: list[float] = []
+    seen_easy_thresholds: list[float] = []
+    seen_k_small: list[int] = []
 
     def _stub_filter(*_args, **_kwargs):
-        threshold = float(_kwargs["threshold"])
-        seen_thresholds.append(threshold)
+        easy_skill_threshold = float(_kwargs["easy_skill_threshold"])
+        seen_easy_thresholds.append(easy_skill_threshold)
+        seen_k_small.append(int(_kwargs["ease_k_small"]))
         return True, {
-            "wins_ratio": 1.0,
-            "n_valid_oob": 128,
-            "threshold_requested": threshold,
-            "threshold_effective": threshold,
-            "threshold_policy": "test_override",
-            "threshold_delta": 0.0,
+            "skill_full": 0.9,
+            "easy_skill_threshold": easy_skill_threshold,
+            "easy_gain_threshold": float(_kwargs["easy_gain_threshold"]),
+            "hard_skill_threshold": float(_kwargs["hard_skill_threshold"]),
+            "ease_k_small_requested": int(_kwargs["ease_k_small"]),
         }
 
     monkeypatch.setattr(
@@ -381,19 +410,27 @@ def test_run_deferred_filter_applies_threshold_override_and_records_summary_prov
     result = run_deferred_filter(
         in_dir=in_dir,
         out_dir=out_dir,
-        threshold_override=0.4,
+        ease_k_small_override=8,
+        easy_skill_threshold_override=0.4,
+        easy_gain_threshold_override=0.2,
+        hard_skill_threshold_override=0.05,
     )
 
     assert result.accepted_datasets == 2
-    assert seen_thresholds == [0.4, 0.4]
+    assert seen_easy_thresholds == [0.4, 0.4]
+    assert seen_k_small == [8, 8]
     summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
-    assert summary["threshold_requested_override"] == pytest.approx(0.4)
+    assert summary["filter_mode"] == "small_shot_ease_v1"
+    assert summary["ease_k_small_override"] == 8
+    assert summary["easy_skill_threshold_override"] == pytest.approx(0.4)
+    assert summary["easy_gain_threshold_override"] == pytest.approx(0.2)
+    assert summary["hard_skill_threshold_override"] == pytest.approx(0.05)
     manifest_records = _load_ndjson(result.manifest_path)
-    assert manifest_records[0]["filter"]["threshold_requested"] == pytest.approx(0.4)
-    assert manifest_records[0]["filter"]["threshold_effective"] == pytest.approx(0.4)
+    assert manifest_records[0]["filter"]["easy_skill_threshold"] == pytest.approx(0.4)
+    assert manifest_records[0]["filter"]["ease_k_small_requested"] == 8
 
 
-def test_run_deferred_filter_uses_embedded_threshold_when_override_is_omitted(
+def test_run_deferred_filter_uses_embedded_easy_threshold_when_override_is_omitted(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -402,15 +439,14 @@ def test_run_deferred_filter_uses_embedded_threshold_when_override_is_omitted(
 
     in_dir = tmp_path / "input"
     out_dir = tmp_path / "filter_out"
-    bundles = [_bundle_with_embedded_config(401)]
-    bundles[0].metadata["config"]["filter"]["threshold"] = 0.6
+    bundles = [_bundle_with_embedded_config(401, filter_overrides={"easy_skill_threshold": 0.6})]
     _ = write_packed_parquet_shards_stream(bundles, in_dir, shard_size=1, compression="zstd")
 
     seen_thresholds: list[float] = []
 
     def _stub_filter(*_args, **_kwargs):
-        seen_thresholds.append(float(_kwargs["threshold"]))
-        return True, {"wins_ratio": 1.0, "n_valid_oob": 128}
+        seen_thresholds.append(float(_kwargs["easy_skill_threshold"]))
+        return True, {"skill_full": 0.9}
 
     monkeypatch.setattr(
         "dagzoo.filtering.deferred_filter._apply_extra_trees_filter_numpy", _stub_filter
@@ -421,7 +457,7 @@ def test_run_deferred_filter_uses_embedded_threshold_when_override_is_omitted(
     assert seen_thresholds == [0.6]
 
 
-def test_run_deferred_filter_zero_threshold_bypass_accepts_all_and_writes_curated_output(
+def test_run_deferred_filter_decodes_compact_lineage_and_applies_no_path_veto(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -430,31 +466,23 @@ def test_run_deferred_filter_zero_threshold_bypass_accepts_all_and_writes_curate
 
     in_dir = tmp_path / "input"
     out_dir = tmp_path / "filter_out"
-    curated_out = tmp_path / "curated"
-    bundles = [_bundle_with_embedded_config(501), _bundle_with_embedded_config(502)]
-    _ = write_packed_parquet_shards_stream(bundles, in_dir, shard_size=2, compression="zstd")
+    bundles = [_bundle_with_embedded_config(501, lineage=_dense_lineage_payload())]
+    _ = write_packed_parquet_shards_stream(bundles, in_dir, shard_size=1, compression="zstd")
 
-    result = run_deferred_filter(
-        in_dir=in_dir,
-        out_dir=out_dir,
-        curated_out_dir=curated_out,
-        threshold_override=0.0,
+    monkeypatch.setattr(
+        "dagzoo.filtering.extra_trees_filter.ExtraTreesRegressor",
+        lambda *_args, **_kwargs: pytest.fail("model fit should not run after no-path veto"),
     )
 
-    assert result.accepted_datasets == 2
-    assert result.rejected_datasets == 0
-    assert result.curated_accepted_datasets == 2
+    result = run_deferred_filter(in_dir=in_dir, out_dir=out_dir)
+
+    assert result.accepted_datasets == 0
+    assert result.rejected_datasets == 1
     summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
-    assert summary["threshold_requested_override"] == pytest.approx(0.0)
+    assert summary["rejected_reason_counts"] == {"no_feature_target_path": 1}
     manifest_records = _load_ndjson(result.manifest_path)
-    assert {record["status"] for record in manifest_records} == {"accepted"}
-    for record in manifest_records:
-        filter_payload = record["filter"]
-        assert filter_payload["backend"] == "filter_threshold_bypass"
-        assert filter_payload["bypass"] is True
-        assert filter_payload["threshold_requested"] == pytest.approx(0.0)
-        assert filter_payload["threshold_effective"] == pytest.approx(0.0)
-    assert (curated_out / "shard_00000" / "metadata.ndjson").exists()
+    assert manifest_records[0]["reason"] == "no_feature_target_path"
+    assert manifest_records[0]["filter"]["lineage_veto_applied"] is True
 
 
 def test_run_deferred_filter_rejects_stale_filter_output_dir(
@@ -502,7 +530,7 @@ def test_run_deferred_filter_rejects_extra_split_rows_beyond_metadata(
 
     monkeypatch.setattr(
         "dagzoo.filtering.deferred_filter._apply_extra_trees_filter_numpy",
-        lambda *_args, **_kwargs: (True, {"wins_ratio": 1.0, "n_valid_oob": 128}),
+        lambda *_args, **_kwargs: (True, {"skill_full": 0.9}),
     )
 
     with pytest.raises(ValueError, match="extra dataset rows beyond metadata coverage"):
@@ -577,7 +605,7 @@ def test_run_deferred_filter_rejects_non_monotonic_split_rows(
 
     monkeypatch.setattr(
         "dagzoo.filtering.deferred_filter._apply_extra_trees_filter_numpy",
-        lambda *_args, **_kwargs: (True, {"wins_ratio": 1.0, "n_valid_oob": 128}),
+        lambda *_args, **_kwargs: (True, {"skill_full": 0.9}),
     )
 
     with pytest.raises(ValueError, match="monotonically increasing dataset_index"):
@@ -612,7 +640,7 @@ def test_run_deferred_filter_rejects_lineage_symlinks_during_curated_copy(
 
     monkeypatch.setattr(
         "dagzoo.filtering.deferred_filter._apply_extra_trees_filter_numpy",
-        lambda *_args, **_kwargs: (True, {"wins_ratio": 1.0, "n_valid_oob": 128}),
+        lambda *_args, **_kwargs: (True, {"skill_full": 0.9}),
     )
 
     with pytest.raises(RuntimeError, match="must not be a symlink"):
@@ -649,7 +677,7 @@ def test_run_deferred_filter_cleans_up_curated_output_after_split_exhaustion_fai
 
     monkeypatch.setattr(
         "dagzoo.filtering.deferred_filter._apply_extra_trees_filter_numpy",
-        lambda *_args, **_kwargs: (True, {"wins_ratio": 1.0, "n_valid_oob": 128}),
+        lambda *_args, **_kwargs: (True, {"skill_full": 0.9}),
     )
 
     with pytest.raises(ValueError, match="extra dataset rows beyond metadata coverage"):
