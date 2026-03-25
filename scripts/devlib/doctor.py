@@ -81,6 +81,8 @@ def _code_checks() -> list[CheckResult]:
         pre_commit_result = subprocess.run(
             (str(python_path), "-m", "pre_commit", "--version"),
             cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
             check=False,
         )
         checks.append(
@@ -97,6 +99,14 @@ def _code_checks() -> list[CheckResult]:
                 name="pre-commit hook",
                 ok=hook_path.exists(),
                 detail=f"expected installed hook at {repo_relative(hook_path)}",
+            )
+        )
+    except FileNotFoundError:
+        checks.append(
+            CheckResult(
+                name="pre-commit hook",
+                ok=False,
+                detail="git is not on PATH; unable to resolve git hooks path",
             )
         )
     except RuntimeError:

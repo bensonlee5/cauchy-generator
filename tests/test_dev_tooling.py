@@ -473,15 +473,25 @@ def test_doctor_reports_pre_commit_package_and_hook(
     hook_path = tmp_path / ".git" / "hooks" / "pre-commit"
     hook_path.parent.mkdir(parents=True)
     hook_path.write_text("#!/bin/sh\n", encoding="utf-8")
+    run_calls: list[dict[str, object]] = []
 
     def _stub_run(
         argv: tuple[str, ...],
         *,
         cwd: Path,
+        capture_output: bool = False,
+        text: bool = False,
         check: bool,
     ) -> subprocess.CompletedProcess[bytes]:
         _ = cwd
         _ = check
+        run_calls.append(
+            {
+                "argv": argv,
+                "capture_output": capture_output,
+                "text": text,
+            }
+        )
         return subprocess.CompletedProcess(argv, 0)
 
     monkeypatch.setattr(doctor_module, "venv_python", lambda: python_path)
@@ -498,6 +508,58 @@ def test_doctor_reports_pre_commit_package_and_hook(
 
     assert by_name["pre-commit package"].ok is True
     assert by_name["pre-commit hook"].ok is True
+    pre_commit_call = next(
+        call
+        for call in run_calls
+        if call["argv"] == (str(python_path), "-m", "pre_commit", "--version")
+    )
+    assert pre_commit_call["capture_output"] is True
+    assert pre_commit_call["text"] is True
+
+
+def test_doctor_reports_missing_hook_when_git_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    doctor_module = _import_dev_module("devlib.doctor")
+    python_path = tmp_path / ".venv" / "bin" / "python"
+    python_path.parent.mkdir(parents=True)
+    python_path.write_text("", encoding="utf-8")
+
+    def _stub_run(
+        argv: tuple[str, ...],
+        *,
+        cwd: Path,
+        capture_output: bool = False,
+        text: bool = False,
+        check: bool,
+    ) -> subprocess.CompletedProcess[bytes]:
+        _ = cwd
+        _ = capture_output
+        _ = text
+        _ = check
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(doctor_module, "venv_python", lambda: python_path)
+    monkeypatch.setattr(
+        doctor_module.shutil,
+        "which",
+        lambda tool_name: f"/usr/bin/{tool_name}" if tool_name == "uv" else None,
+    )
+    monkeypatch.setattr(doctor_module.subprocess, "run", _stub_run)
+    monkeypatch.setattr(
+        doctor_module,
+        "git_hook_path",
+        lambda _hook_name: (_ for _ in ()).throw(FileNotFoundError("git")),
+    )
+
+    results = doctor_module.run_doctor("code")
+    by_name = {result.name: result for result in results}
+
+    assert by_name["pre-commit hook"].ok is False
+    assert (
+        by_name["pre-commit hook"].detail == "git is not on PATH; unable to resolve git hooks path"
+    )
 
 
 def test_dev_cli_help_exposes_new_commands(capsys: pytest.CaptureFixture[str]) -> None:
