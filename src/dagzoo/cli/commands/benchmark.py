@@ -11,13 +11,15 @@ from typing import Any
 import yaml
 
 from dagzoo.bench.baseline import (
+    build_baseline_payload,
     load_baseline,
+    write_baseline,
 )
-from dagzoo.bench.report import write_suite_markdown
-from dagzoo.bench.suite import resolve_preset_run_specs
+from dagzoo.bench.report import write_suite_json, write_suite_markdown
+from dagzoo.bench.suite import resolve_preset_run_specs, run_benchmark_suite
 from dagzoo.config import GeneratorConfig
 
-from ..common import get_cli_public_api, load_config_or_usage_error, raise_usage_error
+from ..common import load_config_or_usage_error, raise_usage_error
 from ..effective_config import print_resolution_trace
 
 
@@ -206,7 +208,6 @@ def _print_preset_result_line(result: dict[str, Any]) -> None:
 def run_benchmark_command(args: argparse.Namespace) -> int:
     """Execute the ``benchmark`` command."""
 
-    cli_api = get_cli_public_api()
     artifact_dir = _benchmark_artifact_dir(args)
     diagnostics_root_dir = _benchmark_diagnostics_root_dir(args, artifact_dir=artifact_dir)
 
@@ -243,7 +244,7 @@ def run_benchmark_command(args: argparse.Namespace) -> int:
     baseline_payload = load_baseline(args.baseline) if args.baseline else None
 
     try:
-        summary = cli_api.run_benchmark_suite(
+        summary = run_benchmark_suite(
             preset_specs,
             suite=suite,
             warn_threshold_pct=warn_pct,
@@ -284,7 +285,7 @@ def run_benchmark_command(args: argparse.Namespace) -> int:
             print_resolution_trace(trace_payload, header=f"Resolution trace [{preset_key}]:")
 
     for result in summary.get("preset_results", []):
-        cli_api._print_preset_result_line(result)
+        _print_preset_result_line(result)
 
     regression = summary.get("regression", {})
     print(
@@ -292,7 +293,7 @@ def run_benchmark_command(args: argparse.Namespace) -> int:
     )
 
     if artifact_dir is not None:
-        json_path = cli_api.write_suite_json(summary, artifact_dir / "summary.json")
+        json_path = write_suite_json(summary, artifact_dir / "summary.json")
         md_path = write_suite_markdown(summary, artifact_dir / "summary.md")
         effective_paths, trace_paths = _write_benchmark_effective_configs(summary, artifact_dir)
         if effective_paths or trace_paths:
@@ -303,12 +304,12 @@ def run_benchmark_command(args: argparse.Namespace) -> int:
         print(f"Wrote benchmark artifacts: {json_path} and {md_path}")
 
     if args.json_out:
-        path = cli_api.write_suite_json(summary, args.json_out)
+        path = write_suite_json(summary, args.json_out)
         print(f"Wrote benchmark JSON: {path}")
 
     if args.save_baseline:
-        payload = cli_api.build_baseline_payload(summary)
-        baseline_path = cli_api.write_baseline(payload, args.save_baseline)
+        payload = build_baseline_payload(summary)
+        baseline_path = write_baseline(payload, args.save_baseline)
         print(f"Wrote benchmark baseline: {baseline_path}")
 
     hard_fail = bool(regression.get("hard_fail"))

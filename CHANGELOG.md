@@ -10,6 +10,27 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.13.0] - 2026-03-25
+
+### Changed
+
+- **BREAKING:** Removed the unsupported `dagzoo filter-calibration` command and
+  deleted its calibration-only internals and artifact writers. Use
+  `dagzoo diversity-audit` for accepted-corpus comparisons between configs.
+- **BREAKING:** Removed thin convenience wrapper scripts under `scripts/`.
+  Canonical entrypoints are now the packaged `dagzoo` CLI and
+  `python -m dagzoo.bench.h100_validation` for the H100 validation workflow.
+- **BREAKING:** Removed the `dagzoo.cli` compatibility re-export surface and
+  switched the packaged console entrypoint to `dagzoo.cli.entrypoint:main`.
+  Internal callers and tests now import direct owner modules instead of going
+  through CLI shims.
+- `dagzoo generate --help` now states that `--handoff-root` cannot be combined
+  with `--out` or `--no-dataset-write`, and `dagzoo benchmark --help` now
+  states that `--device` only applies to preset `custom` or a single resolved
+  preset.
+- Repo docs now advertise only the direct CLI/module entrypoints and no longer
+  describe deleted wrapper scripts or the removed calibration workflow.
+
 ## [0.12.0] - 2026-03-24
 
 ### Changed

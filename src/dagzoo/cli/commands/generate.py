@@ -14,6 +14,7 @@ from dagzoo.core.config_resolution import (
     resolve_generate_config,
     serialize_resolution_events,
 )
+from dagzoo.core.dataset import generate_batch_iter
 from dagzoo.core.fixed_layout.runtime import realize_generation_config_for_run
 from dagzoo.core.generate_handoff import (
     HANDOFF_MANIFEST_FILENAME,
@@ -28,7 +29,7 @@ from dagzoo.diagnostics_targets import build_diagnostics_aggregation_config
 from dagzoo.filtering.deferred_filter import MANIFEST_FILENAME, SUMMARY_FILENAME
 from dagzoo.io.parquet_writer import write_packed_parquet_shards_stream
 
-from ..common import get_cli_public_api, load_config_or_usage_error, raise_usage_error
+from ..common import load_config_or_usage_error, raise_usage_error
 from ..effective_config import (
     print_effective_config,
     print_resolution_trace,
@@ -133,7 +134,6 @@ def _build_generate_invocation_overrides(
 def run_generate_command(args: argparse.Namespace) -> int:
     """Execute the ``generate`` command."""
 
-    cli_api = get_cli_public_api()
     handoff_root: Path | None = None
     generated_dir: Path | None = None
     if args.handoff_root is not None:
@@ -227,7 +227,7 @@ def run_generate_command(args: argparse.Namespace) -> int:
         if diagnostics_root is None:
             diagnostics_root = "diagnostics_artifacts"
         diagnostics_out_dir = Path(diagnostics_root)
-        diagnostics_aggregator = cli_api.CoverageAggregator(
+        diagnostics_aggregator = CoverageAggregator(
             build_diagnostics_aggregation_config(config.diagnostics)
         )
     print(
@@ -236,7 +236,7 @@ def run_generate_command(args: argparse.Namespace) -> int:
         f"hardware_policy={args.hardware_policy}"
     )
 
-    stream: Iterator[Any] = cli_api.generate_batch_iter(
+    stream: Iterator[Any] = generate_batch_iter(
         config,
         num_datasets=args.num_datasets,
         seed=run_seed,

@@ -82,6 +82,13 @@ ______________________________________________________________________
 To verify the current repo state while exploring the code:
 
 ```bash
+./scripts/dev review-base
+./scripts/dev ready
+```
+
+For more targeted local checks:
+
+```bash
 ./scripts/dev impact
 ./scripts/dev verify quick
 ```

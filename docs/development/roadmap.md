@@ -422,7 +422,7 @@ Use the canonical docs instead:
   - `mechanism.function_family_mix` is already live on the canonical fixed-layout path.
   - `piecewise` shipped as a public, mix-controlled mechanism family and serves as the current control path.
   - Internal `gp` execution now widens across `standard`, `periodic`, and `multiscale` variants without adding a new public config knob.
-  - Bundle metadata, diagnostics coverage, diversity-audit artifacts, and filter-calibration artifacts expose realized mechanism-family and mechanism-variant coverage.
+  - Bundle metadata, diagnostics coverage, and diversity-audit artifacts expose realized mechanism-family and mechanism-variant coverage.
   - GP-focused presets and docs exist so the widened path can be evaluated against baseline and the shipped `piecewise` control.
 - Completion evidence:
   - [CHANGELOG.md](../../CHANGELOG.md) records the shipped widened `gp` path in `v0.9.7`.

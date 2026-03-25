@@ -296,9 +296,8 @@ Current variant labels are additive observability fields, not separate public
 family config names. Today they are emitted for widened `gp` execution as
 `gp.standard`, `gp.periodic`, and `gp.multiscale`.
 
-Coverage, diversity-audit, and filter-calibration summary artifacts reuse these
-counts inside `mechanism_family_summary` and add dataset-level presence-rate
-fields:
+Coverage and diversity-audit summary artifacts reuse these counts inside
+`mechanism_family_summary` and add dataset-level presence-rate fields:
 
 - `dataset_presence_rate_by_family`
 - `dataset_presence_rate_by_variant`

@@ -173,6 +173,19 @@ def test_mechanism_nonlinear_mass_matches_probability_sum() -> None:
     )
 
 
+def test_mechanism_nonlinear_mass_clamps_rounding_overshoot() -> None:
+    observed = mechanism_nonlinear_mass(
+        mechanism_logit_tilt=0.5664633690252248,
+        family_weights={
+            "nn": 0.125,
+            "discretization": 2.5229856949582516,
+        },
+    )
+
+    assert observed == pytest.approx(1.0)
+    assert 0.0 <= observed <= 1.0
+
+
 def test_mechanism_family_probabilities_respect_family_mix_hard_mask() -> None:
     probs = mechanism_family_probabilities(
         mechanism_logit_tilt=0.0,

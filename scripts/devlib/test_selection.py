@@ -70,7 +70,6 @@ PACKAGE_PYTEST_TARGETS: dict[str, tuple[str, ...]] = {
         "tests/test_filtering_availability.py",
         "tests/test_extra_trees_filter.py",
         "tests/test_deferred_filter.py",
-        "tests/test_filter_calibration.py",
     ),
     "dagzoo.diagnostics": (
         "tests/test_diagnostics_coverage.py",
@@ -78,7 +77,6 @@ PACKAGE_PYTEST_TARGETS: dict[str, tuple[str, ...]] = {
         "tests/test_effective_diversity_audit.py",
         "tests/test_corpus_probe.py",
         "tests/test_diversity_audit_cli.py",
-        "tests/test_filter_calibration.py",
     ),
     "dagzoo.graph": (
         "tests/test_dag_sampler.py",

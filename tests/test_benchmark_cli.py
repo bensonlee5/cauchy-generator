@@ -5,16 +5,16 @@ import yaml
 from conftest import load_repo_config, write_config
 
 from dagzoo.bench.constants import SMOKE_N_TEST_CAP, SMOKE_N_TRAIN_CAP
-from dagzoo.cli import (
+from dagzoo.cli.commands.benchmark import _print_preset_result_line
+from dagzoo.cli.entrypoint import main
+from dagzoo.cli.parsing import (
     DEVICE_CHOICES,
     HARDWARE_POLICY_CHOICES,
     MISSINGNESS_MECHANISM_CLI_CHOICES,
-    _print_preset_result_line,
-    main,
 )
 
 
-def test_cli_package_reexports_parser_choice_constants() -> None:
+def test_cli_parser_choice_constants_are_stable() -> None:
     assert DEVICE_CHOICES == ("auto", "cpu", "cuda", "mps")
     assert "none" in HARDWARE_POLICY_CHOICES
     assert tuple(MISSINGNESS_MECHANISM_CLI_CHOICES) == ("none", "mcar", "mar", "mnar")
@@ -290,7 +290,10 @@ def test_benchmark_cli_fail_on_regression_for_filter_accepted_throughput(
         calls.append(kwargs)
         return summary
 
-    monkeypatch.setattr("dagzoo.cli.run_benchmark_suite", _fake_run_benchmark_suite)
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.benchmark.run_benchmark_suite",
+        _fake_run_benchmark_suite,
+    )
 
     code = main(
         [

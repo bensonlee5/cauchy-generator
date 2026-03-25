@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from dagzoo.cli import main
+from dagzoo.cli.entrypoint import main
 
 
 def test_generate_cli_prints_effective_config_and_resolution_trace(
@@ -21,7 +21,10 @@ def test_generate_cli_prints_effective_config_and_resolution_trace(
         for _ in range(num_datasets):
             yield object()
 
-    monkeypatch.setattr("dagzoo.cli.generate_batch_iter", _stub_generate_batch_iter)
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.generate.generate_batch_iter",
+        _stub_generate_batch_iter,
+    )
 
     code = main(
         [
@@ -52,7 +55,7 @@ def test_filter_cli_prints_curated_output_summary(
     tmp_path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "dagzoo.cli.run_deferred_filter",
+        "dagzoo.cli.commands.filter.run_deferred_filter",
         lambda **_kwargs: SimpleNamespace(
             manifest_path=tmp_path / "filter_out" / "filter_manifest.ndjson",
             summary_path=tmp_path / "filter_out" / "filter_summary.json",
@@ -106,7 +109,10 @@ def test_generate_cli_prints_handoff_execution_summary(
         out_dir.mkdir(parents=True, exist_ok=True)
         return 2
 
-    monkeypatch.setattr("dagzoo.cli.generate_batch_iter", _stub_generate_batch_iter)
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.generate.generate_batch_iter",
+        _stub_generate_batch_iter,
+    )
     monkeypatch.setattr(
         "dagzoo.cli.commands.generate.write_packed_parquet_shards_stream",
         _stub_write_packed_parquet_shards_stream,
@@ -163,14 +169,25 @@ def test_benchmark_cli_prints_configs_and_writes_baseline(
         "regression": {"status": "pass", "issues": [], "hard_fail": False},
     }
 
-    monkeypatch.setattr("dagzoo.cli.run_benchmark_suite", lambda *args, **kwargs: summary)
-    monkeypatch.setattr("dagzoo.cli.write_suite_json", lambda _summary, path: Path(path))
     monkeypatch.setattr(
-        "dagzoo.cli._print_preset_result_line",
+        "dagzoo.cli.commands.benchmark.run_benchmark_suite",
+        lambda *args, **kwargs: summary,
+    )
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.benchmark.write_suite_json", lambda _summary, path: Path(path)
+    )
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.benchmark._print_preset_result_line",
         lambda _result: None,
     )
-    monkeypatch.setattr("dagzoo.cli.build_baseline_payload", lambda _summary: {"schema_version": 1})
-    monkeypatch.setattr("dagzoo.cli.write_baseline", lambda _payload, path: Path(path))
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.benchmark.build_baseline_payload",
+        lambda _summary: {"schema_version": 1},
+    )
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.benchmark.write_baseline",
+        lambda _payload, path: Path(path),
+    )
 
     code = main(
         [
@@ -205,9 +222,12 @@ def test_diversity_audit_cli_writes_summary_and_status(
         "summary": {"overall_status": "warn", "num_variants": 1},
     }
 
-    monkeypatch.setattr("dagzoo.cli.run_effective_diversity_audit", lambda **kwargs: report)
     monkeypatch.setattr(
-        "dagzoo.cli.write_effective_diversity_artifacts",
+        "dagzoo.cli.commands.diagnostics.run_effective_diversity_audit",
+        lambda **kwargs: report,
+    )
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.diagnostics.write_effective_diversity_artifacts",
         lambda _report, out_dir: {"summary_json": Path(out_dir) / "summary.json"},
     )
 
@@ -233,13 +253,13 @@ def test_diversity_audit_cli_fail_on_regression_treats_insufficient_metrics_as_e
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "dagzoo.cli.run_effective_diversity_audit",
+        "dagzoo.cli.commands.diagnostics.run_effective_diversity_audit",
         lambda **_kwargs: {
             "summary": {"overall_status": "insufficient_metrics", "num_variants": 1}
         },
     )
     monkeypatch.setattr(
-        "dagzoo.cli.write_effective_diversity_artifacts",
+        "dagzoo.cli.commands.diagnostics.write_effective_diversity_artifacts",
         lambda _report, out_dir: {"summary_json": Path(out_dir) / "summary.json"},
     )
 
@@ -259,48 +279,6 @@ def test_diversity_audit_cli_fail_on_regression_treats_insufficient_metrics_as_e
     assert code == 1
 
 
-def test_filter_calibration_cli_reports_status(
-    tmp_path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(
-        "dagzoo.cli.run_filter_calibration",
-        lambda **_kwargs: {
-            "summary": {
-                "overall_status": "pass",
-                "best_overall_diversity_status": "pass",
-                "best_overall_threshold_requested": 0.8,
-                "best_passing_threshold_requested": 0.8,
-                "num_candidates": 3,
-            }
-        },
-    )
-    monkeypatch.setattr(
-        "dagzoo.cli.write_filter_calibration_artifacts",
-        lambda _report, out_dir: {
-            "summary_json": Path(out_dir) / "summary.json",
-            "summary_md": Path(out_dir) / "summary.md",
-        },
-    )
-
-    code = main(
-        [
-            "filter-calibration",
-            "--config",
-            "configs/preset_filter_benchmark_smoke.yaml",
-            "--out-dir",
-            str(tmp_path / "filter_calibration"),
-        ]
-    )
-
-    assert code == 0
-    captured = capsys.readouterr()
-    assert "Wrote filter calibration artifact [summary_json]:" in captured.out
-    assert (
-        "Filter calibration status=pass best_overall=0.8 best_passing=0.8 candidates=3"
-        in captured.out
-    )
-
-
 def test_hardware_cli_prints_detected_hardware(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -311,7 +289,7 @@ def test_hardware_cli_prints_detected_hardware(
         total_memory_gb = 8.0
         peak_flops = 1.23e12
 
-    monkeypatch.setattr("dagzoo.cli.detect_hardware", lambda _device: _Hardware())
+    monkeypatch.setattr("dagzoo.cli.commands.hardware.detect_hardware", lambda _device: _Hardware())
 
     code = main(["hardware", "--device", "cpu"])
 

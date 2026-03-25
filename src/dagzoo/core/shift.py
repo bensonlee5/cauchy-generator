@@ -173,7 +173,8 @@ def mechanism_nonlinear_mass(
         family_weights=family_weights,
     )
     nonlinear_set = set(nonlinear_families)
-    return float(sum(prob for family, prob in probs.items() if family in nonlinear_set))
+    mass = float(math.fsum(prob for family, prob in probs.items() if family in nonlinear_set))
+    return min(1.0, max(0.0, mass))
 
 
 def resolve_shift_runtime_params(config: GeneratorConfig) -> ShiftRuntimeParams:

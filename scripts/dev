@@ -1,4 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-exec ./.venv/bin/python scripts/dev.py "$@"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV_PYTHON="${REPO_ROOT}/.venv/bin/python"
+
+if [[ -x "${VENV_PYTHON}" ]]; then
+  exec "${VENV_PYTHON}" "${REPO_ROOT}/scripts/dev.py" "$@"
+fi
+
+if command -v python3 >/dev/null 2>&1; then
+  exec python3 "${REPO_ROOT}/scripts/dev.py" "$@"
+fi
+
+echo "Missing ${VENV_PYTHON} and no python3 found on PATH." >&2
+exit 1

@@ -10,7 +10,11 @@ dagzoo is a high-throughput synthetic tabular data generator built around causal
 
 ```bash
 # Setup
-uv sync --group dev
+./scripts/dev bootstrap
+
+# Pre-review flow
+./scripts/dev review-base
+./scripts/dev ready
 
 # Canonical verification (run before any PR)
 ./scripts/dev verify quick
@@ -103,7 +107,7 @@ The canonical entry is `core/dataset.py` → `core/fixed_layout_runtime.py`. One
 - No legacy pathways, duplicate pathways, or shims. No parallel implementations of the same logic.
 - Internal Python APIs may change freely. CLI flags, metadata schema, or artifact contract changes are user-facing breaks — call them out explicitly.
 - Version bump in `pyproject.toml` (patch default, minor for broad breaks) + `CHANGELOG.md` update in the same PR for behavior/schema changes. Docs/tests-only changes skip bumps.
-- Run `./scripts/dev verify quick` before declaring a branch ready.
+- Run `./scripts/dev ready` before declaring a branch ready.
 - Use `./scripts/dev impact` for dependency-aware ripple checks before broad refactors.
 
 ## Test Fixtures

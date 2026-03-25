@@ -4,7 +4,7 @@ import pytest
 import yaml
 from conftest import load_repo_config, write_config
 
-from dagzoo.cli import main
+from dagzoo.cli.entrypoint import main
 
 
 def test_generate_cli_rejects_invalid_device() -> None:
@@ -168,7 +168,7 @@ def test_benchmark_cli_rejects_device_override_with_multiple_presets(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "dagzoo.cli.run_benchmark_suite",
+        "dagzoo.cli.commands.benchmark.run_benchmark_suite",
         lambda *args, **kwargs: pytest.fail("run_benchmark_suite should not be called"),
     )
 
@@ -257,99 +257,6 @@ def test_diversity_audit_cli_rejects_swapped_warn_and_fail_thresholds() -> None:
     assert int(exc.value.code) == 2
 
 
-def test_filter_calibration_cli_rejects_filter_disabled_config(tmp_path) -> None:
-    cfg = load_repo_config()
-    cfg.filter.enabled = False
-    config_path = write_config(tmp_path, cfg, "filter_disabled.yaml")
-
-    with pytest.raises(SystemExit) as exc:
-        main(
-            [
-                "filter-calibration",
-                "--config",
-                str(config_path),
-            ]
-        )
-
-    assert int(exc.value.code) == 2
-
-
-def test_filter_calibration_cli_rejects_removed_filter_threshold_config(
-    tmp_path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    config_path = tmp_path / "invalid_filter_threshold.yaml"
-    config_path.write_text(
-        yaml.safe_dump({"filter": {"enabled": True, "threshold": 0.95}}),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(SystemExit) as exc:
-        main(
-            [
-                "filter-calibration",
-                "--config",
-                str(config_path),
-            ]
-        )
-
-    assert int(exc.value.code) == 2
-    assert "filter.threshold has been removed" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize(
-    "flag,value", [("--warn-threshold-pct", "nan"), ("--fail-threshold-pct", "inf")]
-)
-def test_filter_calibration_cli_rejects_non_finite_regression_thresholds(
-    flag: str,
-    value: str,
-) -> None:
-    with pytest.raises(SystemExit) as exc:
-        main(
-            [
-                "filter-calibration",
-                "--config",
-                "configs/preset_filter_benchmark_smoke.yaml",
-                flag,
-                value,
-            ]
-        )
-
-    assert int(exc.value.code) == 2
-
-
-def test_filter_calibration_cli_rejects_swapped_warn_and_fail_thresholds() -> None:
-    with pytest.raises(SystemExit) as exc:
-        main(
-            [
-                "filter-calibration",
-                "--config",
-                "configs/preset_filter_benchmark_smoke.yaml",
-                "--warn-threshold-pct",
-                "10",
-                "--fail-threshold-pct",
-                "5",
-            ]
-        )
-
-    assert int(exc.value.code) == 2
-
-
-def test_filter_calibration_cli_rejects_invalid_threshold_csv() -> None:
-    with pytest.raises(SystemExit) as exc:
-        main(
-            [
-                "filter-calibration",
-                "--config",
-                "configs/preset_filter_benchmark_smoke.yaml",
-                "--thresholds",
-                "0.8,1.1",
-            ]
-        )
-
-    assert int(exc.value.code) == 2
-
-
 def test_filter_cli_rejects_invalid_n_jobs() -> None:
     with pytest.raises(SystemExit) as exc:
         main(
@@ -420,7 +327,7 @@ def test_filter_cli_passes_ease_overrides_to_runner(
         return _Result()
 
     monkeypatch.setattr(
-        "dagzoo.cli.run_deferred_filter",
+        "dagzoo.cli.commands.filter.run_deferred_filter",
         _stub_run_deferred_filter,
     )
 
@@ -482,7 +389,10 @@ def test_filter_cli_passes_lineage_veto_enable_override_to_runner(
         captured["kwargs"] = kwargs
         return _Result()
 
-    monkeypatch.setattr("dagzoo.cli.run_deferred_filter", _stub_run_deferred_filter)
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.filter.run_deferred_filter",
+        _stub_run_deferred_filter,
+    )
 
     code = main(
         [
@@ -520,7 +430,10 @@ def test_filter_cli_leaves_lineage_veto_override_unset_by_default(
         captured["kwargs"] = kwargs
         return _Result()
 
-    monkeypatch.setattr("dagzoo.cli.run_deferred_filter", _stub_run_deferred_filter)
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.filter.run_deferred_filter",
+        _stub_run_deferred_filter,
+    )
 
     code = main(
         [
@@ -565,8 +478,14 @@ def test_benchmark_cli_accepts_filter_enabled_config(
         captured["suite"] = kwargs["suite"]
         return {"preset_results": [], "regression": {"status": "pass", "issues": []}}
 
-    monkeypatch.setattr("dagzoo.cli.run_benchmark_suite", _stub_run_benchmark_suite)
-    monkeypatch.setattr("dagzoo.cli.write_suite_json", lambda _summary, path: Path(path))
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.benchmark.run_benchmark_suite",
+        _stub_run_benchmark_suite,
+    )
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.benchmark.write_suite_json",
+        lambda _summary, path: Path(path),
+    )
 
     code = main(
         [
@@ -606,10 +525,11 @@ def test_diversity_audit_cli_accepts_filter_enabled_configs(
         return {"summary": {"overall_status": "pass", "num_variants": 1}}
 
     monkeypatch.setattr(
-        "dagzoo.cli.run_effective_diversity_audit", _stub_run_effective_diversity_audit
+        "dagzoo.cli.commands.diagnostics.run_effective_diversity_audit",
+        _stub_run_effective_diversity_audit,
     )
     monkeypatch.setattr(
-        "dagzoo.cli.write_effective_diversity_artifacts",
+        "dagzoo.cli.commands.diagnostics.write_effective_diversity_artifacts",
         lambda _report, out_dir: {"summary_json": Path(out_dir) / "summary.json"},
     )
 
@@ -639,6 +559,19 @@ def test_request_subcommand_is_removed() -> None:
                 "request",
                 "--request",
                 "request.yaml",
+            ]
+        )
+
+    assert int(exc.value.code) == 2
+
+
+def test_filter_calibration_subcommand_is_removed() -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "filter-calibration",
+                "--config",
+                "configs/preset_filter_benchmark_smoke.yaml",
             ]
         )
 
@@ -795,7 +728,10 @@ def test_generate_cli_uses_default_config_without_noise_overrides(
         captured["called"] = True
         yield object()
 
-    monkeypatch.setattr("dagzoo.cli.generate_batch_iter", _stub_generate_batch_iter)
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.generate.generate_batch_iter",
+        _stub_generate_batch_iter,
+    )
 
     code = main(
         [
@@ -836,7 +772,10 @@ def test_generate_cli_applies_rows_override_no_write(
         for _ in range(num_datasets):
             yield object()
 
-    monkeypatch.setattr("dagzoo.cli.generate_batch_iter", _stub_generate_batch_iter)
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.generate.generate_batch_iter",
+        _stub_generate_batch_iter,
+    )
 
     code = main(
         [
@@ -908,7 +847,10 @@ def test_generate_cli_writes_resolution_trace_artifact_no_write(
         for _ in range(num_datasets):
             yield object()
 
-    monkeypatch.setattr("dagzoo.cli.generate_batch_iter", _stub_generate_batch_iter)
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.generate.generate_batch_iter",
+        _stub_generate_batch_iter,
+    )
 
     code = main(
         [
@@ -961,7 +903,7 @@ def test_generate_cli_many_class_preset_end_to_end_no_write(
             yield bundle
 
     monkeypatch.setattr(
-        "dagzoo.cli.generate_batch_iter",
+        "dagzoo.cli.commands.generate.generate_batch_iter",
         _capture_generate_batch_iter,
     )
 
@@ -1030,7 +972,7 @@ def test_generate_cli_shift_presets_emit_shift_metadata_no_write(
             yield bundle
 
     monkeypatch.setattr(
-        "dagzoo.cli.generate_batch_iter",
+        "dagzoo.cli.commands.generate.generate_batch_iter",
         _capture_generate_batch_iter,
     )
 
@@ -1094,7 +1036,7 @@ def test_generate_cli_noise_presets_emit_noise_metadata_no_write(
             yield bundle
 
     monkeypatch.setattr(
-        "dagzoo.cli.generate_batch_iter",
+        "dagzoo.cli.commands.generate.generate_batch_iter",
         _capture_generate_batch_iter,
     )
 
@@ -1171,9 +1113,12 @@ def test_generate_cli_coverage_tolerates_null_quantiles_and_targets(
         for _ in range(num_datasets):
             yield object()
 
-    monkeypatch.setattr("dagzoo.cli.generate_batch_iter", _stub_generate_batch_iter)
     monkeypatch.setattr(
-        "dagzoo.cli.CoverageAggregator.update_bundle",
+        "dagzoo.cli.commands.generate.generate_batch_iter",
+        _stub_generate_batch_iter,
+    )
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.generate.CoverageAggregator.update_bundle",
         lambda _self, _bundle: None,
     )
 
@@ -1218,7 +1163,10 @@ def test_generate_cli_no_write_allows_null_output_dir_when_coverage_disabled(
         for _ in range(num_datasets):
             yield object()
 
-    monkeypatch.setattr("dagzoo.cli.generate_batch_iter", _stub_generate_batch_iter)
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.generate.generate_batch_iter",
+        _stub_generate_batch_iter,
+    )
 
     code = main(
         [
@@ -1255,9 +1203,12 @@ def test_generate_cli_enables_diagnostics_flag(
         for _ in range(num_datasets):
             yield object()
 
-    monkeypatch.setattr("dagzoo.cli.generate_batch_iter", _stub_generate_batch_iter)
     monkeypatch.setattr(
-        "dagzoo.cli.CoverageAggregator.update_bundle",
+        "dagzoo.cli.commands.generate.generate_batch_iter",
+        _stub_generate_batch_iter,
+    )
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.generate.CoverageAggregator.update_bundle",
         lambda _self, _bundle: None,
     )
     code = main(
@@ -1301,7 +1252,10 @@ def test_generate_cli_applies_missingness_overrides_no_write(
         for _ in range(num_datasets):
             yield object()
 
-    monkeypatch.setattr("dagzoo.cli.generate_batch_iter", _stub_generate_batch_iter)
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.generate.generate_batch_iter",
+        _stub_generate_batch_iter,
+    )
 
     code = main(
         [

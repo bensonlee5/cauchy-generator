@@ -3,7 +3,7 @@ import json
 
 import yaml
 
-from dagzoo.cli import main
+from dagzoo.cli.entrypoint import main
 from dagzoo.config import GeneratorConfig
 
 

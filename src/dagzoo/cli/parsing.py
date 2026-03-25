@@ -160,28 +160,6 @@ def parse_missing_mnar_logit_scale_arg(raw: str) -> float:
     )
 
 
-def parse_thresholds_csv_arg(raw: str) -> list[float]:
-    """argparse type: parse threshold sweep CSV values in [0, 1]."""
-
-    parts = [part.strip() for part in str(raw).split(",")]
-    if not parts or any(part == "" for part in parts):
-        raise argparse.ArgumentTypeError(
-            "Invalid --thresholds value. Expected a CSV list of finite values in [0.0, 1.0]."
-        )
-    return [
-        parse_bounded_float(
-            part,
-            flag="--thresholds",
-            lo=FILTER_THRESHOLD_MIN,
-            hi=FILTER_THRESHOLD_MAX,
-            lo_inclusive=True,
-            hi_inclusive=True,
-            expectation=FILTER_THRESHOLD_EXPECTATION,
-        )
-        for part in parts
-    ]
-
-
 def parse_easy_skill_threshold_arg(raw: str) -> float:
     """argparse type: parse small-shot ease threshold in [0, 1]."""
 

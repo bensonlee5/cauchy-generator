@@ -6,7 +6,7 @@ from dataclasses import replace
 import pytest
 import yaml
 
-from dagzoo.cli import main
+from dagzoo.cli.entrypoint import main
 from dagzoo.config import GeneratorConfig
 from dagzoo.diagnostics.coverage import (
     CoverageAggregationConfig,

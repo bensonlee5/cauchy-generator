@@ -4,6 +4,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src" / "dagzoo"
@@ -50,3 +51,42 @@ def format_command(argv: tuple[str, ...]) -> str:
 
 def tool_exists(tool_name: str) -> bool:
     return shutil.which(tool_name) is not None
+
+
+def normalize_files(files: Sequence[str]) -> tuple[str, ...]:
+    normalized: list[str] = []
+    for file_str in files:
+        if not file_str:
+            continue
+        path = Path(file_str)
+        if path.is_absolute():
+            normalized.append(repo_relative(path))
+        else:
+            normalized.append(path.as_posix())
+    return tuple(normalized)
+
+
+def run_git_capture(*args: str) -> str:
+    result = subprocess.run(
+        ("git", *args),
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "git command failed."
+        raise RuntimeError(f"git {' '.join(args)} failed: {detail}")
+    return result.stdout
+
+
+def run_git_lines(*args: str) -> tuple[str, ...]:
+    return tuple(line.strip() for line in run_git_capture(*args).splitlines() if line.strip())
+
+
+def git_common_dir() -> Path:
+    return Path(run_git_capture("rev-parse", "--path-format=absolute", "--git-common-dir").strip())
+
+
+def git_hook_path(hook_name: str) -> Path:
+    return git_common_dir() / "hooks" / hook_name
