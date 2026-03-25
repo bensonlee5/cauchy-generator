@@ -63,6 +63,19 @@ flowchart LR
 
 ## Why dagzoo
 
+Tabular foundation models rely on synthetic data priors whose quality directly
+determines downstream performance. The design of the synthetic prior — what
+graph structures are sampled, what functional relationships are used, what noise
+and missingness patterns are injected — determines the **effective diversity**
+of the training corpus: the breadth of meta-feature space the model sees during
+pretraining. Higher effective diversity means the model's in-context learning
+covers more of the real-world task space.
+
+`dagzoo` provides independent control over graph structure, mechanism families,
+noise distributions, distribution shift, missingness, and learnability
+filtering. It is designed for researchers who need to systematically control
+and measure the axes of their synthetic prior.
+
 `dagzoo` is for situations where you need synthetic tabular data that is:
 
 - Causally structured: datasets are generated from a sampled latent DAG, not

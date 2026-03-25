@@ -1,11 +1,59 @@
 # Missingness
 
+Real-world tabular datasets are almost never complete. Missing data is endemic
+across domains, and the *mechanism* of missingness determines its statistical
+impact:
+
+```
+MCAR  (Missing Completely At Random)
+      Each value is independently missing with some probability.
+      Example: random sensor packet loss, database write failures.
+      → Simplest mechanism.  Reduces sample size but does not bias estimates.
+
+MAR   (Missing At Random)
+      Missingness depends on *observed* values.
+      Example: older survey respondents skip digital-interaction questions;
+               patients with certain diagnoses are less likely to have lab X recorded.
+      → Missingness patterns carry information about the observed features.
+         A model that ignores this loses signal.
+
+MNAR  (Missing Not At Random)
+      Missingness depends on the *missing value itself*.
+      Example: sicker patients have more missing lab results (the very values
+               that would be most informative are the ones most likely absent).
+      → Hardest mechanism.  Ignoring it introduces systematic bias.
+```
+
+A foundation model trained on a synthetic prior with no missing values has
+never seen incomplete inputs during pretraining. At inference, it must handle
+missingness zero-shot with no prior exposure. Incorporating missingness into
+synthetic priors has demonstrated performance gains on real datasets with
+incomplete features, and covering missingness regimes improves reliability in
+weak meta-feature settings.
+
 Use missingness workflows to inject deterministic synthetic null patterns for
 robustness testing under MCAR, MAR, and MNAR regimes.
 
 ______________________________________________________________________
 
 ## When to use
+
+### Why it matters for your prior
+
+- Your synthetic prior should reflect the near-universal presence of missing
+  data in real tabular tasks — without it, the model's first encounter with
+  incomplete inputs is at inference time.
+- You want to test whether MNAR-aware pretraining produces more robust
+  in-context learning than MCAR-only priors — a key question for
+  medical/clinical tabular applications where informative missingness is the
+  norm.
+- You want to measure how effective diversity changes when missingness is
+  present versus absent in the prior, as a targeted ablation of this axis.
+- You need to control the missingness mechanism (MCAR/MAR/MNAR)
+  independently from noise family and mechanism complexity to isolate its
+  contribution to downstream performance.
+
+### Operational triggers
 
 - You want realistic training/evaluation with incomplete tabular data.
 - You need controlled ablations across missingness mechanisms.
@@ -43,11 +91,34 @@ ______________________________________________________________________
 
 ## Key options
 
-- `--missing-rate`: overall missingness probability.
-- `--missing-mechanism`: `mcar`, `mar`, or `mnar`.
-- `--missing-mar-observed-fraction`: fraction of observed features used for MAR
-  logits.
-- `--missing-mar-logit-scale`: MAR logit sensitivity multiplier.
+- `--missing-rate`: overall missingness probability (fraction of cells that are
+  `NaN` in the output). Concrete examples:
+
+  ```
+  --missing-rate 0.05  →  5% of cells missing  (light; common in clean survey data)
+  --missing-rate 0.15  →  15% of cells missing (moderate; typical clinical datasets)
+  --missing-rate 0.30  →  30% of cells missing (heavy; EHR or sensor-network data)
+  ```
+
+- `--missing-mechanism`: which statistical mechanism drives the missingness.
+  `mcar` = independent coin flip per cell; `mar` = missingness depends on
+  observed features; `mnar` = missingness depends on the missing value itself.
+
+- `--missing-mar-observed-fraction`: fraction of features used to compute MAR
+  logits (higher = more features influence which values go missing).
+
+  ```
+  --missing-mar-observed-fraction 0.3  →  30% of features drive missingness
+  --missing-mar-observed-fraction 0.8  →  80% of features drive missingness (strong MAR)
+  ```
+
+- `--missing-mar-logit-scale`: MAR logit sensitivity multiplier. Higher values
+  make missingness more sharply dependent on the observed features.
+
+  ```
+  --missing-mar-logit-scale 0.5  →  weak MAR signal (missingness is nearly random)
+  --missing-mar-logit-scale 1.5  →  strong MAR signal (missingness is highly structured)
+  ```
 
 ______________________________________________________________________
 

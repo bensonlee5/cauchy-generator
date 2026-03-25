@@ -43,6 +43,10 @@ tabular projection of that latent graph.
   columns.
 - This decoupling allows rich causal interactions while preserving a
   clean acyclic execution graph.
+- This is also important for prior diversity: a single latent DAG can
+  produce many different observed tabular layouts (different feature-to-node
+  assignments, different converter choices), so effective diversity grows
+  faster than the number of unique DAG topologies sampled.
 
 ```mermaid
 flowchart LR
@@ -163,8 +167,25 @@ Notable runtime behavior:
 
 ## Mathematical Foundations
 
-Formal equations are canonicalized in
-[transforms.md](transforms.md).
+The generation pipeline is a multi-axis sampling process. Each formal section
+in [transforms.md](transforms.md) corresponds to an independent axis of prior
+diversity:
+
+```
+graph structure  ──┐
+shift parameters ──┤
+mechanism families ┤── together determine the region of meta-feature
+node pipeline    ──┤   space the corpus covers (= effective diversity)
+converters       ──┤
+noise families   ──┘
+```
+
+Broadening one axis (e.g., adding noise families) increases diversity along
+that dimension without affecting the others — the axes are designed to be
+independently controllable. The formal specification matters because the
+parameterization determines what prior regions are *reachable*: if a
+transform's math restricts certain behaviors, no config change can produce
+datasets in those regions.
 
 - Canonical equations + implementation map:
   [transforms.md](transforms.md)
