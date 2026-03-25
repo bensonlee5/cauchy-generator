@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from dagzoo.cli import main
+from dagzoo.cli.entrypoint import main
 from dagzoo.core.generate_handoff import (
     GENERATE_HANDOFF_SCHEMA_NAME,
     GENERATE_HANDOFF_SCHEMA_VERSION,
@@ -391,7 +391,10 @@ def test_generate_handoff_manifest_uses_wall_clock_generation_timing(
         _write_stub_generated_metadata(out_dir, num_datasets=2)
         return 2
 
-    monkeypatch.setattr("dagzoo.cli.generate_batch_iter", _stub_generate_batch_iter)
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.generate.generate_batch_iter",
+        _stub_generate_batch_iter,
+    )
     monkeypatch.setattr(
         "dagzoo.cli.commands.generate.write_packed_parquet_shards_stream",
         _stub_write_packed_parquet_shards_stream,
@@ -445,7 +448,10 @@ def test_generate_cli_handoff_root_preserves_rows_under_cuda_policy(
         _write_stub_generated_metadata(out_dir, num_datasets=1)
         return 1
 
-    monkeypatch.setattr("dagzoo.cli.generate_batch_iter", _stub_generate_batch_iter)
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.generate.generate_batch_iter",
+        _stub_generate_batch_iter,
+    )
     monkeypatch.setattr(
         "dagzoo.cli.commands.generate.write_packed_parquet_shards_stream",
         _stub_write_packed_parquet_shards_stream,

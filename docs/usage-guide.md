@@ -256,9 +256,6 @@ When you need to compare accepted-corpus diversity between configs, use
 `--variant-config` values. The audit writes `summary.json` and `summary.md`
 with per-variant diversity status and throughput deltas.
 
-`dagzoo filter-calibration` is also temporarily unsupported until a dedicated
-calibration workflow exists for the small-shot ease filter.
-
 ______________________________________________________________________
 
 ## 12. Generate handoff workflows

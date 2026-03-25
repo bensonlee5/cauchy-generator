@@ -8,10 +8,7 @@ from pathlib import Path
 from dagzoo.rng import SEED32_MAX, SEED32_MIN
 
 from .commands.benchmark import run_benchmark_command
-from .commands.diagnostics import (
-    run_diversity_audit_command,
-    run_filter_calibration_command,
-)
+from .commands.diagnostics import run_diversity_audit_command
 from .commands.filter import run_filter_command
 from .commands.generate import run_generate_command
 from .commands.hardware import run_hardware_command
@@ -31,7 +28,6 @@ from .parsing import (
     parse_missing_mnar_logit_scale_arg,
     parse_missing_rate_arg,
     parse_stump_skill_threshold_arg,
-    parse_thresholds_csv_arg,
     parse_warn_threshold_pct_arg,
     positive_int,
     seed_32bit_int,
@@ -51,7 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument(
         "--handoff-root",
         default=None,
-        help="Optional handoff root; writes generated artifacts under <handoff_root>/generated.",
+        help=(
+            "Optional handoff root; writes generated artifacts under "
+            "<handoff_root>/generated. Cannot be combined with --out or "
+            "--no-dataset-write."
+        ),
     )
     g.add_argument(
         "--num-datasets",
@@ -223,7 +223,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--device",
         default=None,
         choices=DEVICE_CHOICES,
-        help="Device override for custom preset.",
+        help="Device override for preset 'custom' or a single resolved preset.",
     )
     b.add_argument(
         "--num-datasets",
@@ -377,65 +377,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         choices=DEVICE_CHOICES,
         help="Optional device override for scale-phase generation.",
-    )
-
-    c = sub.add_parser(
-        "filter-calibration",
-        help="Sweep filter thresholds and compare accepted-throughput under diversity guardrails.",
-    )
-    c.set_defaults(handler=run_filter_calibration_command)
-    c.add_argument("--config", required=True, help="Filter-enabled generator config YAML path.")
-    c.add_argument(
-        "--thresholds",
-        type=parse_thresholds_csv_arg,
-        default=None,
-        help="Optional CSV override for requested threshold sweep values.",
-    )
-    c.add_argument(
-        "--warn-threshold-pct",
-        type=parse_warn_threshold_pct_arg,
-        default=2.5,
-        help="Warn threshold for composite diversity shift vs baseline.",
-    )
-    c.add_argument(
-        "--fail-threshold-pct",
-        type=parse_fail_threshold_pct_arg,
-        default=5.0,
-        help="Fail threshold for composite diversity shift vs baseline.",
-    )
-    c.add_argument(
-        "--fail-on-regression",
-        action="store_true",
-        help="Return non-zero exit code if the best accepted-throughput threshold fails guardrails.",
-    )
-    c.add_argument(
-        "--suite",
-        choices=["smoke", "standard"],
-        default="smoke",
-        help="Probe size to use for the baseline threshold and each threshold candidate.",
-    )
-    c.add_argument(
-        "--num-datasets",
-        type=positive_int,
-        default=None,
-        help="Optional override for per-threshold dataset count.",
-    )
-    c.add_argument(
-        "--warmup",
-        type=non_negative_int,
-        default=None,
-        help="Optional override for per-threshold warmup count.",
-    )
-    c.add_argument(
-        "--out-dir",
-        default=str(Path("effective_config_artifacts") / "filter_calibration"),
-        help="Output directory for filter calibration artifacts.",
-    )
-    c.add_argument(
-        "--device",
-        default=None,
-        choices=DEVICE_CHOICES,
-        help="Optional device override for calibration runs.",
     )
 
     h = sub.add_parser("hardware", help="Inspect detected hardware and tier mapping.")

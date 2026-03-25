@@ -127,7 +127,6 @@ PYTEST_TARGETS_BY_PREFIX = (
             "tests/test_filtering_availability.py",
             "tests/test_extra_trees_filter.py",
             "tests/test_deferred_filter.py",
-            "tests/test_filter_calibration.py",
         ),
     ),
     (
@@ -138,7 +137,6 @@ PYTEST_TARGETS_BY_PREFIX = (
             "tests/test_effective_diversity_audit.py",
             "tests/test_corpus_probe.py",
             "tests/test_diversity_audit_cli.py",
-            "tests/test_filter_calibration.py",
         ),
     ),
     (

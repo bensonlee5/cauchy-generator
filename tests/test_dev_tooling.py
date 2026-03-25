@@ -485,7 +485,7 @@ def test_doctor_reports_pre_commit_package_and_hook(
         return subprocess.CompletedProcess(argv, 0)
 
     monkeypatch.setattr(doctor_module, "venv_python", lambda: python_path)
-    monkeypatch.setattr(doctor_module, "git_hook_path", lambda hook_name: hook_path)
+    monkeypatch.setattr(doctor_module, "git_hook_path", lambda _hook_name: hook_path)
     monkeypatch.setattr(
         doctor_module.shutil,
         "which",

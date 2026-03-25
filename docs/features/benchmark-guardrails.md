@@ -140,18 +140,6 @@ equivalence/local-overlap and cross-run diversity outputs.
 
 ______________________________________________________________________
 
-## Filter calibration workflow
-
-`dagzoo filter-calibration` is temporarily unsupported until a dedicated
-calibration workflow exists for the small-shot ease filter. Filter-enabled
-benchmark presets and `dagzoo diversity-audit` comparisons still work because
-they replay filter metrics analytically without calling `dagzoo filter`.
-
-Like the rewritten diversity audit, filter calibration persists only
-`summary.json` and `summary.md`.
-
-______________________________________________________________________
-
 ## Regression gating
 
 For CI-like checks:

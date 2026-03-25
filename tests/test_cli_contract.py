@@ -1,3 +1,5 @@
+import argparse
+
 import pytest
 
 from dagzoo.cli.parser import build_parser
@@ -63,3 +65,47 @@ def test_cli_parser_accepts_generate_handoff_root() -> None:
     )
 
     assert args.handoff_root == "handoffs/smoke"
+
+
+def test_cli_parser_exposes_only_supported_top_level_commands() -> None:
+    parser = build_parser()
+    subparsers_action = next(
+        action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
+    )
+
+    assert set(subparsers_action.choices) == {
+        "benchmark",
+        "diversity-audit",
+        "filter",
+        "generate",
+        "hardware",
+    }
+
+
+def test_top_level_help_omits_removed_filter_calibration_subcommand() -> None:
+    parser = build_parser()
+
+    assert "filter-calibration" not in parser.format_help()
+
+
+def test_generate_help_mentions_handoff_incompatible_flags() -> None:
+    parser = build_parser()
+    subparsers_action = next(
+        action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
+    )
+    help_text = subparsers_action.choices["generate"].format_help()
+
+    assert "Cannot be combined" in help_text
+    assert "--out" in help_text
+    assert "--no-dataset-write" in help_text
+
+
+def test_benchmark_help_mentions_device_single_preset_constraint() -> None:
+    parser = build_parser()
+    subparsers_action = next(
+        action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
+    )
+    help_text = subparsers_action.choices["benchmark"].format_help()
+
+    assert "preset 'custom'" in help_text
+    assert "resolved preset" in help_text

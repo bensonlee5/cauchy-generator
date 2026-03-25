@@ -305,15 +305,15 @@ Use the canonical docs instead:
 - Delivered baseline inside this roadmap item:
   - `mechanism.function_family_mix` is already live on the canonical fixed-layout path.
   - `piecewise` shipped as a public, mix-controlled mechanism family and serves as the current control path.
-  - Bundle metadata, diagnostics coverage, diversity-audit artifacts, and filter-calibration artifacts already expose realized mechanism-family coverage.
+  - Bundle metadata, diagnostics coverage, and diversity-audit artifacts already expose realized mechanism-family coverage.
 - Active closeout scope:
   - widen `gp` through internal `standard`, `periodic`, and `multiscale` variants without adding a new public config knob
   - expose additive mechanism-variant observability in emitted metadata and downstream summaries
   - add GP-focused presets/docs so the candidate path can be evaluated against baseline and the shipped `piecewise` control
 - Exit criteria:
   - Widened `gp` variants are exercised through the existing family-mix surface and covered by unit/integration tests.
-  - Metadata, diagnostics, diversity-audit artifacts, and filter-calibration artifacts expose realized mechanism-family and mechanism-variant coverage beyond config echo.
-  - Diversity-audit and filter-calibration runs provide evidence for the widened `gp` path versus baseline, with the shipped `piecewise` path retained as the control comparator.
+  - Metadata, diagnostics, and diversity-audit artifacts expose realized mechanism-family and mechanism-variant coverage beyond config echo.
+  - Diversity-audit runs provide evidence for the widened `gp` path versus baseline, with the shipped `piecewise` path retained as the control comparator.
   - Presets/docs/bench guardrails exist for contributors.
 
 ### RD-012: Noise Family Diversification for Synthetic Generation

@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import argparse
 
-from ..common import get_cli_public_api, raise_usage_error
+from dagzoo.filtering import run_deferred_filter
+
+from ..common import raise_usage_error
 
 
 def run_filter_command(args: argparse.Namespace) -> int:
     """Execute the ``filter`` command."""
 
-    cli_api = get_cli_public_api()
     try:
-        result = cli_api.run_deferred_filter(
+        result = run_deferred_filter(
             in_dir=args.in_dir,
             out_dir=args.out,
             curated_out_dir=args.curated_out,

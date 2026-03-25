@@ -5,42 +5,6 @@ from pathlib import Path
 from conftest import load_script_module
 
 
-def test_effective_diversity_script_delegates_to_cli(monkeypatch) -> None:
-    module = load_script_module(
-        "effective_diversity_audit_script",
-        "scripts/effective_diversity_audit.py",
-    )
-    captured: dict[str, object] = {}
-
-    def _stub_cli_main(argv: list[str]) -> int:
-        captured["argv"] = argv
-        return 7
-
-    monkeypatch.setattr(module, "cli_main", _stub_cli_main)
-
-    code = module.main(
-        [
-            "--baseline-config",
-            "configs/default.yaml",
-            "--variant-config",
-            "configs/preset_shift_benchmark_smoke.yaml",
-            "--out-dir",
-            "tmp/out",
-        ]
-    )
-
-    assert code == 7
-    assert captured["argv"] == [
-        "diversity-audit",
-        "--baseline-config",
-        "configs/default.yaml",
-        "--variant-config",
-        "configs/preset_shift_benchmark_smoke.yaml",
-        "--out-dir",
-        "tmp/out",
-    ]
-
-
 def test_sync_docs_helpers_handle_route_aliases_and_heading_attrs() -> None:
     module = load_script_module("sync_hugo_content", "scripts/docs/sync_hugo_content.py")
 

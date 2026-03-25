@@ -121,8 +121,6 @@ Data-quality acceptance is a separate deferred stage:
 - Generated outputs still carry deferred-filter metadata for traceability.
 - `dagzoo filter` replays the small-shot ease ExtraTrees probe over emitted
   shards and writes accepted/rejected outcomes after generation.
-- `dagzoo filter-calibration` is still unsupported until a calibration
-  workflow exists for the small-shot ease filter.
 - Request-driven handoff currently publishes generated shards only.
 
 ### 4. Effective config and traceability {#4-effective-config-and-traceability}
