@@ -159,6 +159,61 @@ def test_generate_one_omits_unset_fixed_layout_target_cells_from_metadata_config
     assert "fixed_layout_target_cells" not in runtime_config
 
 
+def test_generate_one_omits_steering_from_metadata_config() -> None:
+    cfg = _tiny_regression_config()
+    cfg.steering.enabled = True
+    cfg.steering.preset = "anti_memorization_piecewise_v1"
+    cfg.validate_generation_constraints()
+
+    bundle = generate_one(cfg, seed=10, device="cpu")
+
+    assert "steering" not in bundle.metadata["config"]
+
+
+def test_generate_batch_dynamic_steering_changes_metadata_over_dataset_order() -> None:
+    cfg = _tiny_regression_config()
+    cfg.steering.enabled = True
+    cfg.steering.preset = "anti_memorization_piecewise_v1"
+    cfg.validate_generation_constraints()
+
+    batch = generate_batch(cfg, num_datasets=5, seed=1234, device="cpu")
+
+    assert [int(bundle.metadata["dataset_index"]) for bundle in batch] == [0, 1, 2, 3, 4]
+    assert "missingness" not in batch[0].metadata
+    assert batch[1].metadata["shift"]["mode"] == "graph_drift"
+    assert batch[2].metadata["shift"]["mode"] == "mixed"
+    assert batch[2].metadata["shift"]["graph_scale"] == pytest.approx(0.5)
+    assert batch[2].metadata["shift"]["variance_scale"] == pytest.approx(0.0)
+    assert batch[3].metadata["shift"]["graph_scale"] == pytest.approx(0.0)
+    assert batch[3].metadata["shift"]["variance_scale"] == pytest.approx(0.5)
+    assert batch[3].metadata["noise_distribution"]["family_requested"] == NOISE_FAMILY_MIXTURE
+    assert batch[4].metadata["noise_distribution"]["family_requested"] == NOISE_FAMILY_MIXTURE
+    assert batch[4].metadata["noise_distribution"]["mixture_weights"] == {
+        "gaussian": pytest.approx(0.5),
+        "laplace": pytest.approx(0.3),
+        "student_t": pytest.approx(0.2),
+    }
+
+
+def test_generate_batch_dynamic_steering_graph_stage_can_change_layout_signatures() -> None:
+    cfg = _tiny_regression_config()
+    cfg.steering.enabled = True
+    cfg.steering.preset = "anti_memorization_piecewise_v1"
+    cfg.validate_generation_constraints()
+
+    batch = generate_batch(cfg, num_datasets=5, seed=4321, device="cpu")
+
+    layout_signatures = [str(bundle.metadata["layout_signature"]) for bundle in batch]
+    feature_type_signatures = [
+        tuple(str(value) for value in bundle.feature_types) for bundle in batch
+    ]
+    feature_counts = [int(bundle.metadata["n_features"]) for bundle in batch]
+
+    assert len(set(layout_signatures)) >= 2
+    assert len(set(feature_type_signatures)) == 1
+    assert len(set(feature_counts)) == 1
+
+
 def test_generate_batch_rows_choices_are_seed_reproducible() -> None:
     cfg = _tiny_config()
     cfg.dataset.rows = [1024, 2048, 4096]  # type: ignore[assignment]

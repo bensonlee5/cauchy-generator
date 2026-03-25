@@ -49,13 +49,14 @@ def _config_payload_for_metadata(
     n_train: int,
     n_test: int,
 ) -> dict[str, Any]:
-    """Serialize config metadata while omitting unset fixed-layout target-cell overrides."""
+    """Serialize config metadata while omitting schema-only runtime-irrelevant sections."""
 
     config_payload = asdict(config)
     dataset_payload = config_payload.get("dataset")
     if isinstance(dataset_payload, dict):
         dataset_payload["n_train"] = int(n_train)
         dataset_payload["n_test"] = int(n_test)
+    config_payload.pop("steering", None)
 
     runtime_payload = config_payload.get("runtime")
     if (

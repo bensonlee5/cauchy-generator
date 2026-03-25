@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
@@ -22,13 +23,14 @@ from dagzoo.core.generation_runtime import (
     _FixedSchemaFinalizationContext,
     _resolve_split_indices,
 )
-from dagzoo.core.layout import _sample_layout
+from dagzoo.core.layout import _resample_layout_graph, _sample_layout
 from dagzoo.core.layout_types import LayoutPlan
 from dagzoo.core.noise_runtime import (
     _noise_sampling_spec,
     _resolve_noise_runtime_selection,
 )
 from dagzoo.core.shift import resolve_shift_runtime_params
+from dagzoo.core.steering import resolve_steering
 from dagzoo.core.validation import (
     InfeasibleStratifiedSplitError,
     InvalidClassSplitError,
@@ -228,6 +230,130 @@ def _sample_fixed_layout_once(
         execution_plan=execution_plan,
         plan_signature=fixed_layout_plan_signature(execution_plan),
     )
+
+
+def _resolve_steered_plan_for_dataset(
+    config: GeneratorConfig,
+    *,
+    base_plan: _FixedLayoutPlan,
+    dataset_index: int,
+    num_datasets: int,
+    dataset_root: KeyedRng,
+) -> tuple[GeneratorConfig, _FixedLayoutPlan]:
+    """Resolve one effective config and fixed-layout plan for a steered dataset ordinal."""
+
+    resolution = resolve_steering(
+        config,
+        dataset_index=dataset_index,
+        run_num_datasets=num_datasets,
+    )
+    effective_config = resolution.config
+    base_shift = resolve_shift_runtime_params(config)
+    effective_shift = resolve_shift_runtime_params(effective_config)
+    if math.isclose(
+        float(effective_shift.graph_scale),
+        float(base_shift.graph_scale),
+        rel_tol=0.0,
+        abs_tol=1e-12,
+    ) and math.isclose(
+        float(effective_shift.mechanism_logit_tilt),
+        float(base_shift.mechanism_logit_tilt),
+        rel_tol=0.0,
+        abs_tol=1e-12,
+    ):
+        return effective_config, base_plan
+
+    layout_root = dataset_root.keyed("steering", "layout")
+    layout = _resample_layout_graph(
+        base_plan.layout,
+        keyed_rng=layout_root,
+        edge_logit_bias=float(effective_shift.edge_logit_bias_shift),
+    )
+    execution_plan_root = dataset_root.keyed("steering", "execution_plan")
+    execution_plan_seed = execution_plan_root.child_seed()
+    execution_plan = build_fixed_layout_execution_plan(
+        effective_config,
+        layout,
+        plan_seed=execution_plan_seed,
+        mechanism_logit_tilt=float(effective_shift.mechanism_logit_tilt),
+    )
+    plan_seed = layout_root.child_seed()
+    return effective_config, _FixedLayoutPlan(
+        layout=layout,
+        requested_device=str(base_plan.requested_device),
+        resolved_device=str(base_plan.resolved_device),
+        plan_seed=int(plan_seed),
+        n_train=int(base_plan.n_train),
+        n_test=int(base_plan.n_test),
+        layout_signature=_layout_signature(layout),
+        candidate_attempt=int(base_plan.candidate_attempt),
+        execution_plan=execution_plan,
+        plan_signature=fixed_layout_plan_signature(execution_plan),
+        layout_root_path=["dataset", int(dataset_index), "steering", "layout"],
+        execution_plan_root_path=["dataset", int(dataset_index), "steering", "execution_plan"],
+    )
+
+
+def _generate_batch_with_dynamic_steering_iter(
+    config: GeneratorConfig,
+    *,
+    base_plan: _FixedLayoutPlan,
+    num_datasets: int,
+    seed: int | None = None,
+    classification_attempt_plan: tuple[int, ...] | None = None,
+    on_raw_batch_metrics: Callable[[dict[str, float]], None] | None = None,
+) -> Iterator[DatasetBundle]:
+    """Yield steered datasets with per-dataset effective config resolution."""
+
+    requested_device = str(base_plan.requested_device)
+    resolved_device = str(base_plan.resolved_device)
+    run_seed = _resolve_run_seed(config, seed)
+    run_root = KeyedRng(run_seed)
+    expected_schema: tuple[int, tuple[str, ...], tuple[int, ...]] | None = None
+
+    for dataset_index in range(int(num_datasets)):
+        dataset_root = run_root.keyed("dataset", dataset_index)
+        effective_config, effective_plan = _resolve_steered_plan_for_dataset(
+            config,
+            base_plan=base_plan,
+            dataset_index=dataset_index,
+            num_datasets=num_datasets,
+            dataset_root=dataset_root,
+        )
+        effective_shift = resolve_shift_runtime_params(effective_config)
+        finalization_context = _build_fixed_schema_finalization_context(
+            effective_config,
+            effective_plan.layout,
+            n_train=int(effective_plan.n_train),
+            n_test=int(effective_plan.n_test),
+            shift_params=effective_shift,
+        )
+        start_attempt = (
+            int(classification_attempt_plan[dataset_index])
+            if classification_attempt_plan is not None
+            else 0
+        )
+        bundle = _generate_bundle_with_retries_compat(
+            effective_config,
+            plan=effective_plan,
+            dataset_root=dataset_root,
+            requested_device=requested_device,
+            resolved_device=resolved_device,
+            preserve_feature_schema=True,
+            start_attempt=start_attempt,
+            finalization_context=finalization_context,
+            on_raw_batch_metrics=on_raw_batch_metrics,
+        )
+        _annotate_fixed_layout_metadata(bundle, plan=effective_plan)
+        schema = _extract_emitted_schema_signature(bundle)
+        if expected_schema is None:
+            expected_schema = schema
+        elif schema != expected_schema:
+            raise ValueError(
+                "Fixed-layout schema mismatch: emitted dataset does not match "
+                "the first fixed-layout bundle schema."
+            )
+        yield bundle
 
 
 def _raw_classification_labels_support_split(
@@ -629,6 +755,16 @@ def _generate_batch_with_plan_iter(
             "Fixed-layout classification attempt plan length must match num_datasets: "
             f"attempt_plan={len(classification_attempt_plan)} num_datasets={num_datasets}"
         )
+    if config.steering.enabled:
+        yield from _generate_batch_with_dynamic_steering_iter(
+            config,
+            base_plan=plan,
+            num_datasets=num_datasets,
+            seed=seed,
+            classification_attempt_plan=classification_attempt_plan,
+            on_raw_batch_metrics=on_raw_batch_metrics,
+        )
+        return
 
     requested_device = str(plan.requested_device)
     validated_resolved_device = str(plan.resolved_device)
