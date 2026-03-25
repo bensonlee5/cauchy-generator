@@ -4,6 +4,34 @@
 generation transforms used by <code>dagzoo</code>. Equations are
 implementation-faithful to the current runtime in
 <code>src/dagzoo</code>.</p>
+
+<h2 id="purpose-and-research-context">Purpose and Research Context</h2>
+
+<p>The generation pipeline is designed to produce synthetic tabular data with
+high <strong>effective diversity</strong> — the breadth of meta-feature space
+covered by the generated corpus.  Each section below corresponds to an
+independent axis of prior diversity:</p>
+
+<ul>
+<li><strong>Section 1 (DAG structure)</strong> — topology of causal dependencies</li>
+<li><strong>Section 2 (Shift parameters)</strong> — train/test distribution drift</li>
+<li><strong>Section 3 (Mechanism families)</strong> — functional complexity of variable relationships</li>
+<li><strong>Section 4 (Node pipeline)</strong> — execution mechanics from latent to converter-ready state</li>
+<li><strong>Section 5 (Mechanism definitions)</strong> — catalog of functional transform families</li>
+<li><strong>Section 6 (Converters)</strong> — mapping from latent state to observed tabular features</li>
+<li><strong>Section 7 (Noise)</strong> — stochastic variation character</li>
+</ul>
+
+<p>For researchers working to improve effective diversity, the key question for
+each section is: <em>What variation does this transform axis contribute, and
+how does adjusting its parameters change the region of meta-feature space the
+prior covers?</em>  Broadening coverage across all axes simultaneously is the
+path to high effective diversity — broader meta-feature coverage has been shown
+to improve model reliability, and synthetic prior quality is central to tabular
+foundation model performance.  The formal specification matters because
+the parameterization determines what prior regions are reachable — if a
+transform's math restricts certain behaviors, no config change can produce
+datasets in those regions.</p>
 <h2 id="notation-and-symbols">Notation and Symbols</h2>
 <p><strong>Primary Variable:</strong> Symbol map (this section's
 notation table).<br> <strong>Dependency Map:</strong> all symbols used
@@ -652,6 +680,28 @@ metadata.</td>
 </tbody>
 </table>
 <h2 id="1-dag-structure-sampling">1. DAG Structure Sampling</h2>
+<p><strong>Motivation</strong>  The graph structure is the causal skeleton that
+determines <em>which variables influence which</em>.  Consider three corpora:</p>
+<pre><code>Corpus A (Erdős–Rényi, p=0.3):   every DAG looks like a medium-density mesh
+                                   → all datasets have ~similar dependency depth
+
+Corpus B (Erdős–Rényi, varied p): sparser and denser meshes, but still homogeneous
+                                   per-node — no hub nodes, no isolated chains
+
+Corpus C (Cauchy latents):         some DAGs are star-shaped (one hub drives everything),
+                                   some are sparse chains (A→B→C→D), some are dense webs
+                                   → the prior covers qualitatively different causal regimes
+</code></pre>
+<p>Corpus C is what this section produces.  The Cauchy distribution's heavy tails
+mean that occasionally one node's latent <span class="math inline">\(B_i\)</span>
+is extreme, creating a natural hub; another node's <span class="math inline">\(C_j\)</span>
+may be deeply negative, making it nearly parentless.  This heterogeneity is
+deliberate — real tabular data comes from causal structures that range from
+near-independent features to deeply entangled causal chains, and the prior must
+cover that full range.  The <code>edge_logit_bias</code>
+(<span class="math inline">\(\beta_{\text{edge}}\)</span>) shifts the overall
+density surface up or down, acting as the "how connected" knob for the graph
+axis of effective diversity.</p>
 <p><strong>Primary Variable:</strong> <span
 class="math inline">\(G\)</span> (DAG adjacency matrix).<br>
 <strong>Dependency Map:</strong> <span class="math inline">\(A, B_i,
@@ -690,6 +740,29 @@ class="math inline">\(j\)</span> tends to receive edges).</li>
 <p>and for <span class="math inline">\(i \ge j\)</span>, <span
 class="math inline">\(G_{ij}=0\)</span>.</p>
 <h2 id="2-shift-runtime-parameters">2. Shift Runtime Parameters</h2>
+<p><strong>Motivation</strong>  A model trained on i.i.d. synthetic data
+has never seen train/test mismatch during pretraining.  At inference, real
+tasks routinely exhibit shift — and the model has no prior experience to fall
+back on.  These three shift axes map to distinct real-world drift patterns:</p>
+<pre><code>graph_scale  → causal structure itself changes    (e.g., new regulations alter which
+               between train and test                variables are causally relevant)
+
+mechanism_scale → functional relationships change  (e.g., customer behavior shifts while
+                  while the graph stays the same     the same features remain relevant)
+
+variance_scale  → stochastic variation changes     (e.g., sensor degradation increases
+                  in magnitude                       measurement noise over time)
+</code></pre>
+<p>Because the three axes are independent, a researcher can ablate each in
+isolation: hold graph and mechanism fixed while sweeping noise drift to measure
+noise-robustness, or hold noise fixed while tilting mechanism complexity.
+Shift-aware constructions in the prior have been shown to improve robustness
+to temporal distribution shifts.  The
+deterministic mappings from config scales to runtime coefficients
+(<span class="math inline">\(\beta_{\text{edge}}\)</span>,
+<span class="math inline">\(\tau\)</span>,
+<span class="math inline">\(\gamma_\sigma\)</span>) keep each axis
+interpretable and independently testable.</p>
 <p><strong>Primary Variable:</strong> <span
 class="math inline">\(s_{\text{shift}} = (\text{graph\_scale},
 \text{mechanism\_scale}, \text{variance\_scale})\)</span>.<br>
@@ -718,6 +791,31 @@ class="math display">\[\gamma_\sigma = \exp\left(\frac{\ln(2)}{2} \cdot
 variance multiplicatively.</p>
 <h2 id="3-mechanism-family-sampling-with-mix--tilt">3. Mechanism Family
 Sampling with Mix + Tilt</h2>
+<p><strong>Motivation</strong>  Real tabular relationships span a wide
+functional spectrum.  A prior restricted to, say, linear + neural-network
+mechanisms will never produce piecewise decision boundaries (tree-like),
+cluster-assignment patterns (discretization), or smooth periodic surfaces (GP)
+— and the foundation model trained on it will struggle when encountering those
+patterns at inference time.</p>
+<pre><code>linear         →  y ≈ Wx + b                    (low complexity, smooth)
+quadratic      →  y ≈ x'Ax + Wx + b             (pairwise interactions)
+neural network →  y = σ(W₂ σ(W₁x + b₁) + b₂)   (high-capacity smooth nonlinearity)
+tree ensemble  →  y = Σ leaf_values[split_path]  (piecewise constant, discontinuous)
+discretization →  y = f(nearest_center(x))       (clustered, Voronoi-like)
+GP / RFF       →  y = V cos(Ωx + b)             (smooth kernel, possibly periodic)
+EM assignment  →  y = Σ p(k|x) · μ_k            (soft mixture, local structure)
+product        →  y = f(x) · g(x)               (multiplicative interaction)
+piecewise      →  y = staged_branches(x)         (explicit control path)
+</code></pre>
+<p>The <code>function_family_mix</code> controls <em>which</em> families are
+present (support) and their baseline probabilities.  The
+<code>mechanism_logit_tilt</code> (<span class="math inline">\(\tau\)</span>)
+controls <em>how much</em> the distribution shifts toward nonlinear families
+within that support.  Together they form the most direct lever for changing the
+functional complexity profile of the prior.  If your model underperforms on
+tasks with tree-like decision
+boundaries, increasing tree weight in the mix and measuring the downstream
+effect is the first experiment to try.</p>
 <p><strong>Primary Variable:</strong> <span
 class="math inline">\(\pi_f\)</span> (mechanism-family sampling
 distribution).<br> <strong>Dependency Map:</strong> <span
@@ -844,6 +942,22 @@ one of its component families is enabled (<code>tree</code>,
 <code>discretization</code>, <code>gp</code>, <code>linear</code>,
 <code>quadratic</code>).</p>
 <h2 id="4-node-generation-pipeline">4. Node Generation Pipeline</h2>
+<p><strong>Motivation</strong>  The node pipeline is where latent causal
+structure becomes concrete tensors.  Each step — root sampling, parent
+composition, sanitization, weighting, converter slicing — adds a controlled
+layer of variation.  The design is ordered so that:</p>
+<pre><code>root nodes   → fresh latent geometry (normal, uniform, unit-ball, correlated)
+child nodes  → inherit + transform parent signals via multi-parent composition
+all nodes    → sanitize → standardize → weight → slice for converters → scale
+</code></pre>
+<p>Multiple root-base geometries (Section 4.1) ensure that even before any
+mechanism fires, latent inputs already vary in shape — uniform grids, spherical
+point clouds, correlated ellipsoids.  Multi-parent composition (Section 4.2)
+controls how upstream causal effects combine: additive (sum), multiplicative
+(product), extremal (max), or smooth-extremal (logsumexp).  These choices
+determine the interaction patterns visible in the final tabular data — a sum
+aggregation produces additive parent effects, while a product aggregation
+creates multiplicative interactions that no single-parent mechanism can mimic.</p>
 <p><strong>Primary Variable:</strong> <span
 class="math inline">\(Z_j\)</span> (node-<span
 class="math inline">\(j\)</span> latent tensor after pipeline
@@ -996,6 +1110,22 @@ observable value for feature/target key.</li>
 \mathsf{LogUniform}(0.1, 10)\]</span></p>
 <h2 id="5-mechanism-family-definitions">5. Mechanism Family
 Definitions</h2>
+<p><strong>Motivation</strong>  This catalog is intentionally broad because
+each family occupies a qualitatively distinct region of function space.
+Narrowing the catalog narrows the prior:</p>
+<pre><code>Remove trees       → prior cannot produce sharp, axis-aligned decision boundaries
+Remove GP          → prior cannot produce smooth periodic or multi-scale surfaces
+Remove quadratic   → prior loses explicit pairwise feature interactions
+Remove product     → prior loses multiplicative cross-family effects
+</code></pre>
+<p>The breadth of this catalog is what makes mechanism diversity a meaningful
+axis of effective diversity.  Each family's parameterization (random weights,
+depths, kernel frequencies, etc.) adds within-family variation on top of the
+between-family structural differences.  For a researcher evaluating whether to
+add or remove a family, the question is: <em>does this family produce latent
+structure that no other family can approximate?</em>  If yes, removing it
+creates a coverage gap; if a proposed new family largely duplicates an existing
+one, adding it increases code surface without improving diversity.</p>
 <p><strong>Primary Variable:</strong> <span class="math inline">\(Y =
 f(X)\)</span> (family-specific mechanism output).<br> <strong>Dependency
 Map:</strong> mechanism-family parameters + input <span
@@ -1243,6 +1373,27 @@ from allowed set
 enabled family mix), then:</p>
 <p><span class="math display">\[Y = f(X) \odot g(X)\]</span></p>
 <h2 id="6-converter-definitions">6. Converter Definitions</h2>
+<p><strong>Motivation</strong>  Converters are the emission boundary — they
+translate latent causal state into the tabular features and targets a
+downstream model actually sees.  Even if the latent mechanisms are diverse,
+monotonous converters produce monotonous observed distributions:</p>
+<pre><code>latent Z ──→ numeric converter ──→ observed feature column
+             ├─ identity pass-through    → Gaussian-looking marginals
+             ├─ Kumaraswamy warp         → skewed / beta-like marginals
+             └─ power / log transform    → heavy-tailed or compressed marginals
+
+latent Z ──→ categorical converter ──→ observed class labels
+             ├─ argmax on logits         → hard cluster boundaries
+             ├─ softmax + Categorical    → soft probabilistic assignment
+             └─ k-means style centers    → Voronoi-like class regions
+</code></pre>
+<p>The numeric converter's optional Kumaraswamy warp varies marginal
+distributions beyond the standard Gaussian shape; the categorical converter's
+multiple method/variant combinations produce diverse class-assignment patterns.
+Without converter diversity, even mechanistically diverse latent signals could
+produce tabular data where every numeric column looks Gaussian and every
+categorical column uses the same assignment logic — a subtle effective-diversity
+gap that is easy to overlook.</p>
 <p><strong>Primary Variable:</strong> <span
 class="math inline">\((X&#39;_s, v_s)\)</span> (converter output state
 and extracted observable value for spec <span
@@ -1330,6 +1481,23 @@ transformed by random function, or random softmax points). Labels are
 finally reduced modulo <span class="math inline">\(C\)</span>.</p>
 <h2 id="7-noise-sampling-and-runtime-selection">7. Noise Sampling and
 Runtime Selection</h2>
+<p><strong>Motivation</strong>  Noise is the stochastic axis of the prior,
+independent of mechanism complexity.  Restricting noise to Gaussian produces
+datasets whose residuals always have light, symmetric tails — but real tabular
+residuals are often heavy-tailed (financial returns), asymmetric (truncated
+sensor readings), or heteroscedastic.  The three primitive families span a
+tail-weight gradient:</p>
+<pre><code>Gaussian    →  light tails, exp(-x²/2)        → most benign residual regime
+Laplace     →  moderate tails, exp(-|x|)       → double-exponential, sharper peak
+Student-t   →  heavy tails, (1+x²/ν)^(-(ν+1)/2)  → occasional extreme outliers (ν &gt; 2)
+mixture     →  per-dataset draw from the above → corpus spans all three regimes
+</code></pre>
+<p>The <code>mixture</code> mode resolves one family per dataset attempt
+(Section 7.2), so a corpus generated with <code>mixture</code> naturally
+contains Gaussian-noise datasets, Laplace-noise datasets, and Student-t-noise
+datasets — broadening the noise axis of effective diversity without requiring
+separate generate runs.  Noise diversity in the prior has been shown to improve
+performance on real datasets with non-Gaussian residual structure.</p>
 <p><strong>Primary Variable:</strong> <span
 class="math inline">\(\epsilon\)</span> (active noise draw process for
 the attempt).<br> <strong>Dependency Map:</strong> noise family, scale,
