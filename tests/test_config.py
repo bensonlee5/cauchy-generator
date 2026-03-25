@@ -42,7 +42,6 @@ def test_load_default_config() -> None:
     assert cfg.steering.enabled is False
     assert cfg.steering.preset is None
     assert cfg.steering.stages == []
-    assert cfg.steering.target_metrics == {}
 
 
 def test_config_package_reexports_noise_mixture_component_constants() -> None:
@@ -317,10 +316,6 @@ def test_steering_preset_round_trips_via_yaml() -> None:
             "steering": {
                 "enabled": True,
                 "preset": "anti_memorization_piecewise_v1",
-                "target_metrics": {
-                    "linearity_proxy": [0.2, 0.8],
-                    "shift_noise_variance_multiplier": [1.1, 1.5],
-                },
             }
         }
     )
@@ -331,10 +326,6 @@ def test_steering_preset_round_trips_via_yaml() -> None:
     assert round_tripped.steering.enabled is True
     assert round_tripped.steering.preset == "anti_memorization_piecewise_v1"
     assert round_tripped.steering.stages == []
-    assert round_tripped.steering.target_metrics == {
-        "linearity_proxy": [0.2, 0.8],
-        "shift_noise_variance_multiplier": [1.1, 1.5],
-    }
 
 
 def test_steering_explicit_stage_round_trips_via_yaml() -> None:
@@ -539,13 +530,31 @@ def test_steering_accepts_descending_directional_bands() -> None:
 def test_steering_rejects_extra_payload_when_disabled() -> None:
     with pytest.raises(
         ValueError,
-        match="steering.preset, steering.stages, and steering.target_metrics must be unset",
+        match="steering.preset and steering.stages must be unset",
     ):
         GeneratorConfig.from_dict(
             {
                 "steering": {
                     "enabled": False,
                     "preset": "anti_memorization_piecewise_v1",
+                }
+            }
+        )
+
+
+def test_steering_rejects_target_metrics_payload() -> None:
+    with pytest.raises(
+        ValueError,
+        match="steering.target_metrics is not supported yet",
+    ):
+        GeneratorConfig.from_dict(
+            {
+                "steering": {
+                    "enabled": True,
+                    "preset": "anti_memorization_piecewise_v1",
+                    "target_metrics": {
+                        "linearity_proxy": [0.2, 0.8],
+                    },
                 }
             }
         )

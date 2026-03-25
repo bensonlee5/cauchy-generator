@@ -10,6 +10,17 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.14.1] - 2026-03-25
+
+### Changed
+
+- Steering-enabled fixed-layout generation now keeps grouped batching for
+  matching effective layout and noise cohorts instead of scalarizing every
+  dataset when steering is enabled.
+- `steering.target_metrics` is no longer accepted in generator configs until
+  the runtime can honor it; config loading now raises an explicit error
+  instead of silently accepting a no-op field.
+
 ## [0.14.0] - 2026-03-25
 
 ### Added

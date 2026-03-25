@@ -416,46 +416,6 @@ def _normalize_steering_preset(value: object) -> str | None:
     return normalized
 
 
-def _normalize_steering_target_metrics(
-    value: object | None,
-) -> dict[str, list[float]]:
-    """Normalize declarative steering target bands."""
-
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        raise ValueError("steering.target_metrics must be a mapping.")
-
-    normalized: dict[str, list[float]] = {}
-    for raw_metric, raw_band in value.items():
-        if isinstance(raw_metric, bool) or not isinstance(raw_metric, str):
-            raise ValueError("steering.target_metrics keys must be metric name strings.")
-        metric_name = raw_metric.strip()
-        if not metric_name:
-            raise ValueError("steering.target_metrics keys must be non-empty strings.")
-        if metric_name in normalized:
-            raise ValueError(
-                f"Duplicate steering.target_metrics key {raw_metric!r} after normalization."
-            )
-        if not isinstance(raw_band, (list, tuple)) or len(raw_band) < 2:
-            raise ValueError(
-                f"steering.target_metrics.{metric_name} must be a two-value [lo, hi] band."
-            )
-        try:
-            lo = float(raw_band[0])
-            hi = float(raw_band[1])
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"steering.target_metrics.{metric_name} must contain finite numeric bounds."
-            ) from exc
-        if not (math.isfinite(lo) and math.isfinite(hi)):
-            raise ValueError(
-                f"steering.target_metrics.{metric_name} must contain finite numeric bounds."
-            )
-        normalized[metric_name] = [lo, hi] if lo <= hi else [hi, lo]
-    return normalized
-
-
 def _normalize_steering_band(
     *,
     field_name: str,
@@ -668,7 +628,6 @@ def _normalize_steering_fields(steering: SteeringConfig) -> None:
     if not isinstance(steering.enabled, bool):
         raise ValueError(f"steering.enabled must be a boolean, got {steering.enabled!r}.")
     steering.preset = _normalize_steering_preset(steering.preset)
-    steering.target_metrics = _normalize_steering_target_metrics(steering.target_metrics)
 
     raw_stages = steering.stages
     if raw_stages is None:
@@ -1025,13 +984,11 @@ def _stage2_validate_steering_constraints(steering: SteeringConfig) -> None:
 
     has_preset = steering.preset is not None
     has_explicit_stages = bool(steering.stages)
-    has_target_metrics = bool(steering.target_metrics)
 
     if not steering.enabled:
-        if has_preset or has_explicit_stages or has_target_metrics:
+        if has_preset or has_explicit_stages:
             raise ValueError(
-                "steering.preset, steering.stages, and steering.target_metrics must be unset "
-                "when steering.enabled is false."
+                "steering.preset and steering.stages must be unset when steering.enabled is false."
             )
         return
 
@@ -1188,7 +1145,6 @@ class SteeringConfig:
     enabled: bool = False
     preset: str | None = None
     stages: list[SteeringStageConfig] = field(default_factory=list)
-    target_metrics: dict[str, list[float]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _normalize_steering_fields(self)
@@ -1315,12 +1271,17 @@ class GeneratorConfig:
                 f"{joined} is no longer supported. Parallel generation has been removed; "
                 "remove these runtime keys from the config."
             )
+        steering_payload = dict(data.get("steering") or {})
+        if "target_metrics" in steering_payload:
+            raise ValueError(
+                "steering.target_metrics is not supported yet. Remove it from the config."
+            )
         dataset = DatasetConfig(**(data.get("dataset") or {}))
         graph = GraphConfig(**(data.get("graph") or {}))
         mechanism = MechanismConfig(**(data.get("mechanism") or {}))
         shift = ShiftConfig(**(data.get("shift") or {}))
         noise = NoiseConfig(**(data.get("noise") or {}))
-        steering = SteeringConfig(**(data.get("steering") or {}))
+        steering = SteeringConfig(**steering_payload)
         runtime = RuntimeConfig(**runtime_payload)
         output = OutputConfig(**(data.get("output") or {}))
         diagnostics = DiagnosticsConfig(**(data.get("diagnostics") or {}))

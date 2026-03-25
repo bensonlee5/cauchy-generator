@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -385,6 +386,8 @@ def _finalize_generated_chunk_preserve_schema(
     layout: LayoutPlan,
     *,
     context: _FixedSchemaFinalizationContext,
+    contexts_by_batch: Sequence[_FixedSchemaFinalizationContext] | None = None,
+    configs_by_batch: Sequence[GeneratorConfig] | None = None,
     dataset_roots: list[KeyedRng],
     attempt: int,
     attempts_used: int,
@@ -405,6 +408,10 @@ def _finalize_generated_chunk_preserve_schema(
 
     if int(x.shape[0]) != len(dataset_roots) or int(y.shape[0]) != len(dataset_roots):
         raise ValueError("Chunk tensors must align with provided dataset roots.")
+    if contexts_by_batch is not None and len(contexts_by_batch) != len(dataset_roots):
+        raise ValueError("contexts_by_batch must align with provided dataset roots.")
+    if configs_by_batch is not None and len(configs_by_batch) != len(dataset_roots):
+        raise ValueError("configs_by_batch must align with provided dataset roots.")
     if resolved_split_indices is not None and len(resolved_split_indices) != len(dataset_roots):
         raise ValueError("resolved_split_indices must align with provided dataset roots.")
 
@@ -471,10 +478,16 @@ def _finalize_generated_chunk_preserve_schema(
         try:
             dataset_root = dataset_roots[batch_index]
             dataset_seed = dataset_root.child_seed()
+            per_dataset_context = (
+                context if contexts_by_batch is None else contexts_by_batch[batch_index]
+            )
+            per_dataset_config = (
+                config if configs_by_batch is None else configs_by_batch[batch_index]
+            )
             results[batch_index] = _finalize_processed_bundle(
-                config,
+                per_dataset_config,
                 layout,
-                context=context,
+                context=per_dataset_context,
                 dataset_seed=dataset_seed,
                 attempt=attempt,
                 attempts_used=attempts_used,

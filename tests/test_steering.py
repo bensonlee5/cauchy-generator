@@ -1,7 +1,7 @@
 import pytest
 
 from dagzoo.config import NOISE_FAMILY_MIXTURE, GeneratorConfig
-from dagzoo.core.steering import resolve_steering
+from dagzoo.core.steering import _resolve_active_stage, resolve_steering
 
 
 def test_resolve_steering_disabled_returns_base_config() -> None:
@@ -89,3 +89,39 @@ def test_resolve_steering_num_datasets_one_uses_zero_progress() -> None:
     assert resolved.progress == pytest.approx(0.0)
     assert resolved.stage_name == "descending_graph"
     assert resolved.config.shift.graph_scale == pytest.approx(0.5)
+
+
+def test_resolve_active_stage_rejects_empty_stage_list() -> None:
+    with pytest.raises(RuntimeError, match="Failed to resolve active steering stage"):
+        _resolve_active_stage([], progress=0.5)
+
+
+def test_resolve_steering_applies_missingness_auxiliary_fields() -> None:
+    cfg = GeneratorConfig.from_dict(
+        {
+            "steering": {
+                "enabled": True,
+                "stages": [
+                    {
+                        "name": "mar_aux",
+                        "fraction": 1.0,
+                        "dataset": {
+                            "missing_rate": [0.1, 0.2],
+                            "missing_mechanism": "mar",
+                            "missing_mar_observed_fraction": 0.75,
+                            "missing_mar_logit_scale": 1.5,
+                            "missing_mnar_logit_scale": 2.5,
+                        },
+                    }
+                ],
+            }
+        }
+    )
+
+    resolved = resolve_steering(cfg, dataset_index=1, run_num_datasets=2)
+
+    assert resolved.config.dataset.missing_rate == pytest.approx(0.2)
+    assert resolved.config.dataset.missing_mechanism == "mar"
+    assert resolved.config.dataset.missing_mar_observed_fraction == pytest.approx(0.75)
+    assert resolved.config.dataset.missing_mar_logit_scale == pytest.approx(1.5)
+    assert resolved.config.dataset.missing_mnar_logit_scale == pytest.approx(2.5)

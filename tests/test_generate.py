@@ -214,6 +214,728 @@ def test_generate_batch_dynamic_steering_graph_stage_can_change_layout_signature
     assert len(set(feature_counts)) == 1
 
 
+def test_generate_batch_with_plan_iter_batches_steering_missingness_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_regression_config()
+    cfg.steering.enabled = True
+    cfg.dataset.n_train = 4
+    cfg.dataset.n_test = 2
+    plan = _FixedLayoutPlan(
+        layout=_layout_stub(
+            feature_types=["num", "num"],
+            graph_nodes=2,
+            adjacency=torch.zeros((2, 2), dtype=torch.bool),
+            feature_node_assignment=[0, 1],
+            target_node_assignment=1,
+        ),
+        requested_device="cpu",
+        resolved_device="cpu",
+        plan_seed=901,
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        layout_signature="layout_sig",
+        execution_plan=FixedLayoutExecutionPlan(),
+        plan_signature="plan_sig",
+    )
+    grouped_chunk_sizes: list[int] = []
+    seen_missing_rates: list[list[float]] = []
+
+    def _missingness_config(missing_rate: float) -> GeneratorConfig:
+        effective = deepcopy(cfg)
+        effective.steering.enabled = False
+        effective.dataset.missing_rate = float(missing_rate)
+        effective.dataset.missing_mechanism = "none" if missing_rate <= 0.0 else "mcar"
+        effective.validate_generation_constraints()
+        return effective
+
+    def _make_bundle(seed: int, missing_rate: float) -> DatasetBundle:
+        return DatasetBundle(
+            X_train=torch.zeros((cfg.dataset.n_train, 2), dtype=torch.float32),
+            y_train=torch.zeros(cfg.dataset.n_train, dtype=torch.float32),
+            X_test=torch.zeros((cfg.dataset.n_test, 2), dtype=torch.float32),
+            y_test=torch.zeros(cfg.dataset.n_test, dtype=torch.float32),
+            feature_types=["num", "num"],
+            metadata={
+                "seed": int(seed),
+                "n_features": 2,
+                "config": {"dataset": {"missing_rate": float(missing_rate)}},
+                "lineage": {
+                    "assignments": {
+                        "feature_to_node": [0, 1],
+                        "target_to_node": 1,
+                    }
+                },
+                "filter": {"mode": "deferred", "status": "not_run"},
+                "generation_attempts": {
+                    "total_attempts": 1,
+                    "retry_count": 0,
+                    "filter_attempts": 0,
+                    "filter_rejections": 0,
+                    "filter_rejection_rate": None,
+                },
+            },
+        )
+
+    def _stub_resolve_steered_dataset_descriptor(
+        _config: GeneratorConfig,
+        *,
+        base_plan: _FixedLayoutPlan,
+        dataset_index: int,
+        num_datasets: int,
+        dataset_root: KeyedRng,
+    ):
+        _ = num_datasets
+        missing_rate = [0.0, 0.1, 0.2][dataset_index]
+        effective_config = _missingness_config(missing_rate)
+        return SimpleNamespace(
+            dataset_index=dataset_index,
+            dataset_root=dataset_root,
+            effective_config=effective_config,
+            effective_plan=base_plan,
+            effective_shift=resolve_shift_runtime_params(effective_config),
+            finalization_context=_build_fixed_schema_finalization_context(
+                effective_config,
+                base_plan.layout,
+                n_train=cfg.dataset.n_train,
+                n_test=cfg.dataset.n_test,
+                shift_params=resolve_shift_runtime_params(effective_config),
+            ),
+        )
+
+    def _stub_group_noise_runtime_chunk(
+        _config: GeneratorConfig,
+        *,
+        dataset_roots: list[KeyedRng],
+        attempts: list[int] | None = None,
+    ):
+        grouped_chunk_sizes.append(len(dataset_roots))
+        assert attempts == [0] * len(dataset_roots)
+        return [
+            SimpleNamespace(
+                chunk_offsets=list(range(len(dataset_roots))),
+                generation_seeds=[
+                    dataset_root.keyed("attempt", 0, "raw_generation").child_seed()
+                    for dataset_root in dataset_roots
+                ],
+                selection=NoiseRuntimeSelection(
+                    family_requested="gaussian",
+                    family_sampled="gaussian",
+                    sampling_strategy="dataset_level",
+                    base_scale=1.0,
+                    student_t_df=5.0,
+                    mixture_weights=None,
+                ),
+                attempt=0,
+            )
+        ]
+
+    def _stub_generate_grouped_raw_batches(
+        _config: GeneratorConfig,
+        _layout,
+        *,
+        execution_plan: FixedLayoutExecutionPlan,
+        grouped_noise_runtime,
+        requested_device: str,
+        resolved_device: str,
+        noise_sigma_multiplier: float,
+    ) -> list[SimpleNamespace]:
+        _ = execution_plan
+        _ = requested_device
+        _ = resolved_device
+        _ = noise_sigma_multiplier
+        group = grouped_noise_runtime[0]
+        n_rows = cfg.dataset.n_train + cfg.dataset.n_test
+        return [
+            SimpleNamespace(
+                chunk_offsets=list(group.chunk_offsets),
+                selection=group.selection,
+                attempt=group.attempt,
+                x_batch=torch.zeros((len(group.chunk_offsets), n_rows, 2), dtype=torch.float32),
+                y_batch=torch.zeros((len(group.chunk_offsets), n_rows), dtype=torch.float32),
+                aux_meta_batch=[
+                    {"filter": {"mode": "deferred", "status": "not_run"}}
+                    for _ in group.chunk_offsets
+                ],
+                effective_resolved_device="cpu",
+                device_fallback_reason=None,
+                runtime_metrics={},
+            )
+        ]
+
+    def _stub_finalize_generated_chunk_preserve_schema(
+        _config: GeneratorConfig,
+        _layout,
+        *,
+        context,
+        contexts_by_batch=None,
+        configs_by_batch=None,
+        dataset_roots: list[KeyedRng],
+        attempt: int,
+        attempts_used: int,
+        device: str,
+        n_train: int,
+        n_test: int,
+        requested_device: str,
+        resolved_device: str,
+        device_fallback_reason: str | None,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        aux_meta_batch: list[dict[str, object]],
+        noise_runtime_selection: NoiseRuntimeSelection,
+        dtype: torch.dtype,
+        resolved_split_indices=None,
+    ) -> list[DatasetBundle | None]:
+        _ = context
+        _ = contexts_by_batch
+        _ = attempt
+        _ = attempts_used
+        _ = device
+        _ = n_train
+        _ = n_test
+        _ = requested_device
+        _ = resolved_device
+        _ = device_fallback_reason
+        _ = x
+        _ = y
+        _ = aux_meta_batch
+        _ = noise_runtime_selection
+        _ = dtype
+        _ = resolved_split_indices
+        assert configs_by_batch is not None
+        missing_rates = [float(entry.dataset.missing_rate) for entry in configs_by_batch]
+        seen_missing_rates.append(missing_rates)
+        return [
+            _make_bundle(
+                dataset_root.child_seed(), float(configs_by_batch[index].dataset.missing_rate)
+            )
+            for index, dataset_root in enumerate(dataset_roots)
+        ]
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._resolve_steered_dataset_descriptor",
+        _stub_resolve_steered_dataset_descriptor,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._group_noise_runtime_chunk",
+        _stub_group_noise_runtime_chunk,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_grouped_raw_batches",
+        _stub_generate_grouped_raw_batches,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._finalize_generated_chunk_preserve_schema",
+        _stub_finalize_generated_chunk_preserve_schema,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_bundle_with_retries_compat",
+        lambda *_args, **_kwargs: pytest.fail(
+            "steering missingness-only batching should not fall back to scalar retries"
+        ),
+    )
+
+    bundles = list(
+        _generate_batch_with_plan_iter(
+            cfg,
+            plan=plan,
+            num_datasets=3,
+            seed=33,
+            batch_size=3,
+        )
+    )
+
+    assert grouped_chunk_sizes == [3]
+    assert seen_missing_rates == [[0.0, 0.1, 0.2]]
+    assert [float(bundle.metadata["config"]["dataset"]["missing_rate"]) for bundle in bundles] == [
+        pytest.approx(0.0),
+        pytest.approx(0.1),
+        pytest.approx(0.2),
+    ]
+
+
+def test_generate_batch_with_plan_iter_batches_noise_only_steering_by_cohort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_regression_config()
+    cfg.steering.enabled = True
+    cfg.dataset.n_train = 4
+    cfg.dataset.n_test = 2
+    plan = _FixedLayoutPlan(
+        layout=_layout_stub(
+            feature_types=["num", "num"],
+            graph_nodes=2,
+            adjacency=torch.zeros((2, 2), dtype=torch.bool),
+            feature_node_assignment=[0, 1],
+            target_node_assignment=1,
+        ),
+        requested_device="cpu",
+        resolved_device="cpu",
+        plan_seed=902,
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        layout_signature="layout_sig",
+        execution_plan=FixedLayoutExecutionPlan(),
+        plan_signature="plan_sig",
+    )
+    grouped_chunk_sizes: list[int] = []
+    grouped_families: list[str] = []
+
+    def _noise_config(index: int) -> GeneratorConfig:
+        effective = deepcopy(cfg)
+        effective.steering.enabled = False
+        if index < 2:
+            effective.noise.family = "gaussian"
+            effective.noise.mixture_weights = None
+        else:
+            effective.noise.family = "student_t"
+            effective.noise.student_t_df = 7.0
+            effective.noise.mixture_weights = None
+        effective.validate_generation_constraints()
+        return effective
+
+    def _make_bundle(seed: int) -> DatasetBundle:
+        return DatasetBundle(
+            X_train=torch.zeros((cfg.dataset.n_train, 2), dtype=torch.float32),
+            y_train=torch.zeros(cfg.dataset.n_train, dtype=torch.float32),
+            X_test=torch.zeros((cfg.dataset.n_test, 2), dtype=torch.float32),
+            y_test=torch.zeros(cfg.dataset.n_test, dtype=torch.float32),
+            feature_types=["num", "num"],
+            metadata={
+                "seed": int(seed),
+                "n_features": 2,
+                "lineage": {
+                    "assignments": {
+                        "feature_to_node": [0, 1],
+                        "target_to_node": 1,
+                    }
+                },
+                "filter": {"mode": "deferred", "status": "not_run"},
+                "generation_attempts": {
+                    "total_attempts": 1,
+                    "retry_count": 0,
+                    "filter_attempts": 0,
+                    "filter_rejections": 0,
+                    "filter_rejection_rate": None,
+                },
+            },
+        )
+
+    def _stub_resolve_steered_dataset_descriptor(
+        _config: GeneratorConfig,
+        *,
+        base_plan: _FixedLayoutPlan,
+        dataset_index: int,
+        num_datasets: int,
+        dataset_root: KeyedRng,
+    ):
+        _ = num_datasets
+        effective_config = _noise_config(dataset_index)
+        return SimpleNamespace(
+            dataset_index=dataset_index,
+            dataset_root=dataset_root,
+            effective_config=effective_config,
+            effective_plan=base_plan,
+            effective_shift=resolve_shift_runtime_params(effective_config),
+            finalization_context=_build_fixed_schema_finalization_context(
+                effective_config,
+                base_plan.layout,
+                n_train=cfg.dataset.n_train,
+                n_test=cfg.dataset.n_test,
+                shift_params=resolve_shift_runtime_params(effective_config),
+            ),
+        )
+
+    def _stub_group_noise_runtime_chunk(
+        config: GeneratorConfig,
+        *,
+        dataset_roots: list[KeyedRng],
+        attempts: list[int] | None = None,
+    ):
+        grouped_chunk_sizes.append(len(dataset_roots))
+        grouped_families.append(str(config.noise.family))
+        assert attempts == [0] * len(dataset_roots)
+        return [
+            SimpleNamespace(
+                chunk_offsets=list(range(len(dataset_roots))),
+                generation_seeds=[
+                    dataset_root.keyed("attempt", 0, "raw_generation").child_seed()
+                    for dataset_root in dataset_roots
+                ],
+                selection=NoiseRuntimeSelection(
+                    family_requested=config.noise.family,
+                    family_sampled=config.noise.family,
+                    sampling_strategy="dataset_level",
+                    base_scale=float(config.noise.base_scale),
+                    student_t_df=float(config.noise.student_t_df),
+                    mixture_weights=None,
+                ),
+                attempt=0,
+            )
+        ]
+
+    def _stub_generate_grouped_raw_batches(
+        _config: GeneratorConfig,
+        _layout,
+        *,
+        execution_plan: FixedLayoutExecutionPlan,
+        grouped_noise_runtime,
+        requested_device: str,
+        resolved_device: str,
+        noise_sigma_multiplier: float,
+    ) -> list[SimpleNamespace]:
+        _ = execution_plan
+        _ = requested_device
+        _ = resolved_device
+        _ = noise_sigma_multiplier
+        n_rows = cfg.dataset.n_train + cfg.dataset.n_test
+        return [
+            SimpleNamespace(
+                chunk_offsets=list(group.chunk_offsets),
+                selection=group.selection,
+                attempt=group.attempt,
+                x_batch=torch.zeros((len(group.chunk_offsets), n_rows, 2), dtype=torch.float32),
+                y_batch=torch.zeros((len(group.chunk_offsets), n_rows), dtype=torch.float32),
+                aux_meta_batch=[
+                    {"filter": {"mode": "deferred", "status": "not_run"}}
+                    for _ in group.chunk_offsets
+                ],
+                effective_resolved_device="cpu",
+                device_fallback_reason=None,
+                runtime_metrics={},
+            )
+            for group in grouped_noise_runtime
+        ]
+
+    def _stub_finalize_generated_chunk_preserve_schema(
+        _config: GeneratorConfig,
+        _layout,
+        *,
+        context,
+        contexts_by_batch=None,
+        configs_by_batch=None,
+        dataset_roots: list[KeyedRng],
+        attempt: int,
+        attempts_used: int,
+        device: str,
+        n_train: int,
+        n_test: int,
+        requested_device: str,
+        resolved_device: str,
+        device_fallback_reason: str | None,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        aux_meta_batch: list[dict[str, object]],
+        noise_runtime_selection: NoiseRuntimeSelection,
+        dtype: torch.dtype,
+        resolved_split_indices=None,
+    ) -> list[DatasetBundle | None]:
+        _ = (
+            context,
+            contexts_by_batch,
+            configs_by_batch,
+            attempt,
+            attempts_used,
+            device,
+            n_train,
+            n_test,
+            requested_device,
+            resolved_device,
+            device_fallback_reason,
+            x,
+            y,
+            aux_meta_batch,
+            noise_runtime_selection,
+            dtype,
+            resolved_split_indices,
+        )
+        return [_make_bundle(dataset_root.child_seed()) for dataset_root in dataset_roots]
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._resolve_steered_dataset_descriptor",
+        _stub_resolve_steered_dataset_descriptor,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._group_noise_runtime_chunk",
+        _stub_group_noise_runtime_chunk,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_grouped_raw_batches",
+        _stub_generate_grouped_raw_batches,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._finalize_generated_chunk_preserve_schema",
+        _stub_finalize_generated_chunk_preserve_schema,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_bundle_with_retries_compat",
+        lambda *_args, **_kwargs: pytest.fail(
+            "noise-only steering cohorts should stay on the grouped batch path"
+        ),
+    )
+
+    bundles = list(
+        _generate_batch_with_plan_iter(
+            cfg,
+            plan=plan,
+            num_datasets=4,
+            seed=44,
+            batch_size=4,
+        )
+    )
+
+    assert len(bundles) == 4
+    assert grouped_chunk_sizes == [2, 2]
+    assert grouped_families == ["gaussian", "student_t"]
+
+
+def test_generate_batch_with_plan_iter_batches_graph_steering_by_effective_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_regression_config()
+    cfg.steering.enabled = True
+    cfg.dataset.n_train = 4
+    cfg.dataset.n_test = 2
+    layout_a = _layout_stub(
+        feature_types=["num", "num"],
+        graph_nodes=2,
+        adjacency=torch.zeros((2, 2), dtype=torch.bool),
+        feature_node_assignment=[0, 1],
+        target_node_assignment=1,
+    )
+    layout_b = _layout_stub(
+        feature_types=["num", "num"],
+        graph_nodes=2,
+        adjacency=torch.tensor([[0, 1], [0, 0]], dtype=torch.bool),
+        feature_node_assignment=[0, 1],
+        target_node_assignment=1,
+    )
+    plan_a = _FixedLayoutPlan(
+        layout=layout_a,
+        requested_device="cpu",
+        resolved_device="cpu",
+        plan_seed=903,
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        layout_signature=_layout_signature(layout_a),
+        execution_plan=FixedLayoutExecutionPlan(),
+        plan_signature="plan_sig_a",
+    )
+    plan_b = _FixedLayoutPlan(
+        layout=layout_b,
+        requested_device="cpu",
+        resolved_device="cpu",
+        plan_seed=904,
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        layout_signature=_layout_signature(layout_b),
+        execution_plan=FixedLayoutExecutionPlan(),
+        plan_signature="plan_sig_b",
+    )
+    grouped_chunk_sizes: list[int] = []
+
+    def _make_bundle(seed: int) -> DatasetBundle:
+        return DatasetBundle(
+            X_train=torch.zeros((cfg.dataset.n_train, 2), dtype=torch.float32),
+            y_train=torch.zeros(cfg.dataset.n_train, dtype=torch.float32),
+            X_test=torch.zeros((cfg.dataset.n_test, 2), dtype=torch.float32),
+            y_test=torch.zeros(cfg.dataset.n_test, dtype=torch.float32),
+            feature_types=["num", "num"],
+            metadata={
+                "seed": int(seed),
+                "n_features": 2,
+                "lineage": {
+                    "assignments": {
+                        "feature_to_node": [0, 1],
+                        "target_to_node": 1,
+                    }
+                },
+                "filter": {"mode": "deferred", "status": "not_run"},
+                "generation_attempts": {
+                    "total_attempts": 1,
+                    "retry_count": 0,
+                    "filter_attempts": 0,
+                    "filter_rejections": 0,
+                    "filter_rejection_rate": None,
+                },
+            },
+        )
+
+    def _stub_resolve_steered_dataset_descriptor(
+        _config: GeneratorConfig,
+        *,
+        base_plan: _FixedLayoutPlan,
+        dataset_index: int,
+        num_datasets: int,
+        dataset_root: KeyedRng,
+    ):
+        _ = base_plan
+        _ = num_datasets
+        effective_config = deepcopy(cfg)
+        effective_config.steering.enabled = False
+        effective_config.validate_generation_constraints()
+        effective_plan = plan_a if dataset_index < 2 else plan_b
+        return SimpleNamespace(
+            dataset_index=dataset_index,
+            dataset_root=dataset_root,
+            effective_config=effective_config,
+            effective_plan=effective_plan,
+            effective_shift=resolve_shift_runtime_params(effective_config),
+            finalization_context=_build_fixed_schema_finalization_context(
+                effective_config,
+                effective_plan.layout,
+                n_train=cfg.dataset.n_train,
+                n_test=cfg.dataset.n_test,
+                shift_params=resolve_shift_runtime_params(effective_config),
+            ),
+        )
+
+    def _stub_group_noise_runtime_chunk(
+        _config: GeneratorConfig,
+        *,
+        dataset_roots: list[KeyedRng],
+        attempts: list[int] | None = None,
+    ):
+        grouped_chunk_sizes.append(len(dataset_roots))
+        assert attempts == [0] * len(dataset_roots)
+        return [
+            SimpleNamespace(
+                chunk_offsets=list(range(len(dataset_roots))),
+                generation_seeds=[
+                    dataset_root.keyed("attempt", 0, "raw_generation").child_seed()
+                    for dataset_root in dataset_roots
+                ],
+                selection=NoiseRuntimeSelection(
+                    family_requested="gaussian",
+                    family_sampled="gaussian",
+                    sampling_strategy="dataset_level",
+                    base_scale=1.0,
+                    student_t_df=5.0,
+                    mixture_weights=None,
+                ),
+                attempt=0,
+            )
+        ]
+
+    def _stub_generate_grouped_raw_batches(
+        _config: GeneratorConfig,
+        _layout,
+        *,
+        execution_plan: FixedLayoutExecutionPlan,
+        grouped_noise_runtime,
+        requested_device: str,
+        resolved_device: str,
+        noise_sigma_multiplier: float,
+    ) -> list[SimpleNamespace]:
+        _ = execution_plan
+        _ = requested_device
+        _ = resolved_device
+        _ = noise_sigma_multiplier
+        n_rows = cfg.dataset.n_train + cfg.dataset.n_test
+        return [
+            SimpleNamespace(
+                chunk_offsets=list(group.chunk_offsets),
+                selection=group.selection,
+                attempt=group.attempt,
+                x_batch=torch.zeros((len(group.chunk_offsets), n_rows, 2), dtype=torch.float32),
+                y_batch=torch.zeros((len(group.chunk_offsets), n_rows), dtype=torch.float32),
+                aux_meta_batch=[
+                    {"filter": {"mode": "deferred", "status": "not_run"}}
+                    for _ in group.chunk_offsets
+                ],
+                effective_resolved_device="cpu",
+                device_fallback_reason=None,
+                runtime_metrics={},
+            )
+            for group in grouped_noise_runtime
+        ]
+
+    def _stub_finalize_generated_chunk_preserve_schema(
+        _config: GeneratorConfig,
+        _layout,
+        *,
+        context,
+        contexts_by_batch=None,
+        configs_by_batch=None,
+        dataset_roots: list[KeyedRng],
+        attempt: int,
+        attempts_used: int,
+        device: str,
+        n_train: int,
+        n_test: int,
+        requested_device: str,
+        resolved_device: str,
+        device_fallback_reason: str | None,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        aux_meta_batch: list[dict[str, object]],
+        noise_runtime_selection: NoiseRuntimeSelection,
+        dtype: torch.dtype,
+        resolved_split_indices=None,
+    ) -> list[DatasetBundle | None]:
+        _ = (
+            context,
+            contexts_by_batch,
+            configs_by_batch,
+            attempt,
+            attempts_used,
+            device,
+            n_train,
+            n_test,
+            requested_device,
+            resolved_device,
+            device_fallback_reason,
+            x,
+            y,
+            aux_meta_batch,
+            noise_runtime_selection,
+            dtype,
+            resolved_split_indices,
+        )
+        return [_make_bundle(dataset_root.child_seed()) for dataset_root in dataset_roots]
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._resolve_steered_dataset_descriptor",
+        _stub_resolve_steered_dataset_descriptor,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._group_noise_runtime_chunk",
+        _stub_group_noise_runtime_chunk,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_grouped_raw_batches",
+        _stub_generate_grouped_raw_batches,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._finalize_generated_chunk_preserve_schema",
+        _stub_finalize_generated_chunk_preserve_schema,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_bundle_with_retries_compat",
+        lambda *_args, **_kwargs: pytest.fail(
+            "graph-steered cohorts should stay on the grouped batch path"
+        ),
+    )
+
+    bundles = list(
+        _generate_batch_with_plan_iter(
+            cfg,
+            plan=plan_a,
+            num_datasets=4,
+            seed=55,
+            batch_size=4,
+        )
+    )
+
+    assert grouped_chunk_sizes == [2, 2]
+    assert [bundle.metadata["layout_signature"] for bundle in bundles] == [
+        str(plan_a.layout_signature),
+        str(plan_a.layout_signature),
+        str(plan_b.layout_signature),
+        str(plan_b.layout_signature),
+    ]
+
+
 def test_generate_batch_rows_choices_are_seed_reproducible() -> None:
     cfg = _tiny_config()
     cfg.dataset.rows = [1024, 2048, 4096]  # type: ignore[assignment]
@@ -1159,6 +1881,183 @@ def test_finalize_generated_chunk_preserve_schema_copies_metadata_templates() ->
     assert bundles[0].metadata["config"] is not bundles[1].metadata["config"]
     bundles[0].metadata["config"]["dataset"]["n_train"] = -1
     assert bundles[1].metadata["config"]["dataset"]["n_train"] == cfg.dataset.n_train
+
+
+def test_finalize_generated_chunk_preserve_schema_supports_per_dataset_contexts() -> None:
+    cfg = _tiny_regression_config()
+    cfg.dataset.n_train = 4
+    cfg.dataset.n_test = 2
+    varied_cfg = deepcopy(cfg)
+    varied_cfg.dataset.missing_rate = 0.25
+    varied_cfg.dataset.missing_mechanism = "mcar"
+    varied_cfg.validate_generation_constraints()
+    layout = _layout_stub(
+        feature_types=["num", "num"],
+        graph_nodes=2,
+        adjacency=torch.zeros((2, 2), dtype=torch.bool),
+        feature_node_assignment=[0, 1],
+        target_node_assignment=1,
+    )
+    selection = NoiseRuntimeSelection(
+        family_requested="gaussian",
+        family_sampled="gaussian",
+        sampling_strategy="global",
+        base_scale=1.0,
+        student_t_df=5.0,
+        mixture_weights=None,
+    )
+    base_context = _build_fixed_schema_finalization_context(
+        cfg,
+        layout,
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        shift_params=resolve_shift_runtime_params(cfg),
+    )
+    varied_context = _build_fixed_schema_finalization_context(
+        varied_cfg,
+        layout,
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        shift_params=resolve_shift_runtime_params(varied_cfg),
+    )
+
+    bundles = _finalize_generated_chunk_preserve_schema(
+        cfg,
+        layout,
+        context=base_context,
+        contexts_by_batch=[base_context, varied_context],
+        configs_by_batch=[cfg, varied_cfg],
+        dataset_roots=[KeyedRng(13), KeyedRng(17)],
+        attempt=0,
+        attempts_used=1,
+        device="cpu",
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        requested_device="cpu",
+        resolved_device="cpu",
+        device_fallback_reason=None,
+        x=torch.arange(2 * 6 * 2, dtype=torch.float32).reshape(2, 6, 2),
+        y=torch.linspace(0.0, 1.0, 12, dtype=torch.float32).reshape(2, 6),
+        aux_meta_batch=[{"filter": {"mode": "deferred", "status": "not_run"}} for _ in range(2)],
+        noise_runtime_selection=selection,
+        dtype=torch.float32,
+    )
+
+    assert bundles[0] is not None and bundles[1] is not None
+    assert bundles[0].metadata["config"]["dataset"]["missing_rate"] == pytest.approx(0.0)
+    assert bundles[1].metadata["config"]["dataset"]["missing_rate"] == pytest.approx(0.25)
+    assert "missingness" not in bundles[0].metadata
+    assert "missingness" in bundles[1].metadata
+    assert bundles[0].metadata["noise_distribution"]["family_requested"] == "gaussian"
+    assert bundles[1].metadata["noise_distribution"]["family_requested"] == "gaussian"
+
+
+def test_finalize_generated_chunk_preserve_schema_rejects_misaligned_contexts() -> None:
+    cfg = _tiny_regression_config()
+    cfg.dataset.n_train = 4
+    cfg.dataset.n_test = 2
+    layout = _layout_stub(
+        feature_types=["num", "num"],
+        graph_nodes=2,
+        adjacency=torch.zeros((2, 2), dtype=torch.bool),
+        feature_node_assignment=[0, 1],
+        target_node_assignment=1,
+    )
+    selection = NoiseRuntimeSelection(
+        family_requested="gaussian",
+        family_sampled="gaussian",
+        sampling_strategy="global",
+        base_scale=1.0,
+        student_t_df=5.0,
+        mixture_weights=None,
+    )
+    context = _build_fixed_schema_finalization_context(
+        cfg,
+        layout,
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        shift_params=resolve_shift_runtime_params(cfg),
+    )
+
+    with pytest.raises(
+        ValueError, match="contexts_by_batch must align with provided dataset roots"
+    ):
+        _finalize_generated_chunk_preserve_schema(
+            cfg,
+            layout,
+            context=context,
+            contexts_by_batch=[context],
+            configs_by_batch=None,
+            dataset_roots=[KeyedRng(13), KeyedRng(17)],
+            attempt=0,
+            attempts_used=1,
+            device="cpu",
+            n_train=cfg.dataset.n_train,
+            n_test=cfg.dataset.n_test,
+            requested_device="cpu",
+            resolved_device="cpu",
+            device_fallback_reason=None,
+            x=torch.arange(2 * 6 * 2, dtype=torch.float32).reshape(2, 6, 2),
+            y=torch.linspace(0.0, 1.0, 12, dtype=torch.float32).reshape(2, 6),
+            aux_meta_batch=[
+                {"filter": {"mode": "deferred", "status": "not_run"}} for _ in range(2)
+            ],
+            noise_runtime_selection=selection,
+            dtype=torch.float32,
+        )
+
+
+def test_finalize_generated_chunk_preserve_schema_rejects_misaligned_configs() -> None:
+    cfg = _tiny_regression_config()
+    cfg.dataset.n_train = 4
+    cfg.dataset.n_test = 2
+    layout = _layout_stub(
+        feature_types=["num", "num"],
+        graph_nodes=2,
+        adjacency=torch.zeros((2, 2), dtype=torch.bool),
+        feature_node_assignment=[0, 1],
+        target_node_assignment=1,
+    )
+    selection = NoiseRuntimeSelection(
+        family_requested="gaussian",
+        family_sampled="gaussian",
+        sampling_strategy="global",
+        base_scale=1.0,
+        student_t_df=5.0,
+        mixture_weights=None,
+    )
+    context = _build_fixed_schema_finalization_context(
+        cfg,
+        layout,
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        shift_params=resolve_shift_runtime_params(cfg),
+    )
+
+    with pytest.raises(ValueError, match="configs_by_batch must align with provided dataset roots"):
+        _finalize_generated_chunk_preserve_schema(
+            cfg,
+            layout,
+            context=context,
+            contexts_by_batch=None,
+            configs_by_batch=[cfg],
+            dataset_roots=[KeyedRng(13), KeyedRng(17)],
+            attempt=0,
+            attempts_used=1,
+            device="cpu",
+            n_train=cfg.dataset.n_train,
+            n_test=cfg.dataset.n_test,
+            requested_device="cpu",
+            resolved_device="cpu",
+            device_fallback_reason=None,
+            x=torch.arange(2 * 6 * 2, dtype=torch.float32).reshape(2, 6, 2),
+            y=torch.linspace(0.0, 1.0, 12, dtype=torch.float32).reshape(2, 6),
+            aux_meta_batch=[
+                {"filter": {"mode": "deferred", "status": "not_run"}} for _ in range(2)
+            ],
+            noise_runtime_selection=selection,
+            dtype=torch.float32,
+        )
 
 
 def test_finalize_generated_chunk_preserve_schema_reuses_cached_lineage_metadata(
