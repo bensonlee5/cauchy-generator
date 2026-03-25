@@ -37,11 +37,15 @@ h3 {
   margin-top: 2rem;
 }
 
-.td-content > .lead,
-.td-content > p:first-of-type {
+// Description tagline rendered from frontmatter `description:` field.
+// Styled as a distinct subtitle so it doesn't blur into body text.
+.td-content > .lead {
+  font-family: $font-family-sans-serif;
   font-size: 1.1rem;
-  color: rgba($body-color, 0.85);
-  line-height: 1.75;
+  font-weight: 400;
+  color: rgba($body-color, 0.6);
+  line-height: 1.6;
+  margin-bottom: 2rem;
 }
 
 
@@ -226,8 +230,10 @@ h3 {
 
 pre {
   border-left: 3px solid $primary;
-  border-radius: 4px;
-  font-size: 0.875em;
+  border-radius: 6px;
+  font-size: 0.85em;
+  line-height: 1.5;
+  padding: 1.25rem;
 }
 
 code:not(pre code) {
@@ -252,6 +258,13 @@ code:not(pre code) {
 
 .td-sidebar-nav {
   font-size: 0.875rem;
+
+  .td-sidebar-link {
+    padding: 0.5rem 0.75rem;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
 
   .td-sidebar-nav__section-title {
     font-weight: 700;
@@ -295,10 +308,20 @@ code:not(pre code) {
   h5 {
     font-family: $font-family-serif;
     font-weight: 600;
-    font-size: 1.1rem;
+    font-size: 1.25rem;
     border-left: 3px solid $primary;
     padding-left: 0.75rem;
     margin-top: 2rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .entry {
+    transition: background-color 0.15s ease-out, box-shadow 0.15s ease-out;
+    border-radius: 6px;
+
+    &:hover {
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    }
   }
 
   td:first-child {
@@ -307,6 +330,30 @@ code:not(pre code) {
       background: rgba($primary, 0.04);
     }
   }
+}
+
+
+// =============================================================================
+// FOCUS INDICATORS
+// =============================================================================
+
+a:focus-visible,
+button:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid $primary;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+
+// =============================================================================
+// MOTIVATION / CONTEXT BLOCKS (first paragraph after h2 in content)
+// =============================================================================
+
+.td-content h2 + p {
+  border-left: 3px solid rgba($primary, 0.3);
+  padding-left: 1rem;
+  margin-top: 1.5rem;
 }
 
 

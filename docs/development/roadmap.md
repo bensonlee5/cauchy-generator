@@ -30,60 +30,145 @@ Related docs:
 
 - status and milestone lane
 - priority rank
-- active Linear issue mapping plus historical GitHub references for completed work
+- active GitHub issue chain plus any retained historical references
 - dependencies and exit criteria
 
 If any other document disagrees with this file, this file is authoritative.
 
-Active execution now lives in the Linear project `dagzoo`
-(`https://linear.app/bl-personal/project/dagzoo-4867d49bb182/overview`).
-The GitHub-to-Linear migration map is committed at
+Active roadmap execution is linked through the GitHub epics referenced in this
+file. Historical Linear chains remain reference context only. The
+GitHub-to-Linear migration map is committed at
 `reference/linear_issue_map_2026-03-08.json`.
 
 ## PFN Utility Prioritization Lens
 
 Roadmap ranking is currently optimized for downstream PFN utility:
 
-- primary: filtered dataset throughput and acceptance yield while preserving or improving effective diversity for classification/regression corpora
-- implemented baseline: downstream handoff now ships through `dagzoo generate --handoff-root` plus `handoff_manifest.json` so downstream repos such as `tab-foundry` can consume generated corpora without a parallel request-only contract
+- primary: curriculum-aware dataset levers that improve downstream model quality
+  by making generated corpora thoughtfully harder while preserving
+  reproducibility and acceptable throughput
+- near-term evidence: `tab-foundry` harder-ladder results currently favor
+  noise drift, graph drift, and structured missingness over broader new
+  generator subsystems as the next harder-front candidates
+- implemented baseline: downstream handoff now ships through
+  `dagzoo generate --handoff-root` plus `handoff_manifest.json` so downstream
+  repos such as `tab-foundry` can consume generated corpora without a parallel
+  request-only contract
 - deferred: closed-loop feedback from downstream model predictions back into generation policy after the one-way handoff is stable
 
 ## Canonical Priority Queue
 
 Lower rank means higher priority. Rank `0` is reserved for completed items retained for traceability.
 
-| Rank | Roadmap ID | Item                                                                   | Status      | Milestone | Tracker Links                                                                             |
-| ---- | ---------- | ---------------------------------------------------------------------- | ----------- | --------- | ----------------------------------------------------------------------------------------- |
-| 0    | RD-001     | Ground-truth DAG artifact export                                       | implemented | Now       | `#44 -> #45 -> #46 -> #47 -> #48` (completed)                                             |
-| 0    | RD-003     | Missingness generation (MCAR/MAR/MNAR)                                 | implemented | Now       | `#15 -> #17 -> #18` (completed)                                                           |
-| 0    | RD-004     | Shift-aware SCM generation                                             | implemented | Now       | `#64 -> #72 -> #73 -> #74 -> #75` (completed)                                             |
-| 0    | RD-006     | Curriculum complexity scaling (features + graph)                       | retired     | Now       | `#49 -> #50 -> #51 -> #90 -> #52 -> #53` (historical), `#142` (replacement)               |
-| 0    | RD-007     | Many-class rollout envelope (`<=32` classes)                           | implemented | Now       | `BL-17 -> BL-18 -> BL-19 -> BL-20 -> BL-21` (completed), `BL-31` (closure)                |
-| 0    | RD-008     | Meta-feature coverage steering (retired)                               | retired     | Now       | `#9` (historical)                                                                         |
-| 0    | RD-012     | Noise family diversification for synthetic generation                  | implemented | Now       | `#24 -> #25 -> #26 -> #27` (completed)                                                    |
-| 0    | RD-014     | Stage-level benchmark observability and telemetry                      | implemented | Now       | `BL-82` (completed historical delivery under `BL-49`)                                     |
-| 0    | RD-015     | Keyed RNG semantic reproducibility                                     | implemented | Now       | `BL-90 -> BL-133 -> BL-134 -> BL-135 -> BL-136 -> BL-137`                                 |
-| 0    | RD-009     | Filtered dataset throughput and deferred-filter scaling                | implemented | Now       | `BL-49 -> BL-148 -> BL-149 -> BL-150` (completed), `BL-84 -> BL-85` (deferred follow-ons) |
-| 0    | RD-016     | Generate-handoff manifest and one-way `tab-foundry` handoff            | implemented | Now       | `BL-143 -> BL-144 -> BL-145 -> BL-146 -> BL-147` (completed)                              |
-| 3    | RD-011     | Mechanism diversity expansion with measurable effective-diversity gain | planned     | Now       | `BL-26 -> BL-151 -> BL-29 -> BL-30`                                                       |
-| 8    | RD-005     | Robustness stress profiles (hard-task/adversarial regimes)             | research    | Later     | `BL-48 -> BL-59 -> BL-62 -> BL-61 -> BL-60`                                               |
-| 9    | RD-013     | Time-series generation tracks for PFN pretraining                      | research    | Later     | `BL-73 -> BL-74 -> BL-75 -> BL-76 -> BL-77`                                               |
-| 10   | RD-002     | Interventional and counterfactual generation modes                     | research    | Later     | `BL-50 -> BL-67 -> BL-68 -> BL-69 -> BL-70`                                               |
-| 11   | RD-010     | Hardware-adaptive autotuning beyond coarse FLOPs tiers                 | planned     | Later     | `BL-42 -> BL-43 -> BL-44 -> BL-53 -> BL-45 -> BL-54 -> BL-46`                             |
+| Rank | Roadmap ID | Item                                                                   | Status      | Milestone | Tracker Links                                                                                                    |
+| ---- | ---------- | ---------------------------------------------------------------------- | ----------- | --------- | ---------------------------------------------------------------------------------------------------------------- |
+| 0    | RD-001     | Ground-truth DAG artifact export                                       | implemented | Now       | `#44 -> #45 -> #46 -> #47 -> #48` (completed)                                                                    |
+| 0    | RD-003     | Missingness generation (MCAR/MAR/MNAR)                                 | implemented | Now       | `#15 -> #17 -> #18` (completed)                                                                                  |
+| 0    | RD-004     | Shift-aware SCM generation                                             | implemented | Now       | `#64 -> #72 -> #73 -> #74 -> #75` (completed)                                                                    |
+| 0    | RD-006     | Curriculum complexity scaling (features + graph)                       | retired     | Now       | `#49 -> #50 -> #51 -> #90 -> #52 -> #53` (historical), `#142` (replacement)                                      |
+| 0    | RD-007     | Many-class rollout envelope (`<=32` classes)                           | implemented | Now       | `BL-17 -> BL-18 -> BL-19 -> BL-20 -> BL-21` (completed), `BL-31` (closure)                                       |
+| 0    | RD-012     | Noise family diversification for synthetic generation                  | implemented | Now       | `#24 -> #25 -> #26 -> #27` (completed)                                                                           |
+| 0    | RD-014     | Stage-level benchmark observability and telemetry                      | implemented | Now       | `BL-82` (completed historical delivery under `BL-49`)                                                            |
+| 0    | RD-015     | Keyed RNG semantic reproducibility                                     | implemented | Now       | `BL-90 -> BL-133 -> BL-134 -> BL-135 -> BL-136 -> BL-137`                                                        |
+| 0    | RD-009     | Filtered dataset throughput and deferred-filter scaling                | implemented | Now       | `BL-49 -> BL-148 -> BL-149 -> BL-150` (completed), `BL-84 -> BL-85` (deferred follow-ons)                        |
+| 0    | RD-016     | Generate-handoff manifest and one-way `tab-foundry` handoff            | implemented | Now       | `BL-143 -> BL-144 -> BL-145 -> BL-146 -> BL-147` (completed)                                                     |
+| 0    | RD-011     | Mechanism diversity expansion with measurable effective-diversity gain | implemented | Now       | `#28 -> #240` (completed), `#220` (later analytical follow-on), `BL-26 -> BL-151 -> BL-29 -> BL-30` (historical) |
+| 1    | RD-008     | Meta-feature coverage steering                                         | planned     | Now       | `#246 -> #251 -> #256 -> #261 -> #266`                                                                           |
+| 2    | RD-005     | Robustness stress profiles (hard-task/adversarial regimes)             | research    | Now       | `#247 -> #252 -> #257 -> #262 -> #267`                                                                           |
+| 3    | RD-013     | Time-series generation tracks for PFN pretraining                      | research    | Later     | `#248 -> #253 -> (#258 + #263) -> #268`                                                                          |
+| 4    | RD-002     | Interventional and counterfactual generation modes                     | research    | Later     | `#249 -> #255 -> (#259 + #265) -> #269`                                                                          |
+| 5    | RD-010     | Hardware-adaptive autotuning beyond coarse FLOPs tiers                 | planned     | Later     | `#250 -> #254 -> #260 -> #264 -> (#270 + #271) -> #272`                                                          |
+
+## Dependency Graph
+
+Intended execution order is `RD-008`, then `RD-005`, then the later lanes. Within `RD-013`, `RD-002`, and `RD-010`, the graph fans out where the work can proceed in parallel after the schema/spec step.
+
+```mermaid
+graph TD
+  RD001["RD-001 implemented"]
+  RD003["RD-003 implemented"]
+  RD004["RD-004 implemented"]
+  RD009["RD-009 implemented"]
+  RD012["RD-012 implemented"]
+  RD014["RD-014 implemented"]
+  RD015["RD-015 implemented"]
+
+  RD008E["RD-008 epic #246"]
+  RD008A["#251 spec(steering)"]
+  RD008B["#256 feat(steering)"]
+  RD008C["#261 analysis(steering)"]
+  RD008D["#266 docs(steering)"]
+
+  RD005E["RD-005 epic #247"]
+  RD005A["#252 spec(stress)"]
+  RD005B["#257 feat(stress)"]
+  RD005C["#262 analysis(stress)"]
+  RD005D["#267 docs(stress)"]
+
+  RD013E["RD-013 epic #248"]
+  RD013A["#253 spec(temporal)"]
+  RD013B["#258 feat(temporal)"]
+  RD013C["#263 feat(temporal metadata)"]
+  RD013D["#268 docs(temporal)"]
+
+  RD002E["RD-002 epic #249"]
+  RD002A["#255 spec(interventions)"]
+  RD002B["#259 feat(interventions)"]
+  RD002C["#265 feat(intervention metadata)"]
+  RD002D["#269 docs(interventions)"]
+
+  RD010E["RD-010 epic #250"]
+  RD010A["#254 spec(autotune)"]
+  RD010B["#260 analysis(autotune)"]
+  RD010C["#264 feat(autotune orchestration)"]
+  RD010D["#270 feat(autotune integration)"]
+  RD010F["#271 feat(autotune telemetry)"]
+  RD010G["#272 docs(autotune)"]
+
+  RD003 --> RD008E
+  RD004 --> RD008E
+  RD012 --> RD008E
+  RD008E --> RD008A --> RD008B --> RD008C --> RD008D
+
+  RD008D --> RD005E
+  RD005E --> RD005A --> RD005B --> RD005C --> RD005D
+
+  RD013E --> RD013A
+  RD013A --> RD013B
+  RD013A --> RD013C
+  RD013B --> RD013D
+  RD013C --> RD013D
+
+  RD001 --> RD002E
+  RD002E --> RD002A
+  RD002A --> RD002B
+  RD002A --> RD002C
+  RD002B --> RD002D
+  RD002C --> RD002D
+
+  RD009 --> RD010E
+  RD014 --> RD010E
+  RD015 --> RD010E
+  RD010E --> RD010A --> RD010B --> RD010C
+  RD010C --> RD010D
+  RD010C --> RD010F
+  RD010D --> RD010G
+  RD010F --> RD010G
+```
 
 ## Current Capability Matrix
 
-| README Mission/Pillar Claim                                         | Current State | Evidence in Repo                                                                                                                                                                                                                                                                         | Gap                                                                                                                                              | Roadmap IDs    |
-| ------------------------------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
-| Foundation model pretraining with diverse structural priors         | `partial`     | Canonical fixed-layout generation, `dataset.rows`, deferred filtering, effective-diversity audits, diagnostics coverage aggregation, explicit noise/shift controls, stage-level throughput metrics, generate-handoff manifests, and the shipped `piecewise` control path are implemented | Widened `gp` variants still need measured diversity evidence and time-series generation is not implemented end-to-end                            | RD-011, RD-013 |
-| Causal discovery with ground-truth DAGs and interventional datasets | `partial`     | DAG lineage metadata is emitted per dataset and persisted as compact shard-level artifacts with schema validation and benchmark guardrails                                                                                                                                               | Interventional/counterfactual generation semantics are not implemented                                                                           | RD-002         |
-| Robustness testing with hard tasks, shifts, adversarial regimes     | `partial`     | Deferred filtering, diagnostics proxies, missingness mechanisms, explicit noise-family controls, and shift/drift controls are implemented with deterministic controls and benchmark guardrails                                                                                           | No explicit hard-task/adversarial profile suite                                                                                                  | RD-004, RD-005 |
-| Causal structural integrity (hierarchical dependencies)             | `implemented` | Graph-driven node pipeline, canonical fixed-layout execution, DAG lineage artifacts, and keyed RNG semantic reproducibility are implemented                                                                                                                                              | Remaining work is diversity-oriented expansion, not structural correctness                                                                       | RD-011         |
-| Tabular realism (mixed type + postprocess hooks)                    | `partial`     | Numeric/categorical converters, postprocess hooks, many-class rollout within the current `<=32` class envelope, configurable missingness, explicit noise families, and canonical fixed-layout generation are implemented                                                                 | Broader mechanism diversity and optional future expansion beyond the current many-class envelope remain deferred                                 | RD-007, RD-011 |
-| PFN task coverage (classification, regression, time-series)         | `partial`     | Classification and regression generation pipelines are fully supported with deterministic seeds, keyed replay metadata, and benchmark workflows                                                                                                                                          | No time-series generation mode, temporal metadata contract, or temporal diagnostics/guardrails                                                   | RD-013         |
-| Staged complexity scaling (features/nodes/samples)                  | `retired`     | Historical staged-complexity implementation (RD-006) has been retired in favor of explicit split sizing and fixed-layout generation                                                                                                                                                      | Not active                                                                                                                                       | RD-006         |
-| Hardware-native performance (Torch + hardware-aware tuning)         | `partial`     | Torch CPU/CUDA/MPS path, hardware detection, coarse profile-based tuning, benchmark suite, and stage-level generation/write/filter metrics are implemented                                                                                                                               | Hardware-adaptive autotuning is not implemented; any further throughput work is deferred to later follow-ons after the completed RD-009 baseline | RD-010, RD-014 |
-| Downstream synthetic-corpus handoff                                 | `implemented` | `dagzoo generate --handoff-root` emits `handoff_manifest.json`, writes generated handoff artifacts under `generated/`, and the docs include a reproducible one-way `dagzoo -> tab-foundry` smoke workflow                                                                                | Closed-loop downstream feedback remains intentionally deferred beyond the one-way handoff baseline                                               | RD-016         |
+| README Mission/Pillar Claim                                         | Current State | Evidence in Repo                                                                                                                                                                                                                                                                                    | Gap                                                                                                                                              | Roadmap IDs    |
+| ------------------------------------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
+| Foundation model pretraining with diverse structural priors         | `partial`     | Canonical fixed-layout generation, `dataset.rows`, deferred filtering, effective-diversity audits, diagnostics coverage aggregation, explicit noise/shift controls, stage-level throughput metrics, generate-handoff manifests, and the shipped `piecewise` plus widened `gp` paths are implemented | Curriculum-aware harder-front steering over existing missingness/shift/noise levers and time-series generation are not implemented end-to-end    | RD-008, RD-013 |
+| Causal discovery with ground-truth DAGs and interventional datasets | `partial`     | DAG lineage metadata is emitted per dataset and persisted as compact shard-level artifacts with schema validation and benchmark guardrails                                                                                                                                                          | Interventional/counterfactual generation semantics are not implemented                                                                           | RD-002         |
+| Robustness testing with hard tasks, shifts, adversarial regimes     | `partial`     | Deferred filtering, diagnostics proxies, missingness mechanisms, explicit noise-family controls, and shift/drift controls are implemented with deterministic controls and benchmark guardrails                                                                                                      | No curriculum-aware harder-front steering layer or named hard-task/adversarial profile suite exists yet                                          | RD-008, RD-005 |
+| Causal structural integrity (hierarchical dependencies)             | `implemented` | Graph-driven node pipeline, canonical fixed-layout execution, DAG lineage artifacts, shipped mechanism-family diversity controls, and keyed RNG semantic reproducibility are implemented                                                                                                            | Remaining active work is interventional/counterfactual dataset semantics rather than structural correctness                                      | RD-002         |
+| Tabular realism (mixed type + postprocess hooks)                    | `partial`     | Numeric/categorical converters, postprocess hooks, many-class rollout within the current `<=32` class envelope, configurable missingness, explicit noise families, shipped mechanism diversity controls, and canonical fixed-layout generation are implemented                                      | Curriculum-aware steering and named robustness compositions over existing missingness/shift/noise levers remain active work                      | RD-008, RD-005 |
+| PFN task coverage (classification, regression, time-series)         | `partial`     | Classification and regression generation pipelines are fully supported with deterministic seeds, keyed replay metadata, and benchmark workflows                                                                                                                                                     | No time-series generation mode, temporal metadata contract, or temporal diagnostics/guardrails                                                   | RD-013         |
+| Staged complexity scaling (features/nodes/samples)                  | `retired`     | Historical staged-complexity implementation (RD-006) has been retired in favor of explicit split sizing and fixed-layout generation                                                                                                                                                                 | Not active                                                                                                                                       | RD-006         |
+| Hardware-native performance (Torch + hardware-aware tuning)         | `partial`     | Torch CPU/CUDA/MPS path, hardware detection, coarse profile-based tuning, benchmark suite, and stage-level generation/write/filter metrics are implemented                                                                                                                                          | Hardware-adaptive autotuning is not implemented; any further throughput work is deferred to later follow-ons after the completed RD-009 baseline | RD-010, RD-014 |
+| Downstream synthetic-corpus handoff                                 | `implemented` | `dagzoo generate --handoff-root` emits `handoff_manifest.json`, writes generated handoff artifacts under `generated/`, and the docs include a reproducible one-way `dagzoo -> tab-foundry` smoke workflow                                                                                           | Closed-loop downstream feedback remains intentionally deferred beyond the one-way handoff baseline                                               | RD-016         |
 
 ## Current Implementation Baseline
 
@@ -158,12 +243,17 @@ Use the canonical docs instead:
 - Mission alignment: causal discovery
 - Pillar alignment: causal structural integrity
 - Goal: support observational + interventional sampling tracks with explicit intervention specs.
-- Linear tracking: epic `BL-50`; dependency chain `BL-67 -> BL-68 -> BL-69 -> BL-70`
+- GitHub tracking: `#249 -> #255 -> (#259 + #265) -> #269`
 - Repo touchpoints: `src/dagzoo/config/`, `src/dagzoo/core/dataset.py`, `src/dagzoo/core/node_pipeline.py`, `src/dagzoo/cli/`
 - Exit criteria:
   - Config supports opt-in intervention mode with safe default (`off`).
   - Generated artifacts contain intervention set and pre/post intervention metadata.
   - Acceptance tests verify truncated-factorization behavior for fixed interventions.
+- Delivery issues:
+  - `#255` `spec(interventions): define intervention-mode schema and validation`
+  - `#259` `feat(interventions): implement observational/interventional/counterfactual sampling semantics`
+  - `#265` `feat(interventions): emit intervention metadata and artifact contracts`
+  - `#269` `docs(interventions): add presets, tests, and benchmark guardrails`
 
 ### RD-003: Missingness Generation (MCAR/MAR/MNAR)
 
@@ -205,16 +295,22 @@ Use the canonical docs instead:
 ### RD-005: Robustness Stress Profiles (Hard-Task/Adversarial Regimes)
 
 - Status: `research`
-- Milestone: `Later`
+- Milestone: `Now`
 - Mission alignment: robustness testing
 - Pillar alignment: tabular realism
-- Goal: define reproducible stress presets (low-SNR, class imbalance, harder interactions).
-- Linear tracking: epic `BL-48`; dependency chain `BL-59 -> BL-62 -> BL-61 -> BL-60`
-- Repo touchpoints: `src/dagzoo/config/`, `src/dagzoo/functions/random_functions.py`, `src/dagzoo/postprocess/postprocess.py`, `src/dagzoo/bench/`
+- Goal: define reproducible named stress profiles built from the current harder-data levers so contributors can run benchmark-guarded hard-task and adversarial-style regimes without inventing one-off configs.
+- GitHub tracking: `#247 -> #252 -> #257 -> #262 -> #267`
+- Repo touchpoints: `src/dagzoo/config/`, `src/dagzoo/functions/random_functions.py`, `src/dagzoo/postprocess/postprocess.py`, `src/dagzoo/bench/`, `src/dagzoo/sampling/missingness.py`, `src/dagzoo/core/shift.py`, `src/dagzoo/core/noise_runtime.py`
 - Exit criteria:
-  - Presets are selectable via config/CLI and remain opt-in.
+  - Reproducible named stress presets are selectable via config/CLI and remain opt-in.
+  - Stress profiles are composed from the lever families surfaced by RD-008, RD-003, RD-004, and RD-012 rather than bespoke parallel plumbing.
   - Benchmarks and diagnostics confirm regimes differ from baseline in intended directions.
   - Reproducibility tests pass for fixed seed runs.
+- Delivery issues:
+  - `#252` `spec(stress): define named robustness stress profiles and validation`
+  - `#257` `feat(stress): integrate named stress profiles into generate and filter workflows`
+  - `#262` `analysis(stress): add regime characterization and baseline-comparison diagnostics`
+  - `#267` `docs(stress): add presets, tests, and benchmark guardrails for robustness profiles`
 
 ### RD-006: Staged Complexity Scaling (Features + Graph)
 
@@ -249,15 +345,28 @@ Use the canonical docs instead:
 
 ### RD-008: Meta-Feature Coverage Steering
 
-- Status: `retired`
+- Status: `planned`
 - Milestone: `Now`
-- Mission alignment: foundation model pretraining
-- Pillar alignment: tabular realism
-- Goal: feature retired; diagnostics target bands remain as reporting-only metadata.
-- Repo touchpoints: `src/dagzoo/diagnostics/coverage.py`, `src/dagzoo/core/dataset.py`, `src/dagzoo/cli/`
-- Notes:
-  - Steering selection logic was removed to simplify generation semantics.
-  - `diagnostics.meta_feature_targets` remains supported for coverage summaries.
+- Mission alignment: foundation model pretraining, robustness testing
+- Pillar alignment: tabular realism, causal structural integrity
+- Goal: build an opt-in curriculum-aware steering layer over existing missingness, shift/drift, and noise levers so generated corpora can progress through intentionally harder fronts without reviving retired stagewise feature/node/graph controls.
+- GitHub tracking: `#246 -> #251 -> #256 -> #261 -> #266`
+- Repo touchpoints: `src/dagzoo/diagnostics/coverage.py`, `src/dagzoo/diagnostics_targets.py`, `src/dagzoo/config/`, `src/dagzoo/sampling/missingness.py`, `src/dagzoo/core/shift.py`, `src/dagzoo/core/noise_runtime.py`, `src/dagzoo/cli/commands/diagnostics.py`, `docs/features/diagnostics.md`
+- Exit criteria:
+  - Steering is opt-in and reuses existing missingness, shift/drift, and noise surfaces instead of adding a parallel curriculum subsystem.
+  - Coverage targets can drive named curriculum presets or selection policies that measurably move emitted coverage toward intended harder fronts.
+  - The implementation explicitly does not reintroduce RD-006 stagewise feature/node/graph schemas.
+  - Benchmark or diagnostics artifacts make the curriculum movement auditable and reproducible for fixed seeds.
+- Delivery issues:
+  - `#251` `spec(steering): define curriculum target policy and lever recipe schema`
+  - `#256` `feat(steering): resolve meta-feature steering into deterministic missingness/shift/noise selections`
+  - `#261` `analysis(steering): expose curriculum movement diagnostics and harder-front evidence`
+  - `#266` `docs(steering): add presets, tests, and benchmark guardrails for meta-feature steering`
+- Evidence context:
+  - `tab-foundry` branch `tf-rd-020-harder-dagzoo-ladder-v1-execute` currently shows the strongest validation log-loss improvements from noise drift v2 (`-3.897`), graph drift v2 (`-3.892`), MNAR v2 (`-3.851`), and MAR v2 (`-3.850`).
+  - This points toward a curriculum built from progressively harder missingness and drift regimes rather than a return to the retired RD-006 shell.
+- Current repo baseline:
+  - `diagnostics.meta_feature_targets` remains supported as reporting-only metadata for coverage summaries.
 
 ### RD-009: Filtered Dataset Throughput and Deferred-Filter Scaling
 
@@ -285,36 +394,39 @@ Use the canonical docs instead:
 - Mission alignment: foundation model pretraining
 - Pillar alignment: hardware-native performance
 - Goal: evolve hardware-aware scaling from static coarse profile tiers to bounded adaptive tuning based on observed throughput/memory behavior when throughput/cost becomes a practical bottleneck.
-- Linear tracking: epic `BL-42`; dependency chain `BL-43 -> BL-44 -> BL-53 -> BL-45 -> BL-54 -> BL-46`
+- GitHub tracking: `#250 -> #254 -> #260 -> #264 -> (#270 + #271) -> #272`
 - Repo touchpoints: `src/dagzoo/hardware.py`, `src/dagzoo/config/`, `src/dagzoo/cli/`, `src/dagzoo/bench/suite.py`, `src/dagzoo/bench/report.py`
 - Exit criteria:
   - Adaptive mode improves throughput versus profile baseline on at least one CUDA hardware class without violating memory guardrails.
   - Unknown CUDA devices can run adaptive tuning without relying only on static fallback tiers.
   - Fixed seed + fixed hardware signature reproduces selected tuning settings within declared deterministic behavior.
   - Opt-out mode preserves current profile-only behavior.
+- Delivery issues:
+  - `#254` `spec(autotune): add autotune mode config and CLI validation`
+  - `#260` `analysis(autotune): define candidate parameter packs, scoring, and selection telemetry`
+  - `#264` `feat(autotune): implement bounded trial orchestration and deterministic fallback`
+  - `#270` `feat(autotune): integrate adaptive settings into generate flows with cache and fallback`
+  - `#271` `feat(autotune): add benchmark integration and report telemetry`
+  - `#272` `docs(autotune): add guardrails, tests, and presets for adaptive tuning`
 
 ### RD-011: Mechanism Diversity Expansion With Measurable Effective-Diversity Gain
 
-- Status: `planned`
-- Milestone: `Now`
+- Status: `implemented`
+- Milestone: `Now` (completed via `#28` and `#240`, with `#220` retained as a later analytical follow-on)
 - Mission alignment: foundation model pretraining, robustness testing
 - Pillar alignment: causal structural integrity, tabular realism
-- Goal: build on the already-landed mechanism-family mix surface by widening the current `gp` family, preserving the shipped `piecewise` control, and proving that the widened path increases emitted diversity without unacceptable throughput or filter-yield regressions.
-- Linear tracking: epic `BL-26`; landed baseline plumbing and shipped control are historical `BL-27`; active closeout is `BL-151`; remaining closeout items are `BL-29 -> BL-30`; canceled historical tickets `BL-28 -> BL-51 -> BL-52` are no longer the implementation path
+- Goal: complete mechanism diversity expansion by widening the current `gp` family behind the existing public surface, retaining `piecewise` as the shipped control, and landing the metadata, diagnostics, and audit surfaces needed to evaluate realized diversity behavior.
+- GitHub tracking: completed epic `#28`; shipped closeout `#240`; later analytical follow-on `#220`; historical Linear chain `BL-26 -> BL-151 -> BL-29 -> BL-30`
 - Repo touchpoints: `src/dagzoo/config/`, `src/dagzoo/functions/random_functions.py`, `src/dagzoo/core/node_pipeline.py`, `src/dagzoo/core/dataset.py`, `src/dagzoo/bench/suite.py`
-- Delivered baseline inside this roadmap item:
+- Delivered scope:
   - `mechanism.function_family_mix` is already live on the canonical fixed-layout path.
   - `piecewise` shipped as a public, mix-controlled mechanism family and serves as the current control path.
-  - Bundle metadata, diagnostics coverage, and diversity-audit artifacts already expose realized mechanism-family coverage.
-- Active closeout scope:
-  - widen `gp` through internal `standard`, `periodic`, and `multiscale` variants without adding a new public config knob
-  - expose additive mechanism-variant observability in emitted metadata and downstream summaries
-  - add GP-focused presets/docs so the candidate path can be evaluated against baseline and the shipped `piecewise` control
-- Exit criteria:
-  - Widened `gp` variants are exercised through the existing family-mix surface and covered by unit/integration tests.
-  - Metadata, diagnostics, and diversity-audit artifacts expose realized mechanism-family and mechanism-variant coverage beyond config echo.
-  - Diversity-audit runs provide evidence for the widened `gp` path versus baseline, with the shipped `piecewise` path retained as the control comparator.
-  - Presets/docs/bench guardrails exist for contributors.
+  - Internal `gp` execution now widens across `standard`, `periodic`, and `multiscale` variants without adding a new public config knob.
+  - Bundle metadata, diagnostics coverage, and diversity-audit artifacts expose realized mechanism-family and mechanism-variant coverage.
+  - GP-focused presets and docs exist so the widened path can be evaluated against baseline and the shipped `piecewise` control.
+- Completion evidence:
+  - [CHANGELOG.md](../../CHANGELOG.md) records the shipped widened `gp` path in `v0.9.7`.
+  - The GitHub closeout issue `#240` is completed, and the remaining open work `#220` is analytical follow-on scope rather than unfinished roadmap delivery.
 
 ### RD-012: Noise Family Diversification for Synthetic Generation
 
@@ -341,13 +453,18 @@ Use the canonical docs instead:
 - Mission alignment: foundation model pretraining, robustness testing
 - Pillar alignment: tabular realism
 - Goal: add an opt-in temporal generation track for sequence datasets so PFN pretraining workflows cover classification/regression/time-series under one reproducible generator framework.
-- Linear tracking: epic `BL-73`; dependency chain `BL-74 -> BL-75 -> BL-76 -> BL-77`
+- GitHub tracking: `#248 -> #253 -> (#258 + #263) -> #268`
 - Repo touchpoints: `src/dagzoo/config/`, `src/dagzoo/core/dataset.py`, `src/dagzoo/core/node_pipeline.py`, `src/dagzoo/diagnostics/`, `src/dagzoo/bench/`, `docs/`
 - Exit criteria:
   - Temporal mode is opt-in and backward-compatible (`off` by default).
   - Fixed seed + config reproducibility is preserved for temporal generation.
   - Sequence metadata/diagnostics contracts are emitted and test-covered.
   - Presets/docs/bench guardrails provide discoverable temporal workflows.
+- Delivery issues:
+  - `#253` `spec(temporal): define time-series config schema and validation`
+  - `#258` `feat(temporal): implement lag-aware temporal generator path`
+  - `#263` `feat(temporal): emit sequence metadata and diagnostics contracts`
+  - `#268` `docs(temporal): add presets, tests, and benchmark guardrails for time-series workflows`
 
 ### RD-014: Stage-Level Benchmark Observability and Telemetry
 
@@ -415,8 +532,8 @@ Use the canonical docs instead:
 - RD-001 ground-truth DAG artifact export, completed via `#44`, `#45`, `#46`, `#47`, and `#48`
 - RD-003 missingness generation (MCAR/MAR/MNAR), completed via `#17` and `#18`
 - RD-004 shift-aware SCM generation, completed via `#64`, `#72`, `#73`, `#74`, and `#75`
+- RD-011 mechanism diversity expansion with measurable effective-diversity gain, completed via `#28` and `#240`, with `#220` retained as a later analytical follow-on
 - RD-007 many-class rollout envelope, completed via `BL-17`, `BL-18`, `BL-19`, `BL-20`, and `BL-21`
-- RD-008 meta-feature coverage steering (retired)
 - RD-006 staged complexity scaling (retired), completed via `#49`, `#50`, `#51`, `#90`, `#52`, and `#53`
 - RD-012 noise family diversification, completed via `#24`, `#25`, `#26`, and `#27`
 - RD-014 stage-level benchmark observability and telemetry, completed via `BL-82`
@@ -425,11 +542,11 @@ Use the canonical docs instead:
 
 ### Now
 
-- RD-011 mechanism diversity expansion with measurable effective-diversity gain
+- RD-008 meta-feature coverage steering
+- RD-005 robustness stress profiles
 
 ### Later
 
-- RD-005 robustness stress profiles
 - RD-013 time-series generation tracks
 - RD-002 interventional and counterfactual generation modes
 - RD-010 hardware-adaptive autotuning
@@ -440,12 +557,17 @@ Use the canonical docs instead:
 - RD-015 is implemented and provides the semantic RNG contract that active throughput or handoff work must preserve.
 - RD-009 is implemented and now serves as the baseline canonical `generate -> filter` pipeline for later handoff and runtime work.
 - RD-016 is implemented on top of the canonical `generate -> filter` pipeline from RD-009 and does not introduce a parallel configuration surface that the repo has already removed.
-- RD-011 is the active diversity lever, but it should be evaluated against RD-009's acceptance-yield and diversity guardrails rather than in isolation.
+- RD-011 is implemented and provides the shipped mechanism-diversity baseline; `#220` remains a later analytical follow-on rather than unfinished roadmap delivery.
+- RD-008 is the top active data-lever item because current `tab-foundry` harder-ladder evidence favors noise drift, graph drift, and structured missingness as the strongest near-term harder fronts.
+- RD-008 should compose existing RD-003, RD-004, and RD-012 surfaces plus `diagnostics.meta_feature_targets` rather than reviving the retired RD-006 stagewise feature/node/graph shell.
 - RD-012 is implemented and provides explicit noise-family controls that RD-005 can consume later for stress-profile composition.
-- RD-005 now primarily depends on RD-004, RD-003, and the filter/density observability already in the repo.
+- RD-005 packages the lever families surfaced by RD-008 into reproducible named stress regimes and depends primarily on RD-003, RD-004, RD-008, and RD-012 plus the existing filter and diagnostics observability.
+- RD-013 fans out after `#253` into the temporal runtime lane `#258` and the metadata-contract lane `#263`, which rejoin at docs and guardrails `#268`.
 - RD-013 remains later because the near-term downstream contract is one-way tabular corpus handoff, not temporal generation.
 - RD-002 builds on completed RD-001 lineage artifacts for intervention metadata extensions.
-- RD-010 remains opt-in and benchmark-guarded, but is sequenced later because downstream handoff and mechanism-diversity expansion are more urgent than adaptive tuning.
+- RD-002 fans out after `#255` into sampling semantics `#259` and metadata contracts `#265`, which rejoin at docs and guardrails `#269`.
+- RD-010 moves linearly through spec, scoring, and orchestration (`#254 -> #260 -> #264`) before splitting into generate-path integration `#270` and telemetry/reporting `#271`, which rejoin at docs and guardrails `#272`.
+- RD-010 remains opt-in and benchmark-guarded, but is sequenced later because downstream handoff, curriculum-aware harder-front steering, and reproducible stress-profile composition are more urgent than adaptive tuning.
 
 ## Guardrails
 
