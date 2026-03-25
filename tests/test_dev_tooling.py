@@ -94,32 +94,16 @@ def test_detect_changed_files_staged_uses_cached_diff(
     impact_module = _import_dev_module("devlib.impact")
     calls: list[tuple[str, ...]] = []
 
-    def _stub_run(
-        argv: tuple[str, ...],
-        *,
-        cwd: Path,
-        capture_output: bool,
-        text: bool,
-        check: bool,
-    ) -> subprocess.CompletedProcess[str]:
-        _ = cwd
-        _ = capture_output
-        _ = text
-        _ = check
-        calls.append(argv)
-        return subprocess.CompletedProcess(
-            argv,
-            0,
-            "src/dagzoo/cli/entrypoint.py\nCHANGELOG.md\n",
-            "",
-        )
+    def _stub_run_git_lines(*args: str) -> tuple[str, ...]:
+        calls.append(args)
+        return ("src/dagzoo/cli/entrypoint.py", "CHANGELOG.md")
 
-    monkeypatch.setattr(impact_module.subprocess, "run", _stub_run)
+    monkeypatch.setattr(impact_module, "run_git_lines", _stub_run_git_lines)
 
     changed_files = impact_module.detect_changed_files(source="staged")
 
     assert changed_files == ("CHANGELOG.md", "src/dagzoo/cli/entrypoint.py")
-    assert calls == [("git", "diff", "--cached", "--name-only")]
+    assert calls == [("diff", "--cached", "--name-only")]
 
 
 def test_release_contract_requires_version_and_changelog_for_release_risk() -> None:
@@ -373,16 +357,265 @@ def test_verify_execute_dry_run_lists_suggested_pytest_targets(
     assert "tests/test_dev_tooling.py" in output
 
 
+def test_bootstrap_environment_runs_uv_then_pre_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bootstrap_module = _import_dev_module("devlib.bootstrap")
+    python_path = tmp_path / ".venv" / "bin" / "python"
+    python_path.parent.mkdir(parents=True)
+    python_path.write_text("", encoding="utf-8")
+    calls: list[tuple[str, ...]] = []
+
+    def _stub_run(
+        argv: tuple[str, ...],
+        *,
+        cwd: Path,
+        check: bool,
+    ) -> subprocess.CompletedProcess[bytes]:
+        _ = cwd
+        _ = check
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(bootstrap_module, "tool_exists", lambda name: name == "uv")
+    monkeypatch.setattr(bootstrap_module, "venv_python", lambda: python_path)
+    monkeypatch.setattr(bootstrap_module.subprocess, "run", _stub_run)
+
+    output = bootstrap_module.bootstrap_environment()
+
+    assert calls == [
+        ("uv", "sync", "--group", "dev"),
+        (str(python_path), "-m", "pre_commit", "install"),
+    ]
+    assert "bootstrap complete" in output
+    assert ".venv/bin/python -m pre_commit install" in output
+
+
+def test_collect_review_scope_unions_review_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    review_module = _import_dev_module("devlib.review")
+    merge_base_calls: list[tuple[str, ...]] = []
+    line_calls: list[tuple[str, ...]] = []
+    outputs = {
+        ("diff", "--name-only", "abc123..HEAD"): (
+            "src/dagzoo/cli/entrypoint.py",
+            "CHANGELOG.md",
+        ),
+        ("diff", "--name-only", "--cached"): ("src/dagzoo/cli/entrypoint.py",),
+        ("diff", "--name-only"): ("README.md",),
+        ("ls-files", "--others", "--exclude-standard"): ("docs/new.md",),
+    }
+
+    def _stub_run_git_capture(*args: str) -> str:
+        merge_base_calls.append(args)
+        return "abc123\n"
+
+    def _stub_run_git_lines(*args: str) -> tuple[str, ...]:
+        line_calls.append(args)
+        return outputs[args]
+
+    monkeypatch.setattr(review_module, "run_git_capture", _stub_run_git_capture)
+    monkeypatch.setattr(review_module, "run_git_lines", _stub_run_git_lines)
+
+    scope = review_module.collect_review_scope()
+
+    assert scope.base_ref == "origin/main"
+    assert scope.merge_base == "abc123"
+    assert scope.changed_files == (
+        "CHANGELOG.md",
+        "README.md",
+        "docs/new.md",
+        "src/dagzoo/cli/entrypoint.py",
+    )
+    assert merge_base_calls == [("merge-base", "origin/main", "HEAD")]
+    assert line_calls == [
+        ("diff", "--name-only", "abc123..HEAD"),
+        ("diff", "--name-only", "--cached"),
+        ("diff", "--name-only"),
+        ("ls-files", "--others", "--exclude-standard"),
+    ]
+
+
+def test_render_review_base_report_includes_contract_findings() -> None:
+    contract_module = _import_dev_module("devlib.contract")
+    impact_module = _import_dev_module("devlib.impact")
+    review_module = _import_dev_module("devlib.review")
+    changed_files = ("src/dagzoo/cli/entrypoint.py",)
+    report = impact_module.build_impact_report(changed_files)
+    result = review_module.ReviewBaseResult(
+        scope=review_module.ReviewScope(
+            base_ref="origin/main",
+            merge_base="abc123",
+            changed_files=changed_files,
+        ),
+        report=report,
+        contract=contract_module.evaluate_release_contract(report),
+    )
+
+    output = review_module.render_review_base_report(result)
+
+    assert "merge base: abc123" in output
+    assert "recommended verify modes:" in output
+    assert "suggested pytest targets:" in output
+    assert "pytest selection:" in output
+    assert "release contract:" in output
+    assert "error: release-risk changes require updates" in output
+
+
+def test_doctor_reports_pre_commit_package_and_hook(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    doctor_module = _import_dev_module("devlib.doctor")
+    python_path = tmp_path / ".venv" / "bin" / "python"
+    python_path.parent.mkdir(parents=True)
+    python_path.write_text("", encoding="utf-8")
+    hook_path = tmp_path / ".git" / "hooks" / "pre-commit"
+    hook_path.parent.mkdir(parents=True)
+    hook_path.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    def _stub_run(
+        argv: tuple[str, ...],
+        *,
+        cwd: Path,
+        check: bool,
+    ) -> subprocess.CompletedProcess[bytes]:
+        _ = cwd
+        _ = check
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(doctor_module, "venv_python", lambda: python_path)
+    monkeypatch.setattr(doctor_module, "git_hook_path", lambda hook_name: hook_path)
+    monkeypatch.setattr(
+        doctor_module.shutil,
+        "which",
+        lambda tool_name: f"/usr/bin/{tool_name}" if tool_name == "uv" else None,
+    )
+    monkeypatch.setattr(doctor_module.subprocess, "run", _stub_run)
+
+    results = doctor_module.run_doctor("code")
+    by_name = {result.name: result for result in results}
+
+    assert by_name["pre-commit package"].ok is True
+    assert by_name["pre-commit hook"].ok is True
+
+
 def test_dev_cli_help_exposes_new_commands(capsys: pytest.CaptureFixture[str]) -> None:
     module = _load_dev_cli()
 
     with pytest.raises(SystemExit) as exc_info:
-        module.main(["verify", "--help"])
+        module.main(["--help"])
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    assert "quick" in captured.out
-    assert "affected" in captured.out
+    assert "bootstrap" in captured.out
+    assert "review-base" in captured.out
+    assert "ready" in captured.out
+
+
+def test_dev_cli_review_base_uses_default_base_ref(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = _load_dev_cli()
+    captured: dict[str, str] = {}
+    fake_result = SimpleNamespace(contract=SimpleNamespace(ok=True))
+
+    def _stub_build_review_base_result(base_ref: str = "origin/main") -> SimpleNamespace:
+        captured["base_ref"] = base_ref
+        return fake_result
+
+    monkeypatch.setattr(module, "build_review_base_result", _stub_build_review_base_result)
+    monkeypatch.setattr(module, "render_review_base_report", lambda result: "review report\n")
+
+    exit_code = module.main(["review-base"])
+
+    assert exit_code == 0
+    assert captured == {"base_ref": "origin/main"}
+    assert "review report" in capsys.readouterr().out
+
+
+def test_dev_cli_review_base_returns_nonzero_on_contract_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = _load_dev_cli()
+    fake_result = SimpleNamespace(contract=SimpleNamespace(ok=False))
+
+    monkeypatch.setattr(
+        module, "build_review_base_result", lambda base_ref="origin/main": fake_result
+    )
+    monkeypatch.setattr(module, "render_review_base_report", lambda result: "review report\n")
+
+    exit_code = module.main(["review-base"])
+
+    assert exit_code == 1
+    assert "review report" in capsys.readouterr().out
+
+
+def test_dev_cli_ready_reuses_review_scope_for_affected_verify(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = _load_dev_cli()
+    captured: dict[str, object] = {}
+    fake_result = SimpleNamespace(
+        scope=SimpleNamespace(changed_files=("CHANGELOG.md", "src/dagzoo/cli/entrypoint.py")),
+        contract=SimpleNamespace(ok=True),
+    )
+
+    monkeypatch.setattr(
+        module, "build_review_base_result", lambda base_ref="origin/main": fake_result
+    )
+    monkeypatch.setattr(module, "render_review_base_report", lambda result: "review report\n")
+
+    def _stub_build_verify_plan(**kwargs) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace()
+
+    monkeypatch.setattr(module, "build_verify_plan", _stub_build_verify_plan)
+    monkeypatch.setattr(module, "execute_verify_plan", lambda plan, dry_run: "verify output\n")
+
+    exit_code = module.main(["ready"])
+
+    assert exit_code == 0
+    assert captured == {
+        "mode": "affected",
+        "source": "working-tree",
+        "base": None,
+        "files": ["CHANGELOG.md", "src/dagzoo/cli/entrypoint.py"],
+        "incremental": True,
+        "parallel": True,
+    }
+    output = capsys.readouterr().out
+    assert "review report" in output
+    assert "verify output" in output
+
+
+def test_dev_cli_ready_fails_fast_when_review_base_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = _load_dev_cli()
+    fake_result = SimpleNamespace(
+        scope=SimpleNamespace(changed_files=("src/dagzoo/cli/entrypoint.py",)),
+        contract=SimpleNamespace(ok=False),
+    )
+
+    monkeypatch.setattr(
+        module, "build_review_base_result", lambda base_ref="origin/main": fake_result
+    )
+    monkeypatch.setattr(module, "render_review_base_report", lambda result: "review report\n")
+    monkeypatch.setattr(
+        module,
+        "build_verify_plan",
+        lambda **kwargs: pytest.fail("ready should not build verify plan when review-base fails"),
+    )
+
+    exit_code = module.main(["ready"])
+
+    assert exit_code == 1
+    assert "review report" in capsys.readouterr().out
 
 
 def test_dev_cli_contract_accepts_staged_source(monkeypatch: pytest.MonkeyPatch) -> None:

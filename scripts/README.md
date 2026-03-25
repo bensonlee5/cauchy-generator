@@ -8,6 +8,8 @@ workflows, not the primary interface; prefer `dagzoo generate` and
 
 ## Developer CLI
 
+- `./scripts/dev bootstrap`
+  - Creates or syncs `.venv/` via `uv sync --group dev` and installs the repo pre-commit hook.
 - `./scripts/dev doctor [code|docs|all]`
   - Verifies local toolchain prerequisites for repo work.
 - `./scripts/dev deps [--scope package|hybrid|full] [--format text|json] [--write-docs] [--check]`
@@ -16,8 +18,12 @@ workflows, not the primary interface; prefer `dagzoo generate` and
   - Classifies changed files and shows dependency-aware downstream impact.
 - `./scripts/dev contract [--source working-tree|staged|base] [--base <git-ref>] [--files ...] [--strict]`
   - Enforces version/changelog expectations for likely user-facing changes.
-- `./scripts/dev verify quick|code|docs|bench|full [--source working-tree|staged|base] [--base <git-ref>] [--files ...] [--dry-run] [--incremental] [--parallel]`
+- `./scripts/dev verify quick|code|docs|bench|full|affected [--source working-tree|staged|base] [--base <git-ref>] [--files ...] [--dry-run] [--incremental] [--parallel]`
   - Canonical local verification entrypoint for normal code, docs, and benchmark work.
+- `./scripts/dev review-base [--base-ref <git-ref>]`
+  - Summarizes the current review scope against the selected base ref, including contract warnings/errors.
+- `./scripts/dev ready [--base-ref <git-ref>]`
+  - Runs `review-base`, then `verify affected` with incremental and parallel pytest defaults over the same computed review scope.
 
 ## Scripts
 
@@ -59,7 +65,10 @@ workflows, not the primary interface; prefer `dagzoo generate` and
 ## Examples
 
 ```bash
+./scripts/dev bootstrap
 ./scripts/dev doctor all
+./scripts/dev review-base
+./scripts/dev ready
 ./scripts/dev impact
 ./scripts/dev impact --source staged
 ./scripts/dev impact --files src/dagzoo/core/execution_semantics.py

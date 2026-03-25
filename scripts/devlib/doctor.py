@@ -4,7 +4,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-from .common import REPO_ROOT, venv_python
+from .common import REPO_ROOT, git_hook_path, repo_relative, venv_python
 
 
 @dataclass(frozen=True)
@@ -41,7 +41,7 @@ def _code_checks() -> list[CheckResult]:
         CheckResult(
             name=".venv",
             ok=python_path.exists(),
-            detail=f"expected interpreter at {python_path.relative_to(REPO_ROOT)}",
+            detail=f"expected interpreter at {repo_relative(python_path)}",
         ),
         CheckResult(
             name="uv",
@@ -76,6 +76,35 @@ def _code_checks() -> list[CheckResult]:
                 name="import dagzoo",
                 ok=import_result.returncode == 0,
                 detail="run `uv sync --group dev` if the package is not installed into .venv",
+            )
+        )
+        pre_commit_result = subprocess.run(
+            (str(python_path), "-m", "pre_commit", "--version"),
+            cwd=REPO_ROOT,
+            check=False,
+        )
+        checks.append(
+            CheckResult(
+                name="pre-commit package",
+                ok=pre_commit_result.returncode == 0,
+                detail="run `uv sync --group dev` if pre-commit is missing from .venv",
+            )
+        )
+    try:
+        hook_path = git_hook_path("pre-commit")
+        checks.append(
+            CheckResult(
+                name="pre-commit hook",
+                ok=hook_path.exists(),
+                detail=f"expected installed hook at {repo_relative(hook_path)}",
+            )
+        )
+    except RuntimeError:
+        checks.append(
+            CheckResult(
+                name="pre-commit hook",
+                ok=False,
+                detail="unable to resolve git hooks path",
             )
         )
     return checks

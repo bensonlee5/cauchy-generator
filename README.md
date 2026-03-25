@@ -79,7 +79,7 @@ flowchart LR
 Examples in this README assume a repo checkout (so `configs/*.yaml` is available):
 
 ```bash
-uv sync --group dev
+./scripts/dev bootstrap
 source .venv/bin/activate
 ./scripts/dev doctor all
 ```
@@ -153,6 +153,13 @@ dagzoo benchmark --help
 ```
 
 Local repo workflow before review:
+
+```bash
+./scripts/dev review-base
+./scripts/dev ready
+```
+
+For focused local analysis outside the pre-review flow:
 
 ```bash
 ./scripts/dev impact

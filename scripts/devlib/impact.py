@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from dataclasses import dataclass
-from pathlib import Path
 
-from .common import REPO_ROOT, repo_relative
+from .common import normalize_files, run_git_capture, run_git_lines
 from .deps import ImportGraph, build_import_graph, module_to_package, path_to_module
 from .review_policy import is_release_risk_path, suggested_pytest_targets
 from .test_selection import PytestSelection, build_pytest_selection, is_docs_only_change_set
@@ -43,48 +41,27 @@ def detect_changed_files(
     *, source: str = "working-tree", base: str | None = None, files: list[str] | None = None
 ) -> tuple[str, ...]:
     if files:
-        return tuple(sorted(dict.fromkeys(_normalize_files(files))))
+        return tuple(sorted(dict.fromkeys(normalize_files(files))))
     if source == "working-tree":
-        result = subprocess.run(
-            ("git", "status", "--short"),
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr.strip() or "git status failed.")
-        changed_files = []
-        for line in result.stdout.splitlines():
+        changed_files: list[str] = []
+        for line in run_git_capture("status", "--short").splitlines():
             if not line:
                 continue
             changed_files.append(line[3:])
-        return tuple(sorted(dict.fromkeys(changed_files)))
+        return tuple(sorted(dict.fromkeys(normalize_files(changed_files))))
     if source == "staged":
-        result = subprocess.run(
-            ("git", "diff", "--cached", "--name-only"),
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
+        return tuple(
+            sorted(dict.fromkeys(normalize_files(run_git_lines("diff", "--cached", "--name-only"))))
         )
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr.strip() or "git diff --cached failed.")
-        return tuple(sorted(dict.fromkeys(_normalize_files(result.stdout.splitlines()))))
     if source != "base":
         raise ValueError(f"Unsupported change source: {source!r}")
     if base is None:
         raise ValueError("base is required when source is not working-tree.")
-    result = subprocess.run(
-        ("git", "diff", "--name-only", f"{base}...HEAD"),
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
+    return tuple(
+        sorted(
+            dict.fromkeys(normalize_files(run_git_lines("diff", "--name-only", f"{base}...HEAD")))
+        )
     )
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or "git diff failed.")
-    return tuple(sorted(dict.fromkeys(_normalize_files(result.stdout.splitlines()))))
 
 
 def build_impact_report(
@@ -266,16 +243,3 @@ def render_json(report: ImpactReport) -> str:
         ],
     }
     return json.dumps(payload, indent=2) + "\n"
-
-
-def _normalize_files(files: list[str]) -> list[str]:
-    normalized: list[str] = []
-    for file_str in files:
-        if not file_str:
-            continue
-        path = Path(file_str)
-        if path.is_absolute():
-            normalized.append(repo_relative(path))
-        else:
-            normalized.append(path.as_posix())
-    return normalized
