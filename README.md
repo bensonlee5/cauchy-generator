@@ -198,3 +198,10 @@ references:
 
 - Handoff workflow and CLI usage: [Usage Guide](https://bensonlee5.github.io/dagzoo/docs/usage-guide/)
 - Generated artifacts and handoff manifest schema: [Output Format](https://bensonlee5.github.io/dagzoo/docs/output-format/)
+
+## License
+
+`dagzoo` is released under the Apache License 2.0. See [LICENSE](LICENSE) for
+the full license text, [NOTICE](NOTICE) for the project notice, and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for repo-level third-party
+disclosure guidance.

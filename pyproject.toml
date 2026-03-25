@@ -10,7 +10,8 @@ readme = { file = "README.md", content-type = "text/markdown" }
 authors = [
   { name = "Benson Lee" },
 ]
-license = "MIT"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.13"
 keywords = [
   "synthetic data generation",
@@ -24,7 +25,7 @@ classifiers = [
   "Environment :: Console",
   "Intended Audience :: Developers",
   "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: MIT License",
+  "License :: OSI Approved :: Apache Software License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
