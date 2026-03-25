@@ -65,3 +65,4 @@ site/.generated/
 site/node_modules/
 
 .codex
+.gstack/
