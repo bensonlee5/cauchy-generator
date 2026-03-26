@@ -31,6 +31,7 @@ from dagzoo.core.fixed_layout.runtime import (
     _fixed_layout_plan_supports_classification_run,
     _generate_batch_with_plan_iter,
     _generate_fixed_layout_bundle_with_retries,
+    _replay_emitted_fixed_layout_plan,
     _resolve_fixed_layout_batch_size,
     _sample_fixed_layout,
     _sample_fixed_layout_candidate,
@@ -201,7 +202,7 @@ def test_generate_batch_dynamic_steering_graph_stage_can_change_layout_signature
     cfg.steering.preset = "anti_memorization_piecewise_v1"
     cfg.validate_generation_constraints()
 
-    batch = generate_batch(cfg, num_datasets=5, seed=4321, device="cpu")
+    batch = generate_batch(cfg, num_datasets=5, seed=1, device="cpu")
 
     layout_signatures = [str(bundle.metadata["layout_signature"]) for bundle in batch]
     feature_type_signatures = [
@@ -4041,6 +4042,47 @@ def test_generate_one_keyed_replay_layout_root_path_replays_layout_signature() -
 
     assert keyed_replay["layout_root_path"] == ["plan_candidate", 0, "layout"]
     assert _layout_signature(replayed_layout) == str(bundle.metadata["layout_signature"])
+
+
+def test_generate_batch_graph_steering_preserves_base_replay_roots_and_replays_plan() -> None:
+    cfg = _tiny_regression_config()
+    cfg.steering.enabled = True
+    cfg.steering.preset = "anti_memorization_piecewise_v1"
+    cfg.validate_generation_constraints()
+
+    batch = generate_batch(cfg, num_datasets=5, seed=4321, device="cpu")
+    base_keyed_replay = batch[0].metadata["keyed_replay"]
+    steered_bundle = batch[2]
+    steered_keyed_replay = steered_bundle.metadata["keyed_replay"]
+    replayed_plan = _replay_emitted_fixed_layout_plan(cfg, steered_bundle)
+
+    assert "steering_layout_root_path" not in base_keyed_replay
+    assert "steering_execution_plan_root_path" not in base_keyed_replay
+    assert "steering_layout_root_path" not in batch[4].metadata["keyed_replay"]
+    assert "steering_execution_plan_root_path" not in batch[4].metadata["keyed_replay"]
+    assert steered_keyed_replay["layout_root_path"] == ["plan_candidate", 0, "layout"]
+    assert steered_keyed_replay["execution_plan_root_path"] == [
+        "plan_candidate",
+        0,
+        "execution_plan",
+    ]
+    assert steered_keyed_replay["steering_layout_root_path"] == [
+        "dataset",
+        2,
+        "steering",
+        "layout",
+    ]
+    assert steered_keyed_replay["steering_execution_plan_root_path"] == [
+        "dataset",
+        2,
+        "steering",
+        "execution_plan",
+    ]
+    assert int(steered_bundle.metadata["layout_plan_schema_version"]) == 7
+    assert str(replayed_plan.layout_signature) == str(steered_bundle.metadata["layout_signature"])
+    assert str(replayed_plan.plan_signature) == str(
+        steered_bundle.metadata["layout_plan_signature"]
+    )
 
 
 def test_generate_one_keyed_replay_dataset_root_path_replays_noise_runtime_metadata() -> None:

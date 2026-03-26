@@ -10,6 +10,19 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.14.2] - 2026-03-25
+
+### Changed
+
+- Steering stage resolution now clears incompatible inherited shift scales
+  when later stages switch modes, so authored graph-only or noise-only
+  stages do not silently keep stale drift from prior stages.
+- Graph-steered bundles now keep base fixed-layout replay roots under
+  `metadata.keyed_replay.layout_root_path` and
+  `metadata.keyed_replay.execution_plan_root_path`, while additive
+  steering-specific replay roots capture graph/execution overrides without
+  breaking reproducible layout replay.
+
 ## [0.14.1] - 2026-03-25
 
 ### Changed

@@ -8,6 +8,10 @@ from dagzoo.config import (
     NOISE_MIXTURE_COMPONENT_GAUSSIAN,
     NOISE_MIXTURE_COMPONENT_LAPLACE,
     NOISE_MIXTURE_COMPONENT_STUDENT_T,
+    SHIFT_MODE_CUSTOM,
+    SHIFT_MODE_GRAPH_DRIFT,
+    SHIFT_MODE_MIXED,
+    SHIFT_MODE_NOISE_DRIFT,
     GeneratorConfig,
     SteeringConfig,
     clone_generator_config,
@@ -90,6 +94,16 @@ def _apply_stage_to_config(
         config.shift.enabled = True
         if shift.mode is not None:
             config.shift.mode = shift.mode
+        shift_mode = str(config.shift.mode)
+        # Steering stages do not author mechanism drift, so always discard any
+        # inherited mechanism-scale override before applying graph/noise ramps.
+        config.shift.mechanism_scale = None
+        if shift_mode == SHIFT_MODE_GRAPH_DRIFT:
+            config.shift.variance_scale = None
+        elif shift_mode == SHIFT_MODE_NOISE_DRIFT:
+            config.shift.graph_scale = None
+        elif shift_mode in {SHIFT_MODE_MIXED, SHIFT_MODE_CUSTOM}:
+            config.shift.mechanism_scale = 0.0
         if shift.graph_scale is not None:
             config.shift.graph_scale = _interpolate_band(shift.graph_scale, t)
         if shift.variance_scale is not None:
@@ -157,6 +171,7 @@ def resolve_steering(
         break
 
     effective.steering = SteeringConfig()
+    effective.validate_generation_constraints()
     return SteeringResolution(
         config=effective,
         dataset_index=int(dataset_index),

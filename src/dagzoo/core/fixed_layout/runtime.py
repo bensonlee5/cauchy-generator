@@ -126,6 +126,159 @@ def _steered_raw_generation_cohort_key(
     )
 
 
+def _normalized_keyed_replay_root_path(
+    value: object,
+    *,
+    field_name: str,
+) -> list[str | int]:
+    """Normalize one keyed-replay root path from emitted bundle metadata."""
+
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{field_name} must be a non-empty list.")
+    normalized: list[str | int] = []
+    for index, component in enumerate(value):
+        if isinstance(component, bool) or not isinstance(component, (int, str)):
+            raise ValueError(
+                f"{field_name}[{index}] must be an int or string path component, got {component!r}."
+            )
+        normalized.append(int(component) if isinstance(component, int) else str(component))
+    return normalized
+
+
+def _candidate_attempt_from_layout_root_path(layout_root_path: list[str | int]) -> int:
+    """Return the fixed-layout candidate attempt encoded in one replay root path."""
+
+    if (
+        len(layout_root_path) >= 3
+        and layout_root_path[0] == "plan_candidate"
+        and isinstance(layout_root_path[1], int)
+        and layout_root_path[2] == "layout"
+    ):
+        return int(layout_root_path[1])
+    return 0
+
+
+def _replay_emitted_fixed_layout_plan(
+    config: GeneratorConfig,
+    bundle: DatasetBundle,
+) -> _FixedLayoutPlan:
+    """Replay one emitted fixed-layout plan from bundle metadata and keyed roots."""
+
+    metadata = bundle.metadata
+    run_seed = metadata.get("seed")
+    if isinstance(run_seed, bool) or not isinstance(run_seed, int):
+        raise ValueError("metadata.seed must be an integer to replay a fixed-layout plan.")
+    keyed_replay = metadata.get("keyed_replay")
+    if not isinstance(keyed_replay, dict):
+        raise ValueError("metadata.keyed_replay must be a mapping to replay a fixed-layout plan.")
+
+    layout_root_path = _normalized_keyed_replay_root_path(
+        keyed_replay.get("layout_root_path"),
+        field_name="metadata.keyed_replay.layout_root_path",
+    )
+    execution_plan_root_path = _normalized_keyed_replay_root_path(
+        keyed_replay.get("execution_plan_root_path"),
+        field_name="metadata.keyed_replay.execution_plan_root_path",
+    )
+    steering_layout_root_path = keyed_replay.get("steering_layout_root_path")
+    normalized_steering_layout_root_path = (
+        None
+        if steering_layout_root_path is None
+        else _normalized_keyed_replay_root_path(
+            steering_layout_root_path,
+            field_name="metadata.keyed_replay.steering_layout_root_path",
+        )
+    )
+    steering_execution_plan_root_path = keyed_replay.get("steering_execution_plan_root_path")
+    normalized_steering_execution_plan_root_path = (
+        None
+        if steering_execution_plan_root_path is None
+        else _normalized_keyed_replay_root_path(
+            steering_execution_plan_root_path,
+            field_name="metadata.keyed_replay.steering_execution_plan_root_path",
+        )
+    )
+
+    config_payload = metadata.get("config")
+    if not isinstance(config_payload, dict):
+        raise ValueError("metadata.config must be a mapping to replay a fixed-layout plan.")
+    effective_config = GeneratorConfig.from_dict(config_payload)
+    effective_shift = resolve_shift_runtime_params(effective_config)
+
+    run_root = KeyedRng(int(run_seed))
+    layout = _sample_layout(config, run_root.keyed(*layout_root_path), "cpu")
+    if normalized_steering_layout_root_path is not None:
+        layout = _resample_layout_graph(
+            layout,
+            keyed_rng=run_root.keyed(*normalized_steering_layout_root_path),
+            edge_logit_bias=float(effective_shift.edge_logit_bias_shift),
+        )
+
+    effective_execution_plan_root_path = (
+        execution_plan_root_path
+        if normalized_steering_execution_plan_root_path is None
+        else normalized_steering_execution_plan_root_path
+    )
+    execution_plan = build_fixed_layout_execution_plan(
+        effective_config,
+        layout,
+        plan_seed=run_root.keyed(*effective_execution_plan_root_path).child_seed(),
+        mechanism_logit_tilt=float(effective_shift.mechanism_logit_tilt),
+    )
+
+    requested_device = metadata.get("requested_device")
+    if not isinstance(requested_device, str) or not requested_device:
+        raise ValueError("metadata.requested_device must be a non-empty string.")
+    resolved_device = metadata.get("resolved_device")
+    if not isinstance(resolved_device, str) or not resolved_device:
+        raise ValueError("metadata.resolved_device must be a non-empty string.")
+    layout_plan_seed = metadata.get("layout_plan_seed")
+    if isinstance(layout_plan_seed, bool) or not isinstance(layout_plan_seed, int):
+        plan_seed_root_path = (
+            layout_root_path
+            if normalized_steering_layout_root_path is None
+            else normalized_steering_layout_root_path
+        )
+        layout_plan_seed = run_root.keyed(*plan_seed_root_path).child_seed()
+
+    plan = _FixedLayoutPlan(
+        layout=layout,
+        requested_device=str(requested_device),
+        resolved_device=str(resolved_device),
+        plan_seed=int(layout_plan_seed),
+        n_train=int(effective_config.dataset.n_train),
+        n_test=int(effective_config.dataset.n_test),
+        layout_signature=_layout_signature(layout),
+        candidate_attempt=_candidate_attempt_from_layout_root_path(layout_root_path),
+        execution_plan=execution_plan,
+        plan_signature=fixed_layout_plan_signature(execution_plan),
+        layout_root_path=list(layout_root_path),
+        execution_plan_root_path=list(execution_plan_root_path),
+        steering_layout_root_path=(
+            None
+            if normalized_steering_layout_root_path is None
+            else list(normalized_steering_layout_root_path)
+        ),
+        steering_execution_plan_root_path=(
+            None
+            if normalized_steering_execution_plan_root_path is None
+            else list(normalized_steering_execution_plan_root_path)
+        ),
+    )
+
+    emitted_layout_signature = metadata.get("layout_signature")
+    if isinstance(emitted_layout_signature, str) and emitted_layout_signature:
+        if str(plan.layout_signature) != str(emitted_layout_signature):
+            raise ValueError("Replayed fixed-layout plan does not match metadata.layout_signature.")
+    emitted_plan_signature = metadata.get("layout_plan_signature")
+    if isinstance(emitted_plan_signature, str) and emitted_plan_signature:
+        if str(plan.plan_signature) != str(emitted_plan_signature):
+            raise ValueError(
+                "Replayed fixed-layout plan does not match metadata.layout_plan_signature."
+            )
+    return plan
+
+
 def _sample_fixed_layout_candidate(
     config: GeneratorConfig,
     *,
@@ -336,8 +489,21 @@ def _resolve_steered_plan_for_dataset(
         candidate_attempt=int(base_plan.candidate_attempt),
         execution_plan=execution_plan,
         plan_signature=fixed_layout_plan_signature(execution_plan),
-        layout_root_path=["dataset", int(dataset_index), "steering", "layout"],
-        execution_plan_root_path=["dataset", int(dataset_index), "steering", "execution_plan"],
+        layout_root_path=(
+            None if base_plan.layout_root_path is None else list(base_plan.layout_root_path)
+        ),
+        execution_plan_root_path=(
+            None
+            if base_plan.execution_plan_root_path is None
+            else list(base_plan.execution_plan_root_path)
+        ),
+        steering_layout_root_path=["dataset", int(dataset_index), "steering", "layout"],
+        steering_execution_plan_root_path=[
+            "dataset",
+            int(dataset_index),
+            "steering",
+            "execution_plan",
+        ],
     )
 
 
@@ -1130,6 +1296,7 @@ __all__ = [
     "CanonicalFixedLayoutRun",
     "_fixed_layout_plan_supports_classification_run",
     "_generate_batch_with_plan_iter",
+    "_replay_emitted_fixed_layout_plan",
     "_resolve_fixed_layout_batch_size",
     "_sample_fixed_layout",
     "prepare_canonical_fixed_layout_run",
