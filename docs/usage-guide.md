@@ -112,6 +112,49 @@ fixed-layout engine internally.
 For persisted outputs, replay canonical batch bundles with the shared run seed
 plus `dataset_index` / `run_num_datasets` from the recorded metadata.
 
+### PyTorch bridge
+
+Use the PyTorch bridge when you want the same canonical fixed-layout run
+semantics in an in-process training loop instead of persisted shard outputs.
+Across one requested run, samples yielded through the bridge still share the
+same sampled layout/execution plan.
+
+`build_dataloader(...)` is the recommended public entrypoint for most users.
+`DagzooDataset` is the lower-level iterable dataset when you need direct
+dataset control. `DagzooSample` is the returned sample shape; it carries
+`X_train`, `y_train`, `X_test`, `y_test`, `feature_types`, and `metadata`.
+
+```python
+from pathlib import Path
+
+from dagzoo import DagzooDataset, build_dataloader
+
+loader = build_dataloader(
+    Path("configs/default.yaml"),
+    num_datasets=10,
+    seed=7,
+    device="cpu",
+)
+sample = next(iter(loader))
+
+dataset = DagzooDataset(
+    "configs/default.yaml",
+    num_datasets=10,
+    seed=7,
+    device="cpu",
+)
+```
+
+Bridge input contract:
+
+- `config` may be a `GeneratorConfig`, a string path, or a `Path`
+- `num_datasets` is required
+- `seed` and `device` are optional
+- v1 currently supports `num_workers=0` only
+
+Use the dataloader helper unless you specifically need the iterable dataset
+itself.
+
 ______________________________________________________________________
 
 ## 6. Missingness workflows
