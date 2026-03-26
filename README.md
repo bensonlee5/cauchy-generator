@@ -9,20 +9,17 @@ flowchart LR
     %% Class Definitions
     classDef setup fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#01579b
     classDef core fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#e65100
-    classDef gate fill:#f1f8e9,stroke:#33691e,stroke-width:2px,color:#33691e
     classDef out fill:#f3e5f5,stroke:#4a148c,stroke-width:2px,color:#4a148c
 
     Seed([Root Seed]) --> RNG[Deterministic Seeding]
     RNG --> Layout[Layout & DAG Sampling]
     Layout --> Mechanisms[Random Functional Mechanisms]
     Mechanisms --> Converters[Feature/Target Converters]
-    Converters --> Filter[Learnability Filter]
-    Filter --> Bundle[[DatasetBundle: X, y, Metadata]]
+    Converters --> Bundle[[DatasetBundle: X, y, Metadata]]
 
     %% Assign Classes
     class Seed,RNG setup
     class Layout,Mechanisms,Converters core
-    class Filter gate
     class Bundle out
 ```
 
@@ -63,18 +60,16 @@ flowchart LR
 
 ## Why dagzoo
 
-Tabular foundation models rely on synthetic data priors whose quality directly
-determines downstream performance. The design of the synthetic prior — what
-graph structures are sampled, what functional relationships are used, what noise
-and missingness patterns are injected — determines the **effective diversity**
-of the training corpus: the breadth of meta-feature space the model sees during
-pretraining. Higher effective diversity means the model's in-context learning
-covers more of the real-world task space.
+Researchers need synthetic tabular corpora whose structure, regime, and
+robustness envelope they can control. The graph structure, functional
+relationships, noise, shift, and missingness settings chosen at generation time
+directly shape what downstream models train on.
 
-`dagzoo` provides independent control over graph structure, mechanism families,
-noise distributions, distribution shift, missingness, and learnability
-filtering. It is designed for researchers who need to systematically control
-and measure the axes of their synthetic prior.
+`dagzoo` provides explicit control over graph structure, mechanism families,
+noise distributions, distribution shift, missingness, and canonical fixed-layout
+generation semantics. It is designed for researchers who need repeatable
+synthetic tabular generation with clear control over the main axes of variation
+in the resulting corpus.
 
 `dagzoo` is for situations where you need synthetic tabular data that is:
 
@@ -82,8 +77,8 @@ and measure the axes of their synthetic prior.
   independent column noise.
 - Reproducible: deterministic seed fan-out and effective-config trace artifacts
   make runs auditable.
-- Stress-testable: shift, noise, missingness, and deferred filter controls let you probe
-  model robustness under controlled distribution changes.
+- Stress-testable: shift, noise, and missingness controls let you probe model
+  robustness under controlled distribution changes.
 - Operationally scalable: canonical fixed-layout generation and benchmark
   guardrails support repeatable high-throughput workflows.
 
@@ -109,25 +104,33 @@ Generate a default batch from the repo:
 dagzoo generate --config configs/default.yaml --num-datasets 10 --out data/run1
 ```
 
+Or stream canonical task samples directly into a PyTorch training loop:
+
+```python
+from dagzoo import build_dataloader
+
+loader = build_dataloader(
+    "configs/default.yaml",
+    num_datasets=10,
+    seed=7,
+    device="cpu",
+)
+sample = next(iter(loader))
+print(sample.keys())
+```
+
+Use `build_dataloader(...)` as the recommended PyTorch entrypoint for
+task-sized samples with `X_train`, `y_train`, `X_test`, `y_test`,
+`feature_types`, and `metadata`. Reach for `DagzooDataset` only when you need
+the lower-level iterable dataset interface. The current v1 bridge supports
+`num_workers=0`; see the usage guide for the full API contract.
+
 Each generate run writes `effective_config.yaml` and `effective_config_trace.yaml`
 in the resolved output directory.
 `dagzoo generate` samples one internal fixed-layout plan per run, so all
 datasets emitted in the same run share one sampled layout/execution plan.
-Run `dagzoo filter` as a separate stage for acceptance decisions.
-Deferred filtering now replays strictly from embedded shard metadata; generated
-artifacts must include `metadata.config.dataset.task` and `metadata.config.filter`.
 Generate configs must not include `runtime.worker_count` or
 `runtime.worker_index`.
-
-Run deferred filtering on generated shards:
-
-```bash
-dagzoo filter --in data/run1 --out data/run1_filter
-```
-
-`dagzoo filter` now applies the small-shot ease filter as a separate replay
-stage, while benchmark smoke presets may override lineage-veto behavior when
-the goal is throughput measurement rather than structural rejection.
 
 Run a downstream handoff workflow from `generate`:
 
@@ -156,13 +159,31 @@ Inspect detected hardware tier:
 dagzoo hardware
 ```
 
-View help and available options for commands:
+## Workflow Surfaces
 
-```bash
-dagzoo --help
-dagzoo generate --help
-dagzoo filter --help
-dagzoo benchmark --help
+`dagzoo` is the canonical packaged CLI. Use `./scripts/dev` as the fast
+repo-local path for bootstrap, doctor, review-base, impact, ready, and verify
+flows.
+
+| Surface         | Use it for                                                                                 |
+| --------------- | ------------------------------------------------------------------------------------------ |
+| `dagzoo`        | Canonical packaged CLI for generation, benchmarking, corpus-audit, and hardware workflows. |
+| `./scripts/dev` | Fast repo-local bootstrap, doctor, review, and verification flows.                         |
+
+Use `--help` in this order:
+
+1. `dagzoo --help`
+1. `dagzoo <command> --help`
+
+CLI layout:
+
+```text
+dagzoo
+├── generate
+├── filter
+├── benchmark
+├── diversity-audit
+└── hardware
 ```
 
 Local repo workflow before review:
@@ -198,10 +219,3 @@ references:
 
 - Handoff workflow and CLI usage: [Usage Guide](https://bensonlee5.github.io/dagzoo/docs/usage-guide/)
 - Generated artifacts and handoff manifest schema: [Output Format](https://bensonlee5.github.io/dagzoo/docs/output-format/)
-
-## License
-
-`dagzoo` is released under the Apache License 2.0. See [LICENSE](LICENSE) for
-the full license text, [NOTICE](NOTICE) for the project notice, and
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for repo-level third-party
-disclosure guidance.
