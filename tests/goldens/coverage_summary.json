@@ -7,6 +7,21 @@
     "mean_total_function_plans": 0.0,
     "metadata_coverage_rate": 0.0
   },
+  "steering": {
+    "authoring_form": "disabled",
+    "enabled": false,
+    "preset": null,
+    "resolution_checks": {
+      "datasets_checked": 0,
+      "datasets_matching": 0,
+      "datasets_mismatched": 0,
+      "match_rate": null,
+      "mismatch_counts": {},
+      "mismatched_dataset_indices": []
+    },
+    "stage_count": 0,
+    "stages": []
+  },
   "metrics": {
     "linearity_proxy": {
       "count": 1,

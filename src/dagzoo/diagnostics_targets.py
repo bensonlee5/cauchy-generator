@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from dagzoo.config import clone_generator_config
 from dagzoo.diagnostics import CoverageAggregationConfig
 
 if TYPE_CHECKING:
-    from dagzoo.config import DiagnosticsConfig
+    from dagzoo.config import DiagnosticsConfig, GeneratorConfig
 
 TargetBand = tuple[float, float]
 
@@ -61,9 +62,16 @@ def coerce_quantiles(raw: object) -> tuple[float, ...]:
 
 
 def build_diagnostics_aggregation_config(
-    diagnostics_config: DiagnosticsConfig,
+    config: GeneratorConfig | DiagnosticsConfig,
 ) -> CoverageAggregationConfig:
     """Build diagnostics coverage aggregation config from diagnostics settings."""
+
+    if hasattr(config, "diagnostics"):
+        generator_config = cast("GeneratorConfig", config)
+        diagnostics_config = generator_config.diagnostics
+    else:
+        generator_config = None
+        diagnostics_config = cast("DiagnosticsConfig", config)
 
     return CoverageAggregationConfig(
         include_spearman=bool(diagnostics_config.include_spearman),
@@ -72,4 +80,9 @@ def build_diagnostics_aggregation_config(
         underrepresented_threshold=float(diagnostics_config.underrepresented_threshold),
         max_values_per_metric=diagnostics_config.max_values_per_metric,
         target_bands=merge_target_bands(diagnostics_config.meta_feature_targets),
+        steering_config=(
+            clone_generator_config(generator_config, revalidate=False)
+            if generator_config is not None
+            else None
+        ),
     )

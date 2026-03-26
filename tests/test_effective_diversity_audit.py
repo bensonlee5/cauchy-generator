@@ -4,6 +4,7 @@ import json
 import pytest
 import yaml
 
+from dagzoo import generate_batch
 from dagzoo.bench.corpus_probe import CorpusProbeResult
 from dagzoo.config import GeneratorConfig
 from dagzoo.diagnostics.effective_diversity import (
@@ -69,6 +70,25 @@ def _probe_result(
         coverage_summary=coverage_summary,
         filter_summary=None,
     )
+
+
+def _small_probe_config(*, steering_enabled: bool) -> GeneratorConfig:
+    cfg = GeneratorConfig.from_yaml("configs/default.yaml")
+    cfg.runtime.device = "cpu"
+    cfg.filter.enabled = False
+    cfg.dataset.task = "regression"
+    cfg.dataset.n_train = 32
+    cfg.dataset.n_test = 16
+    cfg.dataset.n_features_min = 8
+    cfg.dataset.n_features_max = 8
+    cfg.graph.n_nodes_min = 4
+    cfg.graph.n_nodes_max = 4
+    cfg.diagnostics.enabled = True
+    if steering_enabled:
+        cfg.steering.enabled = True
+        cfg.steering.preset = "anti_memorization_piecewise_v1"
+    cfg.validate_generation_constraints()
+    return cfg
 
 
 def test_compare_coverage_summaries_classifies_shift_severity() -> None:
@@ -392,6 +412,61 @@ def test_run_effective_diversity_audit_uses_shared_probe_coverage_config_from_ba
         (7, (0.1, 0.25, 0.5, 0.75, 0.9), 3),
         (7, (0.1, 0.25, 0.5, 0.75, 0.9), 3),
     ]
+
+
+def test_run_effective_diversity_audit_uses_run_specific_steering_analysis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "dagzoo.core.metrics_torch._compute_wins_ratio_proxy",
+        lambda **_kwargs: 0.6,
+    )
+    monkeypatch.setattr(
+        "dagzoo.bench.corpus_probe.run_throughput_benchmark",
+        lambda *_args, **_kwargs: {"datasets_per_minute": 123.0},
+    )
+
+    def _stub_iter_throughput_measure_bundles(config, *, num_datasets, device, **_kwargs):
+        return iter(
+            generate_batch(
+                config,
+                num_datasets=int(num_datasets),
+                seed=int(config.seed),
+                device=device,
+            )
+        )
+
+    monkeypatch.setattr(
+        "dagzoo.bench.corpus_probe.iter_throughput_measure_bundles",
+        _stub_iter_throughput_measure_bundles,
+    )
+
+    baseline_config = _small_probe_config(steering_enabled=True)
+    variant_config = _small_probe_config(steering_enabled=False)
+    report = run_effective_diversity_audit(
+        baseline_config=baseline_config,
+        baseline_config_path="configs/base.yaml",
+        variant_configs=[variant_config],
+        variant_config_paths=["configs/variant.yaml"],
+        suite="smoke",
+        num_datasets=5,
+        warmup=0,
+        device="cpu",
+        warn_threshold_pct=2.5,
+        fail_threshold_pct=5.0,
+    )
+
+    assert (
+        report["baseline"]["coverage_summary"]["histogram_bins"]
+        == report["variants"][0]["coverage_summary"]["histogram_bins"]
+    )
+    baseline_steering = report["baseline"]["coverage_summary"]["steering"]
+    variant_steering = report["variants"][0]["coverage_summary"]["steering"]
+    assert baseline_steering["enabled"] is True
+    assert baseline_steering["resolution_checks"]["datasets_checked"] == 5
+    assert variant_steering["enabled"] is False
+    assert variant_steering["stage_count"] == 0
+    assert variant_steering["resolution_checks"]["datasets_checked"] == 0
 
 
 def test_run_effective_diversity_audit_ignores_diagnostics_only_drift_in_comparisons(

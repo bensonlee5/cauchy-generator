@@ -227,9 +227,7 @@ def run_generate_command(args: argparse.Namespace) -> int:
         if diagnostics_root is None:
             diagnostics_root = "diagnostics_artifacts"
         diagnostics_out_dir = Path(diagnostics_root)
-        diagnostics_aggregator = CoverageAggregator(
-            build_diagnostics_aggregation_config(config.diagnostics)
-        )
+        diagnostics_aggregator = CoverageAggregator(build_diagnostics_aggregation_config(config))
     print(
         f"Hardware backend={hw.backend} device='{hw.device_name}' "
         f"memory_gb={hw.total_memory_gb} peak_flops={hw.peak_flops:.3e} tier={hw.tier} "
