@@ -70,6 +70,18 @@ def test_build_dataloader_returns_task_sized_samples() -> None:
     assert torch.equal(batch["y_test"], direct_sample["y_test"])
 
 
+def test_build_dataloader_accepts_recipe_reference() -> None:
+    direct_sample = next(
+        iter(DagzooDataset("recipe:default-baseline", num_datasets=1, seed=91, device="cpu"))
+    )
+    loader = build_dataloader("recipe:default-baseline", num_datasets=1, seed=91, device="cpu")
+    batch = next(iter(loader))
+
+    assert batch["feature_types"] == direct_sample["feature_types"]
+    assert batch["metadata"]["dataset_id"] == direct_sample["metadata"]["dataset_id"]
+    assert torch.equal(batch["X_train"], direct_sample["X_train"])
+
+
 def test_dagzoo_dataset_handles_zero_num_datasets() -> None:
     cfg = _tiny_bridge_config()
     dataset = DagzooDataset(cfg, num_datasets=0, seed=7, device="cpu")

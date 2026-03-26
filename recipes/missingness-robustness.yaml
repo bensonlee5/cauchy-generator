@@ -1,0 +1,32 @@
+seed: 41
+
+dataset:
+  task: classification
+  n_train: 512
+  n_test: 256
+  n_features_min: 12
+  n_features_max: 48
+  n_classes_min: 2
+  n_classes_max: 10
+  categorical_ratio_min: 0.2
+  categorical_ratio_max: 0.8
+  max_categorical_cardinality: 16
+  missing_rate: 0.25
+  missing_mechanism: mnar
+  missing_mnar_logit_scale: 2.0
+
+graph:
+  n_nodes_min: 4
+  n_nodes_max: 24
+
+runtime:
+  device: cpu
+
+output:
+  out_dir: data/recipes/missingness_robustness
+
+diagnostics:
+  enabled: false
+
+filter:
+  enabled: false

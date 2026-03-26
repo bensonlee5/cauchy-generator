@@ -12,6 +12,7 @@ from dagzoo.bench.corpus_probe import (
     run_corpus_probe,
 )
 from dagzoo.config import GeneratorConfig
+from dagzoo.recipes import parse_recipe_reference, serialize_config_reference
 
 from .compare import (
     CORE_DIVERSITY_METRICS,
@@ -56,7 +57,11 @@ def _build_variant_labels(variant_config_paths: list[str]) -> list[str]:
     seen: dict[str, int] = {}
     labels: list[str] = []
     for idx, path in enumerate(variant_config_paths, start=1):
-        stem = path.rsplit("/", 1)[-1].rsplit(".", 1)[0] if path else f"variant_{idx}"
+        recipe_name = parse_recipe_reference(path)
+        if recipe_name is not None:
+            stem = recipe_name
+        else:
+            stem = path.rsplit("/", 1)[-1].rsplit(".", 1)[0] if path else f"variant_{idx}"
         count = seen.get(stem, 0)
         seen[stem] = count + 1
         labels.append(stem if count == 0 else f"{stem}_{count + 1}")
@@ -95,7 +100,7 @@ def run_effective_diversity_audit(
     baseline_probe = run_corpus_probe(
         baseline_config,
         label="baseline",
-        config_path=baseline_config_path,
+        config_path=serialize_config_reference(baseline_config_path),
         suite=suite,
         num_datasets=probe_num_datasets,
         warmup=probe_warmup_datasets,
@@ -118,7 +123,7 @@ def run_effective_diversity_audit(
         variant_probe = run_corpus_probe(
             variant_config,
             label=label,
-            config_path=config_path,
+            config_path=serialize_config_reference(config_path),
             suite=suite,
             num_datasets=probe_num_datasets,
             warmup=probe_warmup_datasets,

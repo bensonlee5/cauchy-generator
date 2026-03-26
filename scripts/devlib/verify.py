@@ -38,6 +38,8 @@ def build_verify_plan(
         commands.extend(_code_quick_commands(report, graph_changed=bool(report.changed_modules)))
     if mode in {"docs", "full"} or docs_only:
         commands.extend(_docs_commands())
+    if mode in {"quick", "code", "docs", "full", "affected"}:
+        commands.append(_adoption_surface_command())
     if mode in {"code", "full"} and not docs_only:
         commands.extend(_pytest_commands(incremental=incremental, parallel=parallel))
     if mode == "affected" and not docs_only:
@@ -184,6 +186,13 @@ def _build_pytest_command(
         argv.extend(("-n", "auto"))
     argv.extend(targets)
     return CommandSpec(label="pytest", argv=tuple(argv))
+
+
+def _adoption_surface_command() -> CommandSpec:
+    return CommandSpec(
+        label="docs adoption surface",
+        argv=(python_tool("python"), "scripts/ci/check_adoption_surface.py"),
+    )
 
 
 def _bench_commands() -> list[CommandSpec]:

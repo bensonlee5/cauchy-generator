@@ -216,6 +216,7 @@ def test_verify_plan_code_includes_incremental_parallel_pytest_and_architecture_
     assert "ruff check" in labels
     assert "mypy" in labels
     assert "deptry" in labels
+    assert "docs adoption surface" in labels
     assert "import-linter" in labels
     pytest_command = next(command for command in plan.commands if command.label == "pytest")
     assert "--testmon" in pytest_command.argv
@@ -242,6 +243,22 @@ def test_verify_plan_affected_uses_targeted_pytest_when_safe() -> None:
     assert "tests/test_cli_validation.py" in plan.report.pytest_selection.targets
     assert pytest_command.argv[1:5] == ("-q", "--testmon", "-n", "auto")
     assert "tests/test_cli_validation.py" in pytest_command.argv
+
+
+def test_verify_plan_docs_includes_adoption_surface_check() -> None:
+    verify_module = _import_dev_module("devlib.verify")
+
+    plan = verify_module.build_verify_plan(
+        mode="docs",
+        source="working-tree",
+        base=None,
+        files=["README.md"],
+        incremental=False,
+        parallel=False,
+    )
+
+    labels = [command.label for command in plan.commands]
+    assert "docs adoption surface" in labels
 
 
 def test_verify_plan_affected_falls_back_to_full_for_tooling_changes() -> None:

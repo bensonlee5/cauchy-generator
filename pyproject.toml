@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dagzoo"
-version = "0.14.3"
+version = "0.14.4"
 description = "Synthetic tabular data generator for causal modeling"
 readme = { file = "README.md", content-type = "text/markdown" }
 authors = [
@@ -75,6 +75,13 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dagzoo"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"recipes/default-baseline.yaml" = "dagzoo/recipes/resources/default-baseline.yaml"
+"recipes/tabpfn-v1-prior-approx.yaml" = "dagzoo/recipes/resources/tabpfn-v1-prior-approx.yaml"
+"recipes/high-cardinality-stress.yaml" = "dagzoo/recipes/resources/high-cardinality-stress.yaml"
+"recipes/missingness-robustness.yaml" = "dagzoo/recipes/resources/missingness-robustness.yaml"
+"recipes/shift-stress.yaml" = "dagzoo/recipes/resources/shift-stress.yaml"
 
 [tool.uv]
 package = true

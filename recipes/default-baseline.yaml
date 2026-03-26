@@ -1,0 +1,31 @@
+seed: 11
+
+dataset:
+  task: classification
+  n_train: 768
+  n_test: 256
+  n_features_min: 16
+  n_features_max: 64
+  n_classes_min: 2
+  n_classes_max: 10
+  categorical_ratio_min: 0.0
+  categorical_ratio_max: 1.0
+  max_categorical_cardinality: 9
+  missing_rate: 0.0
+  missing_mechanism: none
+
+graph:
+  n_nodes_min: 2
+  n_nodes_max: 32
+
+runtime:
+  device: cpu
+
+output:
+  out_dir: data/recipes/default_baseline
+
+diagnostics:
+  enabled: false
+
+filter:
+  enabled: false

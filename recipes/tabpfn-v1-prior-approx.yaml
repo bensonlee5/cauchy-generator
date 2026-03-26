@@ -1,0 +1,31 @@
+seed: 21
+
+dataset:
+  task: classification
+  n_train: 512
+  n_test: 512
+  n_features_min: 8
+  n_features_max: 64
+  n_classes_min: 2
+  n_classes_max: 10
+  categorical_ratio_min: 0.0
+  categorical_ratio_max: 0.0
+  max_categorical_cardinality: 9
+  missing_rate: 0.0
+  missing_mechanism: none
+
+graph:
+  n_nodes_min: 4
+  n_nodes_max: 24
+
+runtime:
+  device: cpu
+
+output:
+  out_dir: data/recipes/tabpfn_v1_prior_approx
+
+diagnostics:
+  enabled: false
+
+filter:
+  enabled: false

@@ -6,6 +6,16 @@ import pytest
 from dagzoo.cli.entrypoint import main
 
 
+def test_recipe_list_cli_prints_curated_catalog(capsys: pytest.CaptureFixture[str]) -> None:
+    code = main(["recipe", "list"])
+
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "Curated dagzoo recipes" in captured.out
+    assert "recipe:default-baseline" in captured.out
+    assert "tabpfn-v1-prior-approx" in captured.out
+
+
 def test_generate_cli_prints_effective_config_and_resolution_trace(
     tmp_path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -213,6 +223,38 @@ def test_benchmark_cli_prints_configs_and_writes_baseline(
     assert "Effective config [custom]:" in captured.out
     assert "Resolution trace [custom]:" in captured.out
     assert "Wrote benchmark baseline:" in captured.out
+
+
+def test_benchmark_cli_accepts_recipe_reference_for_custom_preset(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.benchmark.run_benchmark_suite",
+        lambda *args, **kwargs: {
+            "preset_results": [],
+            "regression": {"status": "pass", "issues": [], "hard_fail": False},
+        },
+    )
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.benchmark.write_suite_json", lambda _summary, path: Path(path)
+    )
+
+    code = main(
+        [
+            "benchmark",
+            "--config",
+            "recipe:default-baseline",
+            "--preset",
+            "custom",
+            "--suite",
+            "smoke",
+            "--json-out",
+            str(tmp_path / "summary.json"),
+            "--no-memory",
+        ]
+    )
+
+    assert code == 0
 
 
 def test_diversity_audit_cli_writes_summary_and_status(

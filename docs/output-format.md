@@ -1,7 +1,15 @@
-# Output Format
+# Artifacts & API
 
 Consumer-facing specification for generated data. This is a **contract
 document** — downstream users can rely on the guarantees described here.
+
+Public config references accepted by the main user-facing surfaces are:
+
+- a YAML path
+- a curated recipe reference in the form `recipe:<name>`
+
+That contract applies to `dagzoo generate`, `dagzoo benchmark --preset custom`,
+`dagzoo diversity-audit`, and `build_dataloader(...)`.
 
 ______________________________________________________________________
 
@@ -87,7 +95,7 @@ as `tab-foundry`.
 | `schema_name`         | str    | Exact string `dagzoo_generate_handoff_manifest`                                   |
 | `schema_version`      | int    | Exact integer `1`                                                                 |
 | `identity`            | object | Stable generate-run and corpus ids plus source-family tag                         |
-| `generate_invocation` | object | Config path plus structured user-supplied CLI overrides                           |
+| `generate_invocation` | object | Config reference plus structured user-supplied CLI overrides                      |
 | `artifacts`           | object | Absolute paths for the run root, generated output, and effective-config artifacts |
 | `artifacts_relative`  | object | Manifest-relative artifact paths for portable downstream consumption              |
 | `checksums`           | object | SHA-256 digests for effective-config artifacts                                    |
@@ -107,6 +115,9 @@ Current `identity` keys:
 
 - `config_path`
 - `overrides`
+
+`generate_invocation.config_path` records either the literal `recipe:<name>`
+reference used on the CLI or the resolved YAML path for path-based runs.
 
 Current `generate_invocation.overrides` keys:
 

@@ -12,6 +12,7 @@ from .commands.diagnostics import run_diversity_audit_command
 from .commands.filter import run_filter_command
 from .commands.generate import run_generate_command
 from .commands.hardware import run_hardware_command
+from .commands.recipe import run_recipe_list_command
 from .parsing import (
     DEVICE_CHOICES,
     HARDWARE_POLICY_CHOICES,
@@ -42,7 +43,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     g = sub.add_parser("generate", help="Generate synthetic datasets.")
     g.set_defaults(handler=run_generate_command)
-    g.add_argument("--config", required=True, help="Path to YAML config.")
+    g.add_argument(
+        "--config",
+        required=True,
+        help="YAML config path or curated recipe reference (`recipe:<name>`).",
+    )
     g.add_argument("--out", default=None, help="Output directory for parquet shards.")
     g.add_argument(
         "--handoff-root",
@@ -218,7 +223,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     b = sub.add_parser("benchmark", help="Run benchmark suite across one or more presets.")
     b.set_defaults(handler=run_benchmark_command)
-    b.add_argument("--config", default=None, help="Optional YAML config for preset 'custom'.")
+    b.add_argument(
+        "--config",
+        default=None,
+        help="Optional YAML config path or `recipe:<name>` for preset 'custom'.",
+    )
     b.add_argument(
         "--device",
         default=None,
@@ -324,13 +333,13 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument(
         "--baseline-config",
         required=True,
-        help="Baseline generator config YAML path.",
+        help="Baseline generator config YAML path or `recipe:<name>`.",
     )
     d.add_argument(
         "--variant-config",
         action="append",
         required=True,
-        help="Variant generator config YAML path. Repeat for multiple variants.",
+        help="Variant generator config YAML path or `recipe:<name>`. Repeat for multiple variants.",
     )
     d.add_argument(
         "--warn-threshold-pct",
@@ -387,4 +396,9 @@ def build_parser() -> argparse.ArgumentParser:
         choices=DEVICE_CHOICES,
         help="Requested device (auto/cpu/cuda/mps).",
     )
+
+    r = sub.add_parser("recipe", help="Inspect the curated public recipe catalog.")
+    r_sub = r.add_subparsers(dest="recipe_command", required=True)
+    r_list = r_sub.add_parser("list", help="List curated recipe references.")
+    r_list.set_defaults(handler=run_recipe_list_command)
     return parser

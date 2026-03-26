@@ -128,6 +128,24 @@ def test_generate_cli_rejects_removed_parallel_generation_runtime_keys(tmp_path)
     assert not (tmp_path / "out" / "effective_config_trace.yaml").exists()
 
 
+def test_generate_cli_rejects_unknown_recipe(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "generate",
+                "--config",
+                "recipe:not-a-real-recipe",
+                "--num-datasets",
+                "1",
+                "--no-dataset-write",
+            ]
+        )
+
+    assert int(exc.value.code) == 2
+    captured = capsys.readouterr()
+    assert "dagzoo recipe list" in captured.err
+
+
 def test_fixed_layout_subcommand_is_removed() -> None:
     with pytest.raises(SystemExit) as exc:
         main(["fixed-layout", "sample", "--config", "configs/default.yaml"])
