@@ -78,6 +78,17 @@ def test_dagzoo_dataset_handles_zero_num_datasets() -> None:
     assert list(dataset) == []
 
 
+def test_dagzoo_dataset_rejects_inline_filter_enabled() -> None:
+    cfg = _tiny_bridge_config()
+    cfg.filter.enabled = True
+
+    with pytest.raises(ValueError, match="Inline filtering has been removed from generate"):
+        _ = DagzooDataset(cfg, num_datasets=1, seed=7, device="cpu")
+
+    with pytest.raises(ValueError, match="Inline filtering has been removed from generate"):
+        _ = build_dataloader(cfg, num_datasets=1, seed=7, device="cpu")
+
+
 def test_dagzoo_dataset_rejects_multi_worker_loading(monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = _tiny_bridge_config()
 
