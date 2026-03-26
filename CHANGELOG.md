@@ -10,6 +10,22 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.14.2] - 2026-03-25
+
+### Added
+
+- Added discoverable steering smoke presets for generation and benchmark
+  workflows under `configs/preset_steering_anti_memorization_*`.
+- Added the steering feature guide and usage-guide / benchmark-guide links for
+  the shipped `anti_memorization_piecewise_v1` workflow.
+
+### Changed
+
+- Steering benchmark smoke documentation now points users to
+  `diagnostics_artifacts` and the existing `coverage_summary.json` /
+  `coverage_summary.md` contract instead of introducing a new benchmark
+  `steering_guardrails` summary field.
+
 ## [0.14.1] - 2026-03-25
 
 ### Changed

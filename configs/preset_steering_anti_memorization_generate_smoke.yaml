@@ -1,0 +1,36 @@
+seed: 76
+
+dataset:
+  task: regression
+  n_train: 256
+  n_test: 128
+  n_features_min: 8
+  n_features_max: 24
+
+graph:
+  n_nodes_min: 2
+  n_nodes_max: 12
+
+steering:
+  enabled: true
+  preset: anti_memorization_piecewise_v1
+
+runtime:
+  device: cpu
+
+output:
+  out_dir: data/run_steering_anti_memorization_smoke
+
+diagnostics:
+  enabled: true
+  include_spearman: false
+  histogram_bins: 8
+  quantiles: [0.1, 0.5, 0.9]
+  underrepresented_threshold: 0.5
+  max_values_per_metric: 10000
+  meta_feature_targets:
+    shift_graph_scale: [0.0, 0.5]
+    shift_noise_variance_multiplier: [1.0, 1.5]
+
+filter:
+  enabled: false

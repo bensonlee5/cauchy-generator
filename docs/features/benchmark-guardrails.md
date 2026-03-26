@@ -71,6 +71,14 @@ dagzoo benchmark \
   --suite smoke \
   --no-memory \
   --out-dir benchmarks/results/smoke_noise_guardrails
+
+dagzoo benchmark \
+  --config configs/preset_steering_anti_memorization_benchmark_smoke.yaml \
+  --preset custom \
+  --suite smoke \
+  --diagnostics \
+  --no-memory \
+  --out-dir benchmarks/results/smoke_steering
 ```
 
 ______________________________________________________________________
@@ -170,6 +178,11 @@ When present in a run summary, inspect:
 
 Also review throughput/latency aggregates for preset/suite trends.
 
+For steering-enabled runs, inspect `preset_results[*].diagnostics_artifacts`
+first and then open the pointed `coverage_summary.json` / `coverage_summary.md`
+files. Steering stays on the diagnostics artifact contract; benchmark summaries
+do not emit a separate `steering_guardrails` field.
+
 ______________________________________________________________________
 
 ## Related docs
@@ -177,3 +190,4 @@ ______________________________________________________________________
 - Workflow hub: [usage-guide.md](../usage-guide.md)
 - Output contract: [output-format.md](../output-format.md)
 - Noise workflows: [noise.md](noise.md)
+- Steering workflows: [steering.md](steering.md)
