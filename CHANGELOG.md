@@ -10,6 +10,19 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.14.3] - 2026-03-26
+
+### Added
+
+- Added a PyTorch-native in-process bridge under `dagzoo.pytorch` with
+  `DagzooDataset` and `build_dataloader(...)` for streaming canonical
+  `DatasetBundle` outputs directly into researcher-facing training loops.
+
+### Changed
+
+- The package root now re-exports `DagzooDataset`, `DagzooSample`, and
+  `build_dataloader(...)` for shorter PyTorch bridge imports.
+
 ## [0.14.2] - 2026-03-25
 
 ### Added
