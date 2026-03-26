@@ -15,6 +15,7 @@ def run_recipe_list_command(_args: argparse.Namespace) -> int:
     for spec in iter_recipe_specs():
         print(
             f"- {spec.reference}: {spec.summary} "
-            f"[confidence={spec.confidence_tier}; regime={spec.expected_regime}]"
+            f"[category={spec.category}; confidence={spec.confidence_tier}; "
+            f"regime={spec.expected_regime}]"
         )
     return 0

@@ -79,6 +79,7 @@ def test_cli_parser_exposes_only_supported_top_level_commands() -> None:
         "filter",
         "generate",
         "hardware",
+        "recipe",
     }
 
 

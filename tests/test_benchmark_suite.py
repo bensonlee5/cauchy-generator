@@ -407,6 +407,27 @@ def test_resolve_preset_run_specs_expands_builtin_cpu_rows() -> None:
     ]
 
 
+def test_resolve_preset_run_specs_uses_recipe_name_for_custom_recipe_config() -> None:
+    specs = resolve_preset_run_specs(
+        preset_keys=["custom"],
+        config_path="recipe:default-baseline",
+    )
+
+    assert len(specs) == 1
+    assert specs[0].key == "default-baseline"
+    assert specs[0].config.benchmark.preset_name == "medium_cuda"
+
+
+def test_resolve_preset_run_specs_preserves_yaml_custom_preset_name() -> None:
+    specs = resolve_preset_run_specs(
+        preset_keys=["custom"],
+        config_path="configs/preset_shift_benchmark_smoke.yaml",
+    )
+
+    assert len(specs) == 1
+    assert specs[0].key == "shift_smoke"
+
+
 def test_run_benchmark_suite_emits_stage_and_filter_pressure_metrics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -14,6 +14,7 @@ def test_recipe_list_cli_prints_curated_catalog(capsys: pytest.CaptureFixture[st
     assert "Curated dagzoo recipes" in captured.out
     assert "recipe:default-baseline" in captured.out
     assert "tabpfn-v1-prior-approx" in captured.out
+    assert "category=reference prior" in captured.out
 
 
 def test_generate_cli_prints_effective_config_and_resolution_trace(
@@ -228,12 +229,19 @@ def test_benchmark_cli_prints_configs_and_writes_baseline(
 def test_benchmark_cli_accepts_recipe_reference_for_custom_preset(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(
-        "dagzoo.cli.commands.benchmark.run_benchmark_suite",
-        lambda *args, **kwargs: {
+    def _stub_run_benchmark_suite(preset_specs, *args, **kwargs):
+        _ = args
+        _ = kwargs
+        assert len(preset_specs) == 1
+        assert preset_specs[0].key == "default-baseline"
+        return {
             "preset_results": [],
             "regression": {"status": "pass", "issues": [], "hard_fail": False},
-        },
+        }
+
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.benchmark.run_benchmark_suite",
+        _stub_run_benchmark_suite,
     )
     monkeypatch.setattr(
         "dagzoo.cli.commands.benchmark.write_suite_json", lambda _summary, path: Path(path)

@@ -9,7 +9,7 @@ from dagzoo.config import (
     clone_generator_config,
 )
 from dagzoo.core.config_resolution import BenchmarkSmokeCaps, cap_rows_spec_to_total
-from dagzoo.recipes import load_config_reference
+from dagzoo.recipes import load_config_reference, parse_recipe_reference
 
 from .constants import (
     SMOKE_N_FEATURES_CAP,
@@ -132,7 +132,8 @@ def resolve_preset_run_specs(
             if not config_path:
                 raise ValueError("Preset 'custom' requires --config.")
             config = load_config_reference(config_path)
-            preset_key = config.benchmark.preset_name or "custom"
+            recipe_name = parse_recipe_reference(config_path)
+            preset_key = recipe_name or config.benchmark.preset_name or "custom"
             resolved.append(
                 PresetRunSpec(key=preset_key, config=config, device=config.runtime.device)
             )
