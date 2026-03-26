@@ -77,7 +77,29 @@ def build_corpus_probe_coverage_config(config: GeneratorConfig) -> CoverageAggre
         underrepresented_threshold=float(base.underrepresented_threshold),
         max_values_per_metric=base.max_values_per_metric,
         target_bands=dict(base.target_bands),
-        steering_config=base.steering_config,
+    )
+
+
+def _effective_probe_coverage_config(
+    *,
+    realized_config: GeneratorConfig,
+    coverage_config: CoverageAggregationConfig | None,
+) -> CoverageAggregationConfig:
+    """Build one per-probe coverage config from shared settings plus realized steering."""
+
+    template = (
+        coverage_config
+        if coverage_config is not None
+        else build_corpus_probe_coverage_config(realized_config)
+    )
+    return CoverageAggregationConfig(
+        include_spearman=bool(template.include_spearman),
+        histogram_bins=max(1, int(template.histogram_bins)),
+        quantiles=tuple(float(value) for value in template.quantiles),
+        underrepresented_threshold=float(template.underrepresented_threshold),
+        max_values_per_metric=template.max_values_per_metric,
+        target_bands=dict(template.target_bands),
+        steering_config=clone_generator_config(realized_config, revalidate=False),
     )
 
 
@@ -146,9 +168,10 @@ def run_corpus_probe(
     )
 
     coverage_aggregator = CoverageAggregator(
-        coverage_config
-        if coverage_config is not None
-        else build_corpus_probe_coverage_config(realized_config)
+        _effective_probe_coverage_config(
+            realized_config=realized_config,
+            coverage_config=coverage_config,
+        )
     )
     filter_datasets_per_minute: float | None = None
     filter_accepted_datasets_per_minute: float | None = None

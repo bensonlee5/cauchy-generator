@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from dagzoo import generate_batch
 from dagzoo.bench.corpus_probe import resolve_corpus_probe_counts, run_corpus_probe
 from dagzoo.bench.stage_metrics import FilterStageMeasurement
 from dagzoo.config import GeneratorConfig
@@ -17,6 +18,25 @@ def _bundle(*, seed: int) -> DatasetBundle:
         feature_types=["num", "num", "num", "num"],
         metadata={"dataset_seed": seed},
     )
+
+
+def _steering_fixture_config() -> GeneratorConfig:
+    cfg = GeneratorConfig.from_yaml("configs/default.yaml")
+    cfg.runtime.device = "cpu"
+    cfg.filter.enabled = False
+    cfg.dataset.task = "regression"
+    cfg.dataset.n_train = 32
+    cfg.dataset.n_test = 16
+    cfg.dataset.n_features_min = 8
+    cfg.dataset.n_features_max = 8
+    cfg.graph.n_nodes_min = 4
+    cfg.graph.n_nodes_max = 4
+    cfg.diagnostics.enabled = True
+    cfg.diagnostics.histogram_bins = 8
+    cfg.steering.enabled = True
+    cfg.steering.preset = "anti_memorization_piecewise_v1"
+    cfg.validate_generation_constraints()
+    return cfg
 
 
 def test_resolve_corpus_probe_counts_uses_baseline_defaults_and_smoke_caps() -> None:
@@ -226,3 +246,51 @@ def test_run_corpus_probe_uses_injected_coverage_config_over_local_diagnostics(
     assert result.coverage_summary["histogram_bins"] == 7
     assert result.coverage_summary["quantiles"] == [0.25, 0.5, 0.75]
     assert result.coverage_summary["max_values_per_metric"] == 2
+
+
+def test_run_corpus_probe_preserves_steering_with_injected_coverage_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "dagzoo.core.metrics_torch._compute_wins_ratio_proxy",
+        lambda **_kwargs: 0.6,
+    )
+    monkeypatch.setattr(
+        "dagzoo.bench.corpus_probe.run_throughput_benchmark",
+        lambda *_args, **_kwargs: {"datasets_per_minute": 123.0},
+    )
+
+    def _stub_iter_throughput_measure_bundles(config, *, num_datasets, device, **_kwargs):
+        return iter(
+            generate_batch(
+                config,
+                num_datasets=int(num_datasets),
+                seed=int(config.seed),
+                device=device,
+            )
+        )
+
+    monkeypatch.setattr(
+        "dagzoo.bench.corpus_probe.iter_throughput_measure_bundles",
+        _stub_iter_throughput_measure_bundles,
+    )
+
+    cfg = _steering_fixture_config()
+    coverage_config = CoverageAggregationConfig(histogram_bins=7)
+    result = run_corpus_probe(
+        cfg,
+        label="baseline",
+        config_path="configs/default.yaml",
+        suite="smoke",
+        num_datasets=5,
+        warmup=0,
+        device="cpu",
+        coverage_config=coverage_config,
+    )
+
+    assert coverage_config.steering_config is None
+    assert result.coverage_summary["histogram_bins"] == 7
+    steering = result.coverage_summary["steering"]
+    assert steering["enabled"] is True
+    assert steering["preset"] == "anti_memorization_piecewise_v1"
+    assert steering["resolution_checks"]["datasets_checked"] == 5

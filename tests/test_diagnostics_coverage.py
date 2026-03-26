@@ -8,15 +8,26 @@ import yaml
 
 from dagzoo import generate_batch
 from dagzoo.cli.entrypoint import main
-from dagzoo.config import GeneratorConfig
+from dagzoo.config import DiagnosticsConfig, GeneratorConfig
+from dagzoo.core.steering import SteeringResolution
 from dagzoo.diagnostics.coverage import (
     CoverageAggregationConfig,
     CoverageAggregator,
+    _bundle_config_missing_rate,
+    _coerce_optional_float,
+    _coerce_optional_int,
+    _float_matches,
+    _fmt_counts,
+    _fmt_int_range,
+    _fmt_scalar_summary,
+    _fmt_value_range,
+    _ValueAccumulator,
     write_coverage_summary_json,
     write_coverage_summary_markdown,
 )
 from dagzoo.diagnostics.types import DatasetMetrics
 from dagzoo.diagnostics_targets import build_diagnostics_aggregation_config
+from dagzoo.types import DatasetBundle
 
 
 def _metric_fixture(**overrides: float | int | str | None) -> DatasetMetrics:
@@ -209,6 +220,59 @@ def test_target_band_histogram_uses_target_range_for_coverage() -> None:
     assert len(line["underrepresented_bins"]) > 0
 
 
+def test_coverage_steering_helper_fallbacks_handle_invalid_inputs() -> None:
+    accumulator = _ValueAccumulator()
+    for value in (True, "bad", float("inf"), float("nan")):
+        accumulator.update(value)
+
+    assert accumulator.finalize() == {"count": 0, "min": None, "max": None, "mean": None}
+    assert _coerce_optional_int(True) is None
+    assert _coerce_optional_int("7") is None
+    assert _coerce_optional_int(float("inf")) is None
+    assert _coerce_optional_float(False) is None
+    assert _coerce_optional_float("0.5") is None
+    assert _coerce_optional_float(float("nan")) is None
+    assert (
+        _bundle_config_missing_rate(DatasetBundle(None, None, None, None, [], metadata={})) is None
+    )
+    assert (
+        _bundle_config_missing_rate(
+            DatasetBundle(None, None, None, None, [], metadata={"config": {"dataset": "bad"}})
+        )
+        is None
+    )
+    assert _float_matches(None, None) is True
+    assert _float_matches(None, 1.0) is False
+    assert _fmt_counts([]) == "-"
+    assert _fmt_int_range([]) == "-"
+    assert _fmt_int_range({"min": "bad", "max": 3}) == "-"
+    assert _fmt_value_range([]) == "-"
+    assert _fmt_value_range({"min": 0.1, "max": "bad"}) == "-"
+    assert _fmt_scalar_summary([]) == "-"
+    assert _fmt_scalar_summary({"min": 0.1, "max": 0.2}) == "-"
+
+
+def test_build_diagnostics_aggregation_config_accepts_diagnostics_config_directly() -> None:
+    aggregation_config = build_diagnostics_aggregation_config(
+        DiagnosticsConfig(
+            include_spearman=True,
+            histogram_bins=7,
+            quantiles=[0.1, 0.9],
+            underrepresented_threshold=0.25,
+            max_values_per_metric=11,
+            meta_feature_targets={"linearity_proxy": [0.2, 0.8]},
+        )
+    )
+
+    assert aggregation_config.include_spearman is True
+    assert aggregation_config.histogram_bins == 7
+    assert aggregation_config.quantiles == (0.1, 0.9)
+    assert aggregation_config.underrepresented_threshold == pytest.approx(0.25)
+    assert aggregation_config.max_values_per_metric == 11
+    assert aggregation_config.target_bands == {"linearity_proxy": (0.2, 0.8)}
+    assert aggregation_config.steering_config is None
+
+
 def test_coverage_summary_includes_dynamic_steering_analysis(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -260,6 +324,139 @@ def test_coverage_summary_steering_analysis_is_reproducible(
         agg_b.update_bundle(bundle)
 
     assert agg_a.build_summary()["steering"] == agg_b.build_summary()["steering"]
+
+
+def test_coverage_summary_steering_guards_skip_invalid_resolution_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _steering_fixture_config()
+    agg = CoverageAggregator(build_diagnostics_aggregation_config(cfg))
+    metrics = _metric_fixture()
+
+    agg._update_steering(
+        DatasetBundle(None, None, None, None, [], metadata={"dataset_index": 0}),
+        metrics,
+    )
+
+    def _out_of_range_resolution(*_args, **_kwargs) -> SteeringResolution:
+        return SteeringResolution(
+            config=cfg,
+            dataset_index=0,
+            run_num_datasets=5,
+            progress=0.0,
+            stage_index=99,
+            stage_name="invalid",
+            stage_progress=0.0,
+        )
+
+    monkeypatch.setattr("dagzoo.diagnostics.coverage.resolve_steering", _out_of_range_resolution)
+    agg._update_steering(
+        DatasetBundle(
+            None,
+            None,
+            None,
+            None,
+            [],
+            metadata={"dataset_index": 0, "run_num_datasets": 5},
+        ),
+        metrics,
+    )
+
+    resolution_checks = agg.build_summary()["steering"]["resolution_checks"]
+    assert resolution_checks["datasets_checked"] == 0
+    assert resolution_checks["datasets_mismatched"] == 0
+
+
+def test_coverage_summary_steering_records_resolution_mismatches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "dagzoo.core.metrics_torch._compute_wins_ratio_proxy",
+        lambda **_kwargs: 0.6,
+    )
+    cfg = _steering_fixture_config()
+    agg = CoverageAggregator(build_diagnostics_aggregation_config(cfg))
+
+    bundle = next(iter(generate_batch(cfg, num_datasets=5, seed=1234, device="cpu")))
+    bundle.metadata["config"]["dataset"]["missing_rate"] = 0.99
+    bundle.metadata["config"]["dataset"]["missing_mechanism"] = "mnar"
+    bundle.metadata["shift"] = {
+        "mode": "noise_drift",
+        "graph_scale": 9.0,
+        "variance_scale": 8.0,
+        "mechanism_logit_tilt": 7.0,
+    }
+    bundle.metadata["noise_distribution"]["family_requested"] = "laplace"
+    bundle.metadata["noise_distribution"]["mixture_weights"] = {"gaussian": 1.0}
+
+    agg.update_bundle(bundle)
+
+    resolution_checks = agg.build_summary()["steering"]["resolution_checks"]
+    assert resolution_checks["datasets_checked"] == 1
+    assert resolution_checks["datasets_matching"] == 0
+    assert resolution_checks["datasets_mismatched"] == 1
+    assert resolution_checks["mismatched_dataset_indices"] == [bundle.metadata["dataset_index"]]
+    assert resolution_checks["mismatch_counts"] == {
+        "config.dataset.missing_mechanism": 1,
+        "config.dataset.missing_rate": 1,
+        "metadata.noise_distribution.family_requested": 1,
+        "metadata.noise_distribution.mixture_weights": 1,
+        "metadata.shift.graph_scale": 1,
+        "metadata.shift.mechanism_logit_tilt": 1,
+        "metadata.shift.mode": 1,
+        "metadata.shift.variance_scale": 1,
+    }
+
+
+def test_coverage_summary_steering_empty_stages_omit_metric_payloads() -> None:
+    cfg = _steering_fixture_config()
+    steering = CoverageAggregator(build_diagnostics_aggregation_config(cfg)).build_summary()[
+        "steering"
+    ]
+
+    assert steering["enabled"] is True
+    assert steering["stage_count"] == 4
+    assert len(steering["stages"]) == 4
+    assert all(stage["metrics"] == {} for stage in steering["stages"])
+
+
+def test_write_coverage_summary_markdown_handles_invalid_steering_payloads(tmp_path) -> None:
+    summary = {
+        "generated_at": "2026-03-25T00:00:00Z",
+        "num_datasets": 1,
+        "histogram_bins": 8,
+        "quantiles": [0.5],
+        "max_values_per_metric": 10,
+        "mechanism_family_summary": {},
+        "steering": {
+            "enabled": True,
+            "authoring_form": "preset",
+            "preset": None,
+            "stage_count": 1,
+            "resolution_checks": "bad",
+            "stages": [
+                "skip-me",
+                {
+                    "name": "stage-a",
+                    "fraction": 0.5,
+                    "dataset_count": 1,
+                    "dataset_index_range": "bad",
+                    "progress_range": "bad",
+                    "realized": "bad",
+                },
+            ],
+        },
+        "metrics": {},
+    }
+
+    markdown = write_coverage_summary_markdown(summary, tmp_path / "coverage_summary.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "## Steering" in markdown
+    assert "- Datasets checked: `-`" in markdown
+    assert "skip-me" not in markdown
+    assert "| stage-a | 0.500 | 1 | - | - | - | - | - |" in markdown
 
 
 def test_generate_no_write_with_coverage_enabled_emits_artifacts(
