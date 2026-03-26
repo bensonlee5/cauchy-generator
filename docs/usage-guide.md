@@ -1,13 +1,22 @@
-# Usage Guide
+# Advanced Controls
 
-Operational entrypoint for end users running generation and benchmarking
-workflows. This page stays concise and links to detailed feature guides.
+Use this page after you already have a working recipe-based run.
+
+The default public path is:
+
+- `dagzoo recipe list`
+- `dagzoo generate --config recipe:<name>`
+- `build_dataloader("recipe:<name>", ...)`
+
+This guide covers the custom controls you reach for when the curated recipe
+catalog is not enough and you want to author or modify repo-local configs under
+`configs/`.
 
 ______________________________________________________________________
 
 ## Prerequisites
 
-Examples on this page use repo-local presets under `configs/`.
+Examples on this page use repo-local configs under `configs/`.
 
 For a repo checkout:
 
@@ -16,17 +25,19 @@ uv sync --group dev
 source .venv/bin/activate
 ```
 
-For a global CLI install (without repo presets/config files):
+For a global CLI install that still uses the curated catalog:
 
 ```bash
 uv tool install dagzoo
+dagzoo recipe list
 ```
 
 ______________________________________________________________________
 
-## 1. Basic generation
+## 1. Custom generation from YAML
 
-Use this when you want a default high-quality batch.
+Use this when you want to author a YAML config directly instead of starting from
+`recipe:<name>`.
 
 ```bash
 dagzoo generate --config configs/default.yaml --num-datasets 10 --out data/run1
@@ -130,7 +141,7 @@ from pathlib import Path
 from dagzoo import DagzooDataset, build_dataloader
 
 loader = build_dataloader(
-    Path("configs/default.yaml"),
+    "recipe:default-baseline",
     num_datasets=10,
     seed=7,
     device="cpu",
@@ -147,7 +158,8 @@ dataset = DagzooDataset(
 
 Bridge input contract:
 
-- `config` may be a `GeneratorConfig`, a string path, or a `Path`
+- `config` may be a `GeneratorConfig`, a `recipe:<name>` reference, a string
+  YAML path, or a `Path`
 - `num_datasets` is required
 - `seed` and `device` are optional
 - v1 currently supports `num_workers=0` only

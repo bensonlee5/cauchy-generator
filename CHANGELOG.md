@@ -10,6 +10,39 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.14.4] - 2026-03-26
+
+### Added
+
+- Added a curated public recipe catalog under `recipes/` with the first
+  shipped reference packs: `default-baseline`, `tabpfn-v1-prior-approx`,
+  `high-cardinality-stress`, `missingness-robustness`, and `shift-stress`.
+- Added `dagzoo recipe list` plus `recipe:<name>` config references for the
+  curated recipe surface.
+- Added citation, contribution, and security repo metadata via `CITATION.cff`,
+  `CONTRIBUTING.md`, and `SECURITY.md`.
+- Added adoption-surface parity checks so recipe docs, packaged wheel
+  resources, and release metadata cannot silently drift.
+
+### Changed
+
+- `dagzoo generate`, `dagzoo benchmark --preset custom`, `dagzoo diversity-audit`,
+  and `build_dataloader(...)` now accept curated `recipe:<name>` references in
+  addition to YAML paths.
+- Generate handoff manifests now preserve literal `recipe:<name>` references in
+  `generate_invocation.config_path` instead of forcing them into filesystem-like
+  absolute paths.
+- Recipe-backed `dagzoo benchmark --preset custom` runs now persist the bare
+  recipe name (for example, `default-baseline`) as the benchmark `preset_key`
+  in suite summaries, diagnostics artifact names, and saved baseline payloads
+  instead of collapsing all recipe-backed runs onto the default config preset
+  key.
+- README and user docs now lead with Start, Reference Packs, Advanced Controls,
+  and Artifacts/API instead of assuming repo-local config authoring as the
+  first-touch workflow.
+- Public docs and roadmap status now reflect the shipped steering surface and
+  the supported deferred-filter replay workflow.
+
 ## [0.14.3] - 2026-03-26
 
 ### Added

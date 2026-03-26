@@ -6,6 +6,7 @@ import sys
 from typing import NoReturn
 
 from dagzoo.config import GeneratorConfig
+from dagzoo.recipes import load_config_reference
 
 
 def raise_usage_error(message: str) -> NoReturn:
@@ -15,11 +16,11 @@ def raise_usage_error(message: str) -> NoReturn:
     raise SystemExit(2)
 
 
-def load_config_or_usage_error(path: str) -> GeneratorConfig:
-    """Load one config file or raise a CLI usage error with its parse message."""
+def load_config_or_usage_error(config_ref: str) -> GeneratorConfig:
+    """Load one config ref or raise a CLI usage error with its parse message."""
 
     try:
-        return GeneratorConfig.from_yaml(path)
-    except (TypeError, ValueError) as exc:
+        return load_config_reference(config_ref)
+    except (OSError, TypeError, ValueError) as exc:
         raise_usage_error(str(exc))
     raise AssertionError("unreachable")

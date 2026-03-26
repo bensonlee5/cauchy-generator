@@ -27,8 +27,8 @@ quality and realism controls.
    missingness.
 1. Emit `DatasetBundle` outputs; optionally persist shards and
    diagnostics.
-1. Deferred filtering remains reserved for future support; generated
-   shards are the only supported corpus artifact for now.
+1. Persist shard outputs and effective-config artifacts; when needed,
+   replay deferred acceptance with `dagzoo filter` as a separate stage.
 
 ## Core Concepts
 

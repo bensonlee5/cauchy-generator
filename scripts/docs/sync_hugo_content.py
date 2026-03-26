@@ -37,6 +37,8 @@ LEGACY_GENERATED_PATHS = [
 GITHUB_DEV_DOCS_BASE = "https://github.com/bensonlee5/dagzoo/blob/main/docs/development"
 
 USER_MD_SOURCES = [
+    "start.md",
+    "reference-packs.md",
     "how-it-works.md",
     "transforms.md",
     "usage-guide.md",
@@ -61,25 +63,33 @@ class PageMeta:
 
 
 PAGE_METADATA: dict[str, PageMeta] = {
-    "how-it-works.md": PageMeta(
+    "start.md": PageMeta(
         weight=10,
+        description="Install dagzoo, inspect curated recipes, and generate the first reproducible run.",
+    ),
+    "reference-packs.md": PageMeta(
+        weight=20,
+        description="Published dagzoo recipe packs, confidence tiers, and citation-oriented usage.",
+    ),
+    "how-it-works.md": PageMeta(
+        weight=30,
         description="End-to-end runtime behavior, core concepts, and pipeline walkthrough.",
         aliases=("/canonical/how-it-works.html",),
         params={"mermaid": True},
     ),
     "transforms.md": PageMeta(
-        weight=20,
+        weight=40,
         description="Mathematical reference for generation transforms.",
         aliases=("/canonical/transforms.html",),
         params={"math": True},
     ),
     "usage-guide.md": PageMeta(
-        weight=30,
-        description="Command workflows and practical usage patterns for generation and benchmarking.",
+        weight=50,
+        description="Advanced controls and custom YAML workflows beyond the curated recipe catalog.",
     ),
     "output-format.md": PageMeta(
-        weight=40,
-        description="Artifact schema, metadata contract, and shard layout.",
+        weight=60,
+        description="Artifact schema, API contract, and handoff metadata layout.",
     ),
     "features/diagnostics.md": PageMeta(
         weight=60,

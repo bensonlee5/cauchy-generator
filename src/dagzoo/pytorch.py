@@ -15,6 +15,7 @@ from dagzoo.core.dataset import (
     _validate_public_generation_config,
 )
 from dagzoo.core.fixed_layout.runtime import prepare_canonical_fixed_layout_run
+from dagzoo.recipes import load_config_reference
 from dagzoo.types import DatasetBundle
 
 
@@ -33,7 +34,7 @@ def _resolve_config(config: GeneratorConfig | str | Path) -> GeneratorConfig:
     if isinstance(config, GeneratorConfig):
         return clone_generator_config(config, revalidate=False)
     if isinstance(config, str | Path):
-        return GeneratorConfig.from_yaml(config)
+        return load_config_reference(config)
     raise TypeError(
         f"config must be a GeneratorConfig, string path, or Path, got {type(config)!r}."
     )

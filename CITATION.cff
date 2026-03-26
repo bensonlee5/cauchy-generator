@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: If you use dagzoo, cite the software and the specific named recipe pack when applicable.
+title: dagzoo
+type: software
+authors:
+  - family-names: Lee
+    given-names: Benson
+repository-code: https://github.com/bensonlee5/dagzoo
+url: https://github.com/bensonlee5/dagzoo
+version: 0.14.4
+date-released: 2026-03-26
+license: Apache-2.0
+abstract: Reproducible synthetic tabular data generation with curated reference packs and stable artifact contracts.
+preferred-citation:
+  type: software
+  authors:
+    - family-names: Lee
+      given-names: Benson
+  title: dagzoo
+  version: 0.14.4
+  date-released: 2026-03-26
+  url: https://github.com/bensonlee5/dagzoo

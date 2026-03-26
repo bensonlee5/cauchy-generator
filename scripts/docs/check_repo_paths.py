@@ -12,6 +12,8 @@ from typing import Iterable
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_ROOTS = (
     "README.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
     "docs",
     "scripts/README.md",
 )
@@ -20,12 +22,16 @@ REPO_PATH_PREFIXES = (
     "docs/",
     "scripts/",
     "configs/",
+    "recipes/",
     "reference/",
     "site/",
 )
 REPO_PATH_EXACT = frozenset(
     {
         "README.md",
+        "CONTRIBUTING.md",
+        "SECURITY.md",
+        "CITATION.cff",
         "CHANGELOG.md",
         "AGENTS.md",
         "pyproject.toml",

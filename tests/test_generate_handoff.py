@@ -259,6 +259,31 @@ def test_write_generate_handoff_manifest_writes_json_and_rejects_invalid_payload
         validate_generate_handoff_manifest(payload)
 
 
+def test_build_generate_handoff_manifest_preserves_recipe_reference(tmp_path) -> None:
+    run_root = tmp_path / "run"
+    _write_generate_run_artifacts(run_root)
+
+    payload = build_generate_handoff_manifest(
+        config_path="recipe:default-baseline",
+        generate_invocation_overrides=_generate_overrides(str(run_root)),
+        run_root=run_root,
+        generated_dir=run_root / "generated",
+        effective_config_path=run_root / "generated" / "effective_config.yaml",
+        effective_config_trace_path=run_root / "generated" / "effective_config_trace.yaml",
+        generated_datasets=2,
+        generation_elapsed_seconds=12.0,
+        requested_device="cpu",
+        resolved_device="cpu",
+        hardware_backend="cpu",
+        hardware_device_name="CPU",
+        hardware_tier="cpu",
+        hardware_policy="none",
+    )
+
+    validate_generate_handoff_manifest(payload)
+    assert payload["generate_invocation"]["config_path"] == "recipe:default-baseline"
+
+
 def test_write_generate_handoff_manifest_does_not_overwrite_existing_file(tmp_path) -> None:
     run_root = tmp_path / "run"
     manifest_path = run_root / "handoff_manifest.json"

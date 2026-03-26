@@ -13,6 +13,7 @@ from dagzoo.core.identity import stable_blake2s_hex
 from dagzoo.core.staged_artifacts import cleanup_path, promote_staged_path, staged_output_path
 from dagzoo.io.lineage_artifact import sha256_hex
 from dagzoo.math import sanitize_json
+from dagzoo.recipes import serialize_config_reference
 
 HANDOFF_MANIFEST_FILENAME = "handoff_manifest.json"
 GENERATE_HANDOFF_SCHEMA_NAME = "dagzoo_generate_handoff_manifest"
@@ -275,7 +276,7 @@ def build_generate_handoff_manifest(
     overrides_payload = dict(generate_invocation_overrides)
     _validate_generate_overrides(overrides_payload, path="generate_invocation.overrides")
     generate_invocation = {
-        "config_path": _resolve_path_str(config_path),
+        "config_path": serialize_config_reference(config_path),
         "overrides": overrides_payload,
     }
 
