@@ -1,9 +1,10 @@
 # dagzoo
 
 `dagzoo` generates reproducible synthetic tabular corpora from sampled causal
-structure. Most users should start with the named `recipe:<name>` configs and
-the standard output layout they produce. Repo-local authoring under `configs/`
-is still available for advanced work, but it is not the main public entrypoint.
+structure. The stable adoption layer is a small set of named `recipe:<name>`
+configs plus stable artifact contracts. Repo-local authoring under `configs/`
+remains available for advanced work, but it is not the primary public
+entrypoint.
 
 ```mermaid
 flowchart LR
