@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import math
 from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -11,6 +13,7 @@ import yaml
 from dagzoo.rng import SEED32_MAX, SEED32_MIN
 
 from .constants import (
+    _NOISE_MIXTURE_COMPONENT_VALUE_MAP,
     _PRODUCT_COMPONENT_FAMILIES,
     MAX_SUPPORTED_CLASS_COUNT,
     MISSINGNESS_MECHANISM_NONE,
@@ -19,6 +22,7 @@ from .constants import (
     SHIFT_MODE_CUSTOM,
     SHIFT_MODE_GRAPH_DRIFT,
     SHIFT_MODE_MECHANISM_DRIFT,
+    SHIFT_MODE_MIXED,
     SHIFT_MODE_NOISE_DRIFT,
     SHIFT_MODE_OFF,
     MechanismFamily,
@@ -47,6 +51,65 @@ from .scalars import (
     _validate_min_max_pair,
     _validate_optional_finite_float_field,
 )
+
+_STEERING_PRESET_ANTI_MEMORIZATION_PIECEWISE_V1 = "anti_memorization_piecewise_v1"
+_STEERING_FRACTION_TOLERANCE = 1e-6
+_STEERING_PRESET_DEFINITIONS: dict[str, dict[str, Any]] = {
+    _STEERING_PRESET_ANTI_MEMORIZATION_PIECEWISE_V1: {
+        "stages": [
+            {
+                "name": "missingness_ramp",
+                "fraction": 0.25,
+                "dataset": {
+                    "missing_rate": [0.0, 0.25],
+                    "missing_mechanism": "mcar",
+                },
+            },
+            {
+                "name": "graph_excursion_out",
+                "fraction": 0.25,
+                "shift": {
+                    "mode": "graph_drift",
+                    "graph_scale": [0.0, 0.5],
+                },
+            },
+            {
+                "name": "graph_to_noise_handoff",
+                "fraction": 0.25,
+                "shift": {
+                    "mode": "mixed",
+                    "graph_scale": [0.5, 0.0],
+                    "variance_scale": [0.0, 0.5],
+                },
+            },
+            {
+                "name": "mixture_noise_ramp",
+                "fraction": 0.25,
+                "noise": {
+                    "family": "mixture",
+                    "student_t_df": 6.0,
+                    "mixture_weights": {
+                        "gaussian": [1.0, 0.5],
+                        "laplace": [0.0, 0.3],
+                        "student_t": [0.0, 0.2],
+                    },
+                },
+            },
+        ],
+    }
+}
+
+
+def steering_preset_definition(name: str) -> dict[str, Any]:
+    """Return a deep copy of one built-in steering preset definition."""
+
+    try:
+        return copy.deepcopy(_STEERING_PRESET_DEFINITIONS[str(name)])
+    except KeyError as exc:
+        supported = ", ".join(sorted(_STEERING_PRESET_DEFINITIONS))
+        raise ValueError(
+            f"Unsupported steering.preset {name!r}. Expected one of: {supported}."
+        ) from exc
 
 
 def _normalize_dataset_fields(dataset: DatasetConfig) -> None:
@@ -336,6 +399,254 @@ def _normalize_filter_fields(filter_cfg: FilterConfig) -> None:
         raise ValueError("filter.n_jobs must be -1 or an integer >= 1, got 0.")
 
 
+def _normalize_steering_preset(value: object) -> str | None:
+    """Normalize an optional steering preset name."""
+
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, str):
+        supported = ", ".join(sorted(_STEERING_PRESET_DEFINITIONS))
+        raise ValueError(f"Unsupported steering.preset {value!r}. Expected one of: {supported}.")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("steering.preset must be a non-empty string when provided.")
+    if normalized not in _STEERING_PRESET_DEFINITIONS:
+        supported = ", ".join(sorted(_STEERING_PRESET_DEFINITIONS))
+        raise ValueError(f"Unsupported steering.preset {value!r}. Expected one of: {supported}.")
+    return normalized
+
+
+def _normalize_steering_band(
+    *,
+    field_name: str,
+    value: object | None,
+    lo: float,
+    hi: float | None,
+    lo_inclusive: bool,
+    hi_inclusive: bool,
+    expectation: str,
+) -> list[float] | None:
+    """Normalize one directional [start, end] steering band without sorting endpoints."""
+
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError(f"{field_name} must be a two-value [start, end] band.")
+    start = _validate_finite_float_field(
+        field_name=f"{field_name}[0]",
+        value=value[0],
+        lo=lo,
+        hi=hi,
+        lo_inclusive=lo_inclusive,
+        hi_inclusive=hi_inclusive,
+        expectation=expectation,
+    )
+    end = _validate_finite_float_field(
+        field_name=f"{field_name}[1]",
+        value=value[1],
+        lo=lo,
+        hi=hi,
+        lo_inclusive=lo_inclusive,
+        hi_inclusive=hi_inclusive,
+        expectation=expectation,
+    )
+    return [float(start), float(end)]
+
+
+def _normalize_steering_mixture_weight_bands(
+    value: object | None,
+) -> dict[NoiseMixtureComponent, list[float]] | None:
+    """Normalize optional directional mixture-weight bands."""
+
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("steering.stages[*].noise.mixture_weights must be a mapping.")
+    if not value:
+        raise ValueError(
+            "steering.stages[*].noise.mixture_weights must include at least one supported component."
+        )
+
+    weights: dict[NoiseMixtureComponent, list[float]] = {}
+    for raw_key, raw_value in value.items():
+        if isinstance(raw_key, bool) or not isinstance(raw_key, str):
+            raise ValueError(
+                "steering.stages[*].noise.mixture_weights keys must be gaussian, laplace, or student_t."
+            )
+        normalized_key = raw_key.strip().lower()
+        component = _NOISE_MIXTURE_COMPONENT_VALUE_MAP.get(normalized_key)
+        if component is None:
+            raise ValueError(
+                "Unsupported steering.stages[*].noise.mixture_weights key "
+                f"{raw_key!r}. Expected gaussian, laplace, or student_t."
+            )
+        if component in weights:
+            raise ValueError(
+                "Duplicate steering.stages[*].noise.mixture_weights key "
+                f"{raw_key!r} after normalization."
+            )
+        weights[component] = _normalize_steering_band(
+            field_name=f"steering.stages[*].noise.mixture_weights.{component}",
+            value=raw_value,
+            lo=0.0,
+            hi=None,
+            lo_inclusive=True,
+            hi_inclusive=False,
+            expectation="a finite value >= 0",
+        ) or [0.0, 0.0]
+    return weights
+
+
+def _normalize_steering_stage_dataset_fields(dataset: SteeringStageDatasetConfig) -> None:
+    """Stage 1: normalize one steering dataset-stage block."""
+
+    dataset.missing_rate = _normalize_steering_band(
+        field_name="steering.stages[*].dataset.missing_rate",
+        value=dataset.missing_rate,
+        lo=0.0,
+        hi=1.0,
+        lo_inclusive=True,
+        hi_inclusive=True,
+        expectation="a finite value in [0, 1]",
+    )
+    if dataset.missing_mechanism is not None:
+        dataset.missing_mechanism = normalize_missing_mechanism(dataset.missing_mechanism)
+    dataset.missing_mar_observed_fraction = _validate_optional_finite_float_field(
+        field_name="steering.stages[*].dataset.missing_mar_observed_fraction",
+        value=dataset.missing_mar_observed_fraction,
+        lo=0.0,
+        hi=1.0,
+        lo_inclusive=False,
+        hi_inclusive=True,
+        expectation="in (0, 1]",
+    )
+    dataset.missing_mar_logit_scale = _validate_optional_finite_float_field(
+        field_name="steering.stages[*].dataset.missing_mar_logit_scale",
+        value=dataset.missing_mar_logit_scale,
+        lo=0.0,
+        hi=None,
+        lo_inclusive=False,
+        hi_inclusive=False,
+        expectation="a finite value > 0",
+    )
+    dataset.missing_mnar_logit_scale = _validate_optional_finite_float_field(
+        field_name="steering.stages[*].dataset.missing_mnar_logit_scale",
+        value=dataset.missing_mnar_logit_scale,
+        lo=0.0,
+        hi=None,
+        lo_inclusive=False,
+        hi_inclusive=False,
+        expectation="a finite value > 0",
+    )
+
+
+def _normalize_steering_stage_shift_fields(shift: SteeringStageShiftConfig) -> None:
+    """Stage 1: normalize one steering shift-stage block."""
+
+    if shift.mode is not None:
+        shift.mode = normalize_shift_mode(shift.mode)
+    shift.graph_scale = _normalize_steering_band(
+        field_name="steering.stages[*].shift.graph_scale",
+        value=shift.graph_scale,
+        lo=0.0,
+        hi=1.0,
+        lo_inclusive=True,
+        hi_inclusive=True,
+        expectation="a finite value in [0, 1]",
+    )
+    shift.variance_scale = _normalize_steering_band(
+        field_name="steering.stages[*].shift.variance_scale",
+        value=shift.variance_scale,
+        lo=0.0,
+        hi=1.0,
+        lo_inclusive=True,
+        hi_inclusive=True,
+        expectation="a finite value in [0, 1]",
+    )
+
+
+def _normalize_steering_stage_noise_fields(noise: SteeringStageNoiseConfig) -> None:
+    """Stage 1: normalize one steering noise-stage block."""
+
+    if noise.family is not None:
+        noise.family = normalize_noise_family(noise.family)
+    noise.student_t_df = _validate_optional_finite_float_field(
+        field_name="steering.stages[*].noise.student_t_df",
+        value=noise.student_t_df,
+        lo=2.0,
+        hi=None,
+        lo_inclusive=False,
+        hi_inclusive=False,
+        expectation="a finite value > 2",
+    )
+    noise.mixture_weights = _normalize_steering_mixture_weight_bands(noise.mixture_weights)
+
+
+def _normalize_steering_stage_fields(stage: SteeringStageConfig) -> None:
+    """Stage 1: normalize one steering stage block."""
+
+    if isinstance(stage.name, bool) or not isinstance(stage.name, str):
+        raise ValueError("steering.stages[*].name must be a non-empty string.")
+    stage.name = stage.name.strip()
+    if not stage.name:
+        raise ValueError("steering.stages[*].name must be a non-empty string.")
+    stage.fraction = _validate_finite_float_field(
+        field_name="steering.stages[*].fraction",
+        value=stage.fraction,
+        lo=0.0,
+        hi=1.0,
+        lo_inclusive=False,
+        hi_inclusive=True,
+        expectation="a finite value in (0, 1]",
+    )
+    if stage.dataset is not None:
+        stage.dataset = _coerce_section(
+            section_name="steering.stages[*].dataset",
+            value=stage.dataset,
+            section_type=SteeringStageDatasetConfig,
+        )
+        _normalize_steering_stage_dataset_fields(stage.dataset)
+    if stage.shift is not None:
+        stage.shift = _coerce_section(
+            section_name="steering.stages[*].shift",
+            value=stage.shift,
+            section_type=SteeringStageShiftConfig,
+        )
+        _normalize_steering_stage_shift_fields(stage.shift)
+    if stage.noise is not None:
+        stage.noise = _coerce_section(
+            section_name="steering.stages[*].noise",
+            value=stage.noise,
+            section_type=SteeringStageNoiseConfig,
+        )
+        _normalize_steering_stage_noise_fields(stage.noise)
+
+
+def _normalize_steering_fields(steering: SteeringConfig) -> None:
+    """Stage 1: normalize the steering section."""
+
+    if not isinstance(steering.enabled, bool):
+        raise ValueError(f"steering.enabled must be a boolean, got {steering.enabled!r}.")
+    steering.preset = _normalize_steering_preset(steering.preset)
+
+    raw_stages = steering.stages
+    if raw_stages is None:
+        steering.stages = []
+    elif not isinstance(raw_stages, list):
+        raise ValueError("steering.stages must be a list.")
+    else:
+        normalized_stages: list[SteeringStageConfig] = []
+        for idx, raw_stage in enumerate(raw_stages):
+            stage = _coerce_section(
+                section_name=f"steering.stages[{idx}]",
+                value=raw_stage,
+                section_type=SteeringStageConfig,
+            )
+            _normalize_steering_stage_fields(stage)
+            normalized_stages.append(stage)
+        steering.stages = normalized_stages
+
+
 def _coerce_section(
     *,
     section_name: str,
@@ -385,6 +696,11 @@ def _stage1_normalize_generation_sections(config: GeneratorConfig) -> None:
         value=config.noise,
         section_type=NoiseConfig,
     )
+    config.steering = _coerce_section(
+        section_name="steering",
+        value=config.steering,
+        section_type=SteeringConfig,
+    )
     config.runtime = _coerce_section(
         section_name="runtime",
         value=config.runtime,
@@ -416,6 +732,7 @@ def _stage1_normalize_generation_sections(config: GeneratorConfig) -> None:
     _normalize_mechanism_fields(config.mechanism)
     _normalize_shift_fields(config.shift)
     _normalize_noise_fields(config.noise)
+    _normalize_steering_fields(config.steering)
     _normalize_runtime_fields(config.runtime)
     _normalize_output_fields(config.output)
     _normalize_diagnostics_fields(config.diagnostics)
@@ -550,6 +867,154 @@ def _stage2_validate_noise_constraints(noise: NoiseConfig) -> None:
         raise ValueError("noise.mixture_weights is only allowed when noise.family is 'mixture'.")
 
 
+def _stage2_validate_steering_stage_constraints(stage: SteeringStageConfig) -> None:
+    """Stage 2: validate one steering stage payload."""
+
+    if stage.dataset is None and stage.shift is None and stage.noise is None:
+        raise ValueError("steering.stages[*] must set at least one of dataset, shift, or noise.")
+
+    if stage.dataset is not None:
+        dataset = stage.dataset
+        if dataset.missing_rate is None or dataset.missing_mechanism is None:
+            raise ValueError(
+                "steering.stages[*].dataset must set both missing_rate and missing_mechanism."
+            )
+        if (
+            max(dataset.missing_rate) > 0.0
+            and dataset.missing_mechanism == MISSINGNESS_MECHANISM_NONE
+        ):
+            raise ValueError(
+                "steering.stages[*].dataset.missing_mechanism must be mcar, mar, or mnar "
+                "when any steering missing_rate endpoint is > 0."
+            )
+
+    if stage.shift is not None:
+        shift = stage.shift
+        if shift.mode is None:
+            raise ValueError(
+                "steering.stages[*].shift.mode must be set when a shift block is present."
+            )
+        shift_mode = str(shift.mode)
+        has_graph = shift.graph_scale is not None
+        has_variance = shift.variance_scale is not None
+        if not has_graph and not has_variance:
+            raise ValueError(
+                "steering.stages[*].shift must set at least one of graph_scale or variance_scale."
+            )
+        if shift_mode == SHIFT_MODE_GRAPH_DRIFT and has_variance:
+            raise ValueError("steering.stages[*].shift.mode 'graph_drift' only allows graph_scale.")
+        if shift_mode == SHIFT_MODE_NOISE_DRIFT and has_graph:
+            raise ValueError(
+                "steering.stages[*].shift.mode 'noise_drift' only allows variance_scale."
+            )
+        if shift_mode == SHIFT_MODE_MECHANISM_DRIFT:
+            raise ValueError("steering.stages[*].shift.mode 'mechanism_drift' is out of scope.")
+        if shift_mode not in {
+            SHIFT_MODE_GRAPH_DRIFT,
+            SHIFT_MODE_NOISE_DRIFT,
+            SHIFT_MODE_MIXED,
+            SHIFT_MODE_CUSTOM,
+        }:
+            raise ValueError(
+                "steering.stages[*].shift.mode must be graph_drift, noise_drift, mixed, or custom."
+            )
+        if shift_mode in {SHIFT_MODE_MIXED, SHIFT_MODE_CUSTOM}:
+            shift_config = ShiftConfig(
+                enabled=True,
+                mode=shift.mode,
+                graph_scale=None if shift.graph_scale is None else float(shift.graph_scale[-1]),
+                mechanism_scale=None,
+                variance_scale=(
+                    None if shift.variance_scale is None else float(shift.variance_scale[-1])
+                ),
+            )
+            _stage2_validate_shift_constraints(shift_config)
+
+    if stage.noise is not None:
+        noise = stage.noise
+        if noise.family is None:
+            raise ValueError(
+                "steering.stages[*].noise.family must be set when a noise block is present."
+            )
+        if noise.family != NOISE_FAMILY_MIXTURE:
+            raise ValueError("steering.stages[*].noise currently only supports family='mixture'.")
+        if noise.mixture_weights is None:
+            raise ValueError(
+                "steering.stages[*].noise.mixture_weights is required when a noise block is present."
+            )
+        start_total = 0.0
+        end_total = 0.0
+        for component_band in noise.mixture_weights.values():
+            start_total += float(component_band[0])
+            end_total += float(component_band[1])
+        if not math.isclose(start_total, 1.0, rel_tol=0.0, abs_tol=_STEERING_FRACTION_TOLERANCE):
+            raise ValueError(
+                "steering.stages[*].noise.mixture_weights start weights must sum to 1.0."
+            )
+        if not math.isclose(end_total, 1.0, rel_tol=0.0, abs_tol=_STEERING_FRACTION_TOLERANCE):
+            raise ValueError(
+                "steering.stages[*].noise.mixture_weights end weights must sum to 1.0."
+            )
+
+
+def steering_stage_definitions(steering: SteeringConfig) -> list[SteeringStageConfig]:
+    """Return normalized stage definitions for explicit or preset steering config."""
+
+    if steering.preset is None:
+        return [copy.deepcopy(stage) for stage in steering.stages]
+
+    preset_payload = steering_preset_definition(steering.preset)
+    raw_stages = preset_payload.get("stages")
+    if not isinstance(raw_stages, list):
+        raise ValueError(f"steering preset {steering.preset!r} must define a list of stages.")
+    normalized_stages: list[SteeringStageConfig] = []
+    for idx, raw_stage in enumerate(raw_stages):
+        stage = _coerce_section(
+            section_name=f"steering.preset[{steering.preset}].stages[{idx}]",
+            value=raw_stage,
+            section_type=SteeringStageConfig,
+        )
+        _normalize_steering_stage_fields(stage)
+        normalized_stages.append(stage)
+    return normalized_stages
+
+
+def _stage2_validate_steering_constraints(steering: SteeringConfig) -> None:
+    """Stage 2: validate steering authoring form and stage semantics."""
+
+    has_preset = steering.preset is not None
+    has_explicit_stages = bool(steering.stages)
+
+    if not steering.enabled:
+        if has_preset or has_explicit_stages:
+            raise ValueError(
+                "steering.preset and steering.stages must be unset when steering.enabled is false."
+            )
+        return
+
+    if has_preset and has_explicit_stages:
+        raise ValueError(
+            "steering must use exactly one authoring form: steering.preset or steering.stages."
+        )
+    if not has_preset and not has_explicit_stages:
+        raise ValueError(
+            "steering.enabled=true requires either steering.preset or steering.stages."
+        )
+
+    stages = steering_stage_definitions(steering)
+    fraction_total = 0.0
+    stage_names: set[str] = set()
+    for stage in stages:
+        if stage.name in stage_names:
+            raise ValueError(f"Duplicate steering.stages name {stage.name!r} after normalization.")
+        stage_names.add(stage.name)
+        _stage2_validate_steering_stage_constraints(stage)
+        fraction_total += float(stage.fraction)
+
+    if not math.isclose(fraction_total, 1.0, rel_tol=0.0, abs_tol=_STEERING_FRACTION_TOLERANCE):
+        raise ValueError(f"steering.stages fractions must sum to 1.0, got {fraction_total:.6f}.")
+
+
 def _stage2_validate_generation_constraints(config: GeneratorConfig) -> None:
     """Stage 2: validate cross-field constraints after section normalization."""
 
@@ -558,6 +1023,7 @@ def _stage2_validate_generation_constraints(config: GeneratorConfig) -> None:
     _stage2_validate_mechanism_constraints(config.mechanism)
     _stage2_validate_shift_constraints(config.shift)
     _stage2_validate_noise_constraints(config.noise)
+    _stage2_validate_steering_constraints(config.steering)
 
 
 def _run_generation_validation_stages(config: GeneratorConfig) -> None:
@@ -628,6 +1094,60 @@ class NoiseConfig:
 
     def __post_init__(self) -> None:
         _normalize_noise_fields(self)
+
+
+@dataclass(slots=True)
+class SteeringStageDatasetConfig:
+    missing_rate: list[float] | None = None
+    missing_mechanism: MissingnessMechanism | None = None
+    missing_mar_observed_fraction: float | None = None
+    missing_mar_logit_scale: float | None = None
+    missing_mnar_logit_scale: float | None = None
+
+    def __post_init__(self) -> None:
+        _normalize_steering_stage_dataset_fields(self)
+
+
+@dataclass(slots=True)
+class SteeringStageShiftConfig:
+    mode: ShiftMode | None = None
+    graph_scale: list[float] | None = None
+    variance_scale: list[float] | None = None
+
+    def __post_init__(self) -> None:
+        _normalize_steering_stage_shift_fields(self)
+
+
+@dataclass(slots=True)
+class SteeringStageNoiseConfig:
+    family: NoiseFamily | None = None
+    student_t_df: float | None = None
+    mixture_weights: dict[NoiseMixtureComponent, list[float]] | None = None
+
+    def __post_init__(self) -> None:
+        _normalize_steering_stage_noise_fields(self)
+
+
+@dataclass(slots=True)
+class SteeringStageConfig:
+    name: str = ""
+    fraction: float = 1.0
+    dataset: SteeringStageDatasetConfig | None = None
+    shift: SteeringStageShiftConfig | None = None
+    noise: SteeringStageNoiseConfig | None = None
+
+    def __post_init__(self) -> None:
+        _normalize_steering_stage_fields(self)
+
+
+@dataclass(slots=True)
+class SteeringConfig:
+    enabled: bool = False
+    preset: str | None = None
+    stages: list[SteeringStageConfig] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        _normalize_steering_fields(self)
 
 
 @dataclass(slots=True)
@@ -715,6 +1235,7 @@ class GeneratorConfig:
     mechanism: MechanismConfig = field(default_factory=MechanismConfig)
     shift: ShiftConfig = field(default_factory=ShiftConfig)
     noise: NoiseConfig = field(default_factory=NoiseConfig)
+    steering: SteeringConfig = field(default_factory=SteeringConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     diagnostics: DiagnosticsConfig = field(default_factory=DiagnosticsConfig)
@@ -750,11 +1271,17 @@ class GeneratorConfig:
                 f"{joined} is no longer supported. Parallel generation has been removed; "
                 "remove these runtime keys from the config."
             )
+        steering_payload = dict(data.get("steering") or {})
+        if "target_metrics" in steering_payload:
+            raise ValueError(
+                "steering.target_metrics is not supported yet. Remove it from the config."
+            )
         dataset = DatasetConfig(**(data.get("dataset") or {}))
         graph = GraphConfig(**(data.get("graph") or {}))
         mechanism = MechanismConfig(**(data.get("mechanism") or {}))
         shift = ShiftConfig(**(data.get("shift") or {}))
         noise = NoiseConfig(**(data.get("noise") or {}))
+        steering = SteeringConfig(**steering_payload)
         runtime = RuntimeConfig(**runtime_payload)
         output = OutputConfig(**(data.get("output") or {}))
         diagnostics = DiagnosticsConfig(**(data.get("diagnostics") or {}))
@@ -774,6 +1301,7 @@ class GeneratorConfig:
             mechanism=mechanism,
             shift=shift,
             noise=noise,
+            steering=steering,
             runtime=runtime,
             output=output,
             diagnostics=diagnostics,

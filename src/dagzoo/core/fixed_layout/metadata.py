@@ -18,7 +18,7 @@ from .plan_types import (
     execution_plan_variant_counts,
 )
 
-_FIXED_LAYOUT_METADATA_SCHEMA_VERSION = 6
+_FIXED_LAYOUT_METADATA_SCHEMA_VERSION = 7
 
 
 @dataclass(slots=True)
@@ -35,6 +35,10 @@ class _FixedLayoutPlan:
     candidate_attempt: int = 0
     execution_plan: FixedLayoutExecutionPlan = field(default_factory=FixedLayoutExecutionPlan)
     plan_signature: str | None = None
+    layout_root_path: list[object] | None = None
+    execution_plan_root_path: list[object] | None = None
+    steering_layout_root_path: list[object] | None = None
+    steering_execution_plan_root_path: list[object] | None = None
 
 
 def _layout_to_dict(layout: LayoutPlan) -> dict[str, Any]:
@@ -81,12 +85,26 @@ def _annotate_fixed_layout_metadata(bundle: DatasetBundle, *, plan: _FixedLayout
     keyed_replay = bundle.metadata.get("keyed_replay")
     if not isinstance(keyed_replay, dict):
         keyed_replay = {}
-    keyed_replay["layout_root_path"] = ["plan_candidate", int(plan.candidate_attempt), "layout"]
-    keyed_replay["execution_plan_root_path"] = [
-        "plan_candidate",
-        int(plan.candidate_attempt),
-        "execution_plan",
-    ]
+    keyed_replay["layout_root_path"] = (
+        list(plan.layout_root_path)
+        if plan.layout_root_path is not None
+        else ["plan_candidate", int(plan.candidate_attempt), "layout"]
+    )
+    keyed_replay["execution_plan_root_path"] = (
+        list(plan.execution_plan_root_path)
+        if plan.execution_plan_root_path is not None
+        else ["plan_candidate", int(plan.candidate_attempt), "execution_plan"]
+    )
+    if plan.steering_layout_root_path is not None:
+        keyed_replay["steering_layout_root_path"] = list(plan.steering_layout_root_path)
+    else:
+        keyed_replay.pop("steering_layout_root_path", None)
+    if plan.steering_execution_plan_root_path is not None:
+        keyed_replay["steering_execution_plan_root_path"] = list(
+            plan.steering_execution_plan_root_path
+        )
+    else:
+        keyed_replay.pop("steering_execution_plan_root_path", None)
     bundle.metadata["keyed_replay"] = keyed_replay
     if plan.plan_signature is not None:
         bundle.metadata["layout_plan_signature"] = str(plan.plan_signature)

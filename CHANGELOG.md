@@ -10,6 +10,42 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.14.0] - 2026-03-25
+
+### Added
+
+- Added dynamic `steering.stages` curricula for deterministic per-dataset
+  piecewise interpolation of missingness, graph drift, noise drift, and
+  mixture-noise weights, plus the built-in
+  `anti_memorization_piecewise_v1` preset for richer multi-epoch corpora.
+
+### Changed
+
+- **BREAKING:** Fixed-layout `generate_batch` runs with graph-steered stages
+  may now emit multiple `layout_signature` and `layout_plan_signature` groups
+  within one corpus while preserving a stable column schema.
+- Steering now resolves effective missingness, shift, and noise settings
+  against corpus progress on every dataset, carrying prior stage end-states
+  forward across later stages instead of selecting one static recipe per
+  slice.
+- Steering-enabled generation now records resolved per-dataset missingness,
+  shift, and noise-distribution metadata while continuing to omit top-level
+  `steering` from emitted `metadata.config`.
+- Steering-enabled fixed-layout generation now keeps grouped batching for
+  matching effective layout and noise cohorts instead of scalarizing every
+  dataset when steering is enabled.
+- Steering stage resolution now clears incompatible inherited shift scales
+  when later stages switch modes, so authored graph-only or noise-only
+  stages do not silently keep stale drift from prior stages.
+- Graph-steered bundles now keep base fixed-layout replay roots under
+  `metadata.keyed_replay.layout_root_path` and
+  `metadata.keyed_replay.execution_plan_root_path`, while additive
+  steering-specific replay roots capture graph/execution overrides without
+  breaking reproducible layout replay.
+- `steering.target_metrics` is no longer accepted in generator configs until
+  the runtime can honor it; config loading now raises an explicit error
+  instead of silently accepting a no-op field.
+
 ## [0.13.0] - 2026-03-25
 
 ### Changed

@@ -41,6 +41,11 @@ from .models import (
     OutputConfig,
     RuntimeConfig,
     ShiftConfig,
+    SteeringConfig,
+    SteeringStageConfig,
+    SteeringStageDatasetConfig,
+    SteeringStageNoiseConfig,
+    SteeringStageShiftConfig,
 )
 from .normalization import (
     normalize_missing_mechanism,
@@ -95,6 +100,11 @@ __all__ = [
     "RuntimeConfig",
     "ShiftConfig",
     "ShiftMode",
+    "SteeringConfig",
+    "SteeringStageConfig",
+    "SteeringStageDatasetConfig",
+    "SteeringStageNoiseConfig",
+    "SteeringStageShiftConfig",
     "clone_generator_config",
     "dataset_rows_bounds",
     "dataset_rows_is_variable",

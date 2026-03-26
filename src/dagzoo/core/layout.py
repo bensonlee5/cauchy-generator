@@ -171,6 +171,39 @@ def _sample_layout(
     )
 
 
+def _resample_layout_graph(
+    layout: LayoutPlan,
+    *,
+    keyed_rng: KeyedRng,
+    edge_logit_bias: float,
+) -> LayoutPlan:
+    """Resample only the graph portion of a layout while preserving feature schema."""
+
+    adjacency = sample_dag(
+        int(layout.graph_nodes),
+        keyed_rng.keyed("graph").torch_rng(device="cpu"),
+        edge_logit_bias=float(edge_logit_bias),
+    )
+    graph_depth_nodes = dag_longest_path_nodes(adjacency)
+    graph_edge_density = dag_edge_density(adjacency)
+    return LayoutPlan(
+        n_features=int(layout.n_features),
+        n_cat=int(layout.n_cat),
+        cat_idx=[int(idx) for idx in layout.cat_idx],
+        cardinalities=[int(value) for value in layout.cardinalities],
+        card_by_feature={int(key): int(value) for key, value in layout.card_by_feature.items()},
+        n_classes=int(layout.n_classes),
+        feature_types=list(layout.feature_types),
+        graph_nodes=int(layout.graph_nodes),
+        graph_edges=int(adjacency.sum().item()),
+        graph_depth_nodes=int(graph_depth_nodes),
+        graph_edge_density=float(graph_edge_density),
+        adjacency=adjacency,
+        feature_node_assignment=[int(value) for value in layout.feature_node_assignment],
+        target_node_assignment=int(layout.target_node_assignment),
+    )
+
+
 def _feature_key(feature_index: int) -> str:
     """Return canonical feature extraction key for one feature column."""
 
