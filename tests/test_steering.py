@@ -202,3 +202,38 @@ def test_resolve_steering_graph_stage_does_not_keep_prior_mixed_noise_scale() ->
     assert resolved.config.shift.mechanism_scale is None
     assert shift_params.variance_sigma_multiplier == pytest.approx(1.0)
     assert shift_params.mechanism_logit_tilt == pytest.approx(0.0)
+
+
+def test_resolve_steering_noise_stage_clears_inherited_graph_scale() -> None:
+    cfg = GeneratorConfig.from_dict(
+        {
+            "shift": {
+                "enabled": True,
+                "mode": "custom",
+                "graph_scale": 0.4,
+            },
+            "steering": {
+                "enabled": True,
+                "stages": [
+                    {
+                        "name": "noise_only",
+                        "fraction": 1.0,
+                        "shift": {
+                            "mode": "noise_drift",
+                            "variance_scale": [0.0, 0.5],
+                        },
+                    }
+                ],
+            },
+        }
+    )
+
+    resolved = resolve_steering(cfg, dataset_index=1, run_num_datasets=2)
+    shift_params = resolve_shift_runtime_params(resolved.config)
+
+    assert resolved.config.shift.mode == "noise_drift"
+    assert resolved.config.shift.graph_scale is None
+    assert resolved.config.shift.mechanism_scale is None
+    assert resolved.config.shift.variance_scale == pytest.approx(0.5)
+    assert shift_params.graph_scale == pytest.approx(0.0)
+    assert shift_params.variance_sigma_multiplier > 1.0

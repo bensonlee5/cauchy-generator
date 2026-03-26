@@ -1,6 +1,7 @@
 import pytest
 import yaml
 
+import dagzoo.config.models as config_models
 from dagzoo.config import (
     MAX_SUPPORTED_CLASS_COUNT,
     MISSINGNESS_MECHANISM_MAR,
@@ -12,6 +13,7 @@ from dagzoo.config import (
     NOISE_MIXTURE_COMPONENT_STUDENT_T,
     GeneratorConfig,
 )
+from dagzoo.config.models import steering_preset_definition, steering_stage_definitions
 from dagzoo.io.lineage_schema import validate_metadata_lineage
 
 
@@ -555,6 +557,335 @@ def test_steering_rejects_target_metrics_payload() -> None:
                     "target_metrics": {
                         "linearity_proxy": [0.2, 0.8],
                     },
+                }
+            }
+        )
+
+
+def test_steering_preset_definition_rejects_unknown_name() -> None:
+    with pytest.raises(ValueError, match="Unsupported steering.preset 'not_a_real_preset'"):
+        steering_preset_definition("not_a_real_preset")
+
+
+def test_steering_stage_definitions_rejects_non_list_preset_stages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        config_models._STEERING_PRESET_DEFINITIONS,
+        "broken_preset",
+        {"stages": "not-a-list"},
+    )
+    steering = config_models.SteeringConfig(enabled=True, preset="broken_preset")
+
+    with pytest.raises(ValueError, match="must define a list of stages"):
+        steering_stage_definitions(steering)
+
+
+def test_steering_allows_null_stages_with_preset() -> None:
+    cfg = GeneratorConfig.from_dict(
+        {
+            "steering": {
+                "enabled": True,
+                "preset": "anti_memorization_piecewise_v1",
+                "stages": None,
+            }
+        }
+    )
+
+    assert cfg.steering.preset == "anti_memorization_piecewise_v1"
+    assert cfg.steering.stages == []
+
+
+@pytest.mark.parametrize(
+    ("payload", "match"),
+    [
+        (
+            {"enabled": 1, "preset": "anti_memorization_piecewise_v1"},
+            r"steering\.enabled must be a boolean",
+        ),
+        (
+            {"enabled": True, "preset": 123},
+            r"Unsupported steering\.preset 123",
+        ),
+        (
+            {"enabled": True, "preset": " "},
+            r"steering\.preset must be a non-empty string when provided",
+        ),
+        (
+            {"enabled": True, "preset": "not_a_real_preset"},
+            r"Unsupported steering\.preset 'not_a_real_preset'",
+        ),
+        (
+            {"enabled": True, "stages": "not-a-list"},
+            r"steering\.stages must be a list",
+        ),
+        (
+            {
+                "enabled": True,
+                "stages": [
+                    {
+                        "name": True,
+                        "fraction": 1.0,
+                        "shift": {
+                            "mode": "graph_drift",
+                            "graph_scale": [0.0, 0.5],
+                        },
+                    }
+                ],
+            },
+            r"steering\.stages\[\*\]\.name must be a non-empty string",
+        ),
+        (
+            {
+                "enabled": True,
+                "stages": [
+                    {
+                        "name": " ",
+                        "fraction": 1.0,
+                        "shift": {
+                            "mode": "graph_drift",
+                            "graph_scale": [0.0, 0.5],
+                        },
+                    }
+                ],
+            },
+            r"steering\.stages\[\*\]\.name must be a non-empty string",
+        ),
+    ],
+)
+def test_steering_rejects_invalid_normalization_inputs(
+    payload: dict[str, object],
+    match: str,
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        GeneratorConfig.from_dict({"steering": payload})
+
+
+@pytest.mark.parametrize(
+    ("mixture_weights", "match"),
+    [
+        (
+            [],
+            r"steering\.stages\[\*\]\.noise\.mixture_weights must be a mapping",
+        ),
+        (
+            {},
+            r"steering\.stages\[\*\]\.noise\.mixture_weights must include at least one supported component",
+        ),
+        (
+            {True: [1.0, 1.0]},
+            r"steering\.stages\[\*\]\.noise\.mixture_weights keys must be gaussian, laplace, or student_t",
+        ),
+        (
+            {"cauchy": [1.0, 1.0]},
+            r"Unsupported steering\.stages\[\*\]\.noise\.mixture_weights key 'cauchy'",
+        ),
+        (
+            {
+                "Gaussian": [1.0, 1.0],
+                " gaussian ": [0.0, 0.0],
+            },
+            r"Duplicate steering\.stages\[\*\]\.noise\.mixture_weights key ' gaussian ' after normalization",
+        ),
+    ],
+)
+def test_steering_rejects_invalid_noise_mixture_weight_bands(
+    mixture_weights: object,
+    match: str,
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        GeneratorConfig.from_dict(
+            {
+                "steering": {
+                    "enabled": True,
+                    "stages": [
+                        {
+                            "name": "noise_stage",
+                            "fraction": 1.0,
+                            "noise": {
+                                "family": "mixture",
+                                "mixture_weights": mixture_weights,
+                            },
+                        }
+                    ],
+                }
+            }
+        )
+
+
+def test_steering_enabled_requires_preset_or_stages() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"steering\.enabled=true requires either steering\.preset or steering\.stages",
+    ):
+        GeneratorConfig.from_dict({"steering": {"enabled": True}})
+
+
+@pytest.mark.parametrize(
+    ("stage", "match"),
+    [
+        (
+            {"name": "empty", "fraction": 1.0},
+            r"steering\.stages\[\*\] must set at least one of dataset, shift, or noise",
+        ),
+        (
+            {
+                "name": "dataset_missing_rate",
+                "fraction": 1.0,
+                "dataset": {"missing_mechanism": "mcar"},
+            },
+            r"steering\.stages\[\*\]\.dataset must set both missing_rate and missing_mechanism",
+        ),
+        (
+            {
+                "name": "dataset_missing_mechanism",
+                "fraction": 1.0,
+                "dataset": {"missing_rate": [0.0, 0.25]},
+            },
+            r"steering\.stages\[\*\]\.dataset must set both missing_rate and missing_mechanism",
+        ),
+        (
+            {
+                "name": "dataset_none_with_rate",
+                "fraction": 1.0,
+                "dataset": {
+                    "missing_rate": [0.1, 0.2],
+                    "missing_mechanism": "none",
+                },
+            },
+            r"steering\.stages\[\*\]\.dataset\.missing_mechanism must be mcar, mar, or mnar",
+        ),
+        (
+            {
+                "name": "shift_missing_mode",
+                "fraction": 1.0,
+                "shift": {"graph_scale": [0.0, 0.5]},
+            },
+            r"steering\.stages\[\*\]\.shift\.mode must be set when a shift block is present",
+        ),
+        (
+            {
+                "name": "shift_missing_scales",
+                "fraction": 1.0,
+                "shift": {"mode": "custom"},
+            },
+            r"steering\.stages\[\*\]\.shift must set at least one of graph_scale or variance_scale",
+        ),
+        (
+            {
+                "name": "graph_with_variance",
+                "fraction": 1.0,
+                "shift": {
+                    "mode": "graph_drift",
+                    "graph_scale": [0.0, 0.5],
+                    "variance_scale": [0.0, 0.5],
+                },
+            },
+            r"steering\.stages\[\*\]\.shift\.mode 'graph_drift' only allows graph_scale",
+        ),
+        (
+            {
+                "name": "noise_with_graph",
+                "fraction": 1.0,
+                "shift": {
+                    "mode": "noise_drift",
+                    "graph_scale": [0.0, 0.5],
+                    "variance_scale": [0.0, 0.5],
+                },
+            },
+            r"steering\.stages\[\*\]\.shift\.mode 'noise_drift' only allows variance_scale",
+        ),
+        (
+            {
+                "name": "mechanism_drift",
+                "fraction": 1.0,
+                "shift": {
+                    "mode": "mechanism_drift",
+                    "variance_scale": [0.0, 0.5],
+                },
+            },
+            r"steering\.stages\[\*\]\.shift\.mode 'mechanism_drift' is out of scope",
+        ),
+        (
+            {
+                "name": "shift_off",
+                "fraction": 1.0,
+                "shift": {
+                    "mode": "off",
+                    "graph_scale": [0.0, 0.5],
+                },
+            },
+            r"steering\.stages\[\*\]\.shift\.mode must be graph_drift, noise_drift, mixed, or custom",
+        ),
+        (
+            {
+                "name": "noise_missing_family",
+                "fraction": 1.0,
+                "noise": {"mixture_weights": {"gaussian": [1.0, 1.0]}},
+            },
+            r"steering\.stages\[\*\]\.noise\.family must be set when a noise block is present",
+        ),
+        (
+            {
+                "name": "noise_wrong_family",
+                "fraction": 1.0,
+                "noise": {
+                    "family": "gaussian",
+                    "mixture_weights": {"gaussian": [1.0, 1.0]},
+                },
+            },
+            r"steering\.stages\[\*\]\.noise currently only supports family='mixture'",
+        ),
+        (
+            {
+                "name": "noise_missing_weights",
+                "fraction": 1.0,
+                "noise": {"family": "mixture"},
+            },
+            r"steering\.stages\[\*\]\.noise\.mixture_weights is required when a noise block is present",
+        ),
+        (
+            {
+                "name": "noise_bad_start_total",
+                "fraction": 1.0,
+                "noise": {
+                    "family": "mixture",
+                    "mixture_weights": {
+                        "gaussian": [0.9, 0.5],
+                        "laplace": [0.0, 0.3],
+                        "student_t": [0.0, 0.2],
+                    },
+                },
+            },
+            r"steering\.stages\[\*\]\.noise\.mixture_weights start weights must sum to 1\.0",
+        ),
+        (
+            {
+                "name": "noise_bad_end_total",
+                "fraction": 1.0,
+                "noise": {
+                    "family": "mixture",
+                    "mixture_weights": {
+                        "gaussian": [1.0, 0.4],
+                        "laplace": [0.0, 0.3],
+                        "student_t": [0.0, 0.2],
+                    },
+                },
+            },
+            r"steering\.stages\[\*\]\.noise\.mixture_weights end weights must sum to 1\.0",
+        ),
+    ],
+)
+def test_steering_rejects_invalid_stage_constraints(
+    stage: dict[str, object],
+    match: str,
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        GeneratorConfig.from_dict(
+            {
+                "steering": {
+                    "enabled": True,
+                    "stages": [stage],
                 }
             }
         )
