@@ -10,16 +10,6 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
-## [0.14.5] - 2026-03-26
-
-### Changed
-
-- Recipe-backed `dagzoo benchmark --preset custom` runs now persist the bare
-  recipe name (for example, `default-baseline`) as the benchmark `preset_key`
-  in suite summaries, diagnostics artifact names, and saved baseline payloads
-  instead of collapsing all recipe-backed runs onto the default config preset
-  key.
-
 ## [0.14.4] - 2026-03-26
 
 ### Added
@@ -42,6 +32,11 @@ records the later `dagsynth -> dagzoo` rename on the current release line.
 - Generate handoff manifests now preserve literal `recipe:<name>` references in
   `generate_invocation.config_path` instead of forcing them into filesystem-like
   absolute paths.
+- Recipe-backed `dagzoo benchmark --preset custom` runs now persist the bare
+  recipe name (for example, `default-baseline`) as the benchmark `preset_key`
+  in suite summaries, diagnostics artifact names, and saved baseline payloads
+  instead of collapsing all recipe-backed runs onto the default config preset
+  key.
 - README and user docs now lead with Start, Reference Packs, Advanced Controls,
   and Artifacts/API instead of assuming repo-local config authoring as the
   first-touch workflow.
