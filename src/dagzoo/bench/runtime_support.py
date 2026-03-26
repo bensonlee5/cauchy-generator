@@ -179,7 +179,7 @@ def _artifact_pointer(path: Path) -> str:
 def _build_diagnostics_aggregator(config: GeneratorConfig) -> CoverageAggregator:
     """Create a diagnostics coverage aggregator from config."""
 
-    return CoverageAggregator(build_diagnostics_aggregation_config(config.diagnostics))
+    return CoverageAggregator(build_diagnostics_aggregation_config(config))
 
 
 def _is_missingness_enabled(config: GeneratorConfig) -> bool:

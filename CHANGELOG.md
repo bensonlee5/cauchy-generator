@@ -10,6 +10,21 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.14.1] - 2026-03-25
+
+### Changed
+
+- Diagnostics coverage artifacts now include an additive top-level `steering`
+  section that reports requested stage authoring, per-stage realized
+  missingness/shift/noise summaries, and resolution-consistency checks for
+  steering-enabled runs.
+- `dagzoo generate --diagnostics` and diversity-audit coverage aggregation now
+  carry steering-aware coverage config so the existing `coverage_summary.json`
+  and `coverage_summary.md` artifacts can audit curriculum movement without
+  changing the per-dataset `metadata.ndjson` contract.
+- Diagnostics docs and the output-format contract now document the steering
+  analysis section in `coverage_summary.*`.
+
 ## [0.14.0] - 2026-03-25
 
 ### Added

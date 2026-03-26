@@ -66,7 +66,7 @@ def resolve_corpus_probe_counts(
 def build_corpus_probe_coverage_config(config: GeneratorConfig) -> CoverageAggregationConfig:
     """Build coverage aggregation config with quantiles needed for delta scoring."""
 
-    base = build_diagnostics_aggregation_config(config.diagnostics)
+    base = build_diagnostics_aggregation_config(config)
     quantiles = tuple(
         sorted(set(float(q) for q in base.quantiles) | set(_REQUIRED_AUDIT_QUANTILES))
     )
@@ -77,6 +77,7 @@ def build_corpus_probe_coverage_config(config: GeneratorConfig) -> CoverageAggre
         underrepresented_threshold=float(base.underrepresented_threshold),
         max_values_per_metric=base.max_values_per_metric,
         target_bands=dict(base.target_bands),
+        steering_config=base.steering_config,
     )
 
 

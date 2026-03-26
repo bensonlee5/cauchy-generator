@@ -6,6 +6,7 @@ from dataclasses import replace
 import pytest
 import yaml
 
+from dagzoo import generate_batch
 from dagzoo.cli.entrypoint import main
 from dagzoo.config import GeneratorConfig
 from dagzoo.diagnostics.coverage import (
@@ -15,6 +16,7 @@ from dagzoo.diagnostics.coverage import (
     write_coverage_summary_markdown,
 )
 from dagzoo.diagnostics.types import DatasetMetrics
+from dagzoo.diagnostics_targets import build_diagnostics_aggregation_config
 
 
 def _metric_fixture(**overrides: float | int | str | None) -> DatasetMetrics:
@@ -48,6 +50,26 @@ def _metric_fixture(**overrides: float | int | str | None) -> DatasetMetrics:
         cat_cardinality_max=5,
     )
     return replace(base, **overrides)
+
+
+def _steering_fixture_config(out_dir: str | None = None) -> GeneratorConfig:
+    cfg = GeneratorConfig.from_yaml("configs/default.yaml")
+    cfg.runtime.device = "cpu"
+    cfg.dataset.task = "regression"
+    cfg.dataset.n_train = 32
+    cfg.dataset.n_test = 16
+    cfg.dataset.n_features_min = 8
+    cfg.dataset.n_features_max = 8
+    cfg.graph.n_nodes_min = 4
+    cfg.graph.n_nodes_max = 4
+    if out_dir is not None:
+        cfg.output.out_dir = out_dir
+    cfg.diagnostics.enabled = True
+    cfg.diagnostics.histogram_bins = 8
+    cfg.steering.enabled = True
+    cfg.steering.preset = "anti_memorization_piecewise_v1"
+    cfg.validate_generation_constraints()
+    return cfg
 
 
 def test_coverage_aggregation_correctness_on_fixtures() -> None:
@@ -92,6 +114,8 @@ def test_coverage_artifact_schema_required_keys(tmp_path) -> None:
     assert "generated_at" in payload
     assert payload["num_datasets"] == 1
     assert "metrics" in payload
+    assert "steering" in payload
+    assert payload["steering"]["enabled"] is False
 
     required_metric_keys = {
         "count",
@@ -185,6 +209,59 @@ def test_target_band_histogram_uses_target_range_for_coverage() -> None:
     assert len(line["underrepresented_bins"]) > 0
 
 
+def test_coverage_summary_includes_dynamic_steering_analysis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "dagzoo.core.metrics_torch._compute_wins_ratio_proxy",
+        lambda **_kwargs: 0.6,
+    )
+    cfg = _steering_fixture_config()
+    agg = CoverageAggregator(build_diagnostics_aggregation_config(cfg))
+
+    for bundle in generate_batch(cfg, num_datasets=5, seed=1234, device="cpu"):
+        agg.update_bundle(bundle)
+
+    steering = agg.build_summary()["steering"]
+    assert steering["enabled"] is True
+    assert steering["authoring_form"] == "preset"
+    assert steering["preset"] == "anti_memorization_piecewise_v1"
+    assert steering["stage_count"] == 4
+    assert steering["resolution_checks"]["datasets_checked"] == 5
+    assert steering["resolution_checks"]["datasets_mismatched"] == 0
+    assert steering["resolution_checks"]["match_rate"] == pytest.approx(1.0)
+    assert [stage["name"] for stage in steering["stages"]] == [
+        "missingness_ramp",
+        "graph_excursion_out",
+        "graph_to_noise_handoff",
+        "mixture_noise_ramp",
+    ]
+    assert [stage["dataset_count"] for stage in steering["stages"]] == [1, 1, 1, 2]
+    assert steering["stages"][0]["requested"]["dataset"]["missing_mechanism"] == "mcar"
+    assert steering["stages"][2]["realized"]["shift_mode_counts"]["mixed"] == 1
+    assert steering["stages"][3]["realized"]["noise_family_requested_counts"]["mixture"] == 2
+    assert "linearity_proxy" in steering["stages"][3]["metrics"]
+
+
+def test_coverage_summary_steering_analysis_is_reproducible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "dagzoo.core.metrics_torch._compute_wins_ratio_proxy",
+        lambda **_kwargs: 0.6,
+    )
+    cfg = _steering_fixture_config()
+    agg_a = CoverageAggregator(build_diagnostics_aggregation_config(cfg))
+    agg_b = CoverageAggregator(build_diagnostics_aggregation_config(cfg))
+
+    for bundle in generate_batch(cfg, num_datasets=5, seed=4321, device="cpu"):
+        agg_a.update_bundle(bundle)
+    for bundle in generate_batch(cfg, num_datasets=5, seed=4321, device="cpu"):
+        agg_b.update_bundle(bundle)
+
+    assert agg_a.build_summary()["steering"] == agg_b.build_summary()["steering"]
+
+
 def test_generate_no_write_with_coverage_enabled_emits_artifacts(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -232,6 +309,7 @@ def test_generate_no_write_with_coverage_enabled_emits_artifacts(
     payload = json.loads(json_path.read_text(encoding="utf-8"))
     assert payload["num_datasets"] == 1
     assert "mechanism_family_summary" in payload
+    assert payload["steering"]["enabled"] is False
     assert "linearity_proxy" in payload["metrics"]
     assert "shift_edge_odds_multiplier" in payload["metrics"]
     mechanism_summary = payload["mechanism_family_summary"]
@@ -240,4 +318,50 @@ def test_generate_no_write_with_coverage_enabled_emits_artifacts(
     assert "sampled_variant_counts" in mechanism_summary
     assert "dataset_presence_rate_by_variant" in mechanism_summary
     markdown = md_path.read_text(encoding="utf-8")
+    assert "## Steering" in markdown
     assert "## Mechanism Families" in markdown
+
+
+def test_generate_no_write_with_dynamic_steering_emits_steering_artifacts(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "dagzoo.core.metrics_torch._compute_wins_ratio_proxy",
+        lambda **_kwargs: 0.6,
+    )
+    cfg = _steering_fixture_config(out_dir=str(tmp_path / "run"))
+    config_path = tmp_path / "coverage_steering_enabled.yaml"
+    config_path.write_text(yaml.safe_dump(cfg.to_dict()), encoding="utf-8")
+
+    code = main(
+        [
+            "generate",
+            "--config",
+            str(config_path),
+            "--num-datasets",
+            "5",
+            "--seed",
+            "1234",
+            "--device",
+            "cpu",
+            "--hardware-policy",
+            "none",
+            "--no-dataset-write",
+        ]
+    )
+    assert code == 0
+
+    payload = json.loads((tmp_path / "run" / "coverage_summary.json").read_text(encoding="utf-8"))
+    steering = payload["steering"]
+    assert steering["enabled"] is True
+    assert steering["resolution_checks"]["datasets_mismatched"] == 0
+    assert [stage["name"] for stage in steering["stages"]] == [
+        "missingness_ramp",
+        "graph_excursion_out",
+        "graph_to_noise_handoff",
+        "mixture_noise_ramp",
+    ]
+    markdown = (tmp_path / "run" / "coverage_summary.md").read_text(encoding="utf-8")
+    assert "## Steering" in markdown
+    assert "missingness_ramp" in markdown

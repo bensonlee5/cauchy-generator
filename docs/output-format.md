@@ -408,6 +408,68 @@ Present only when missingness is enabled.
 
 ______________________________________________________________________
 
+## Diagnostics coverage summary artifacts
+
+When diagnostics are enabled, the run root also includes:
+
+- `coverage_summary.json`
+- `coverage_summary.md`
+
+These artifacts summarize corpus-level coverage and do not alter the per-dataset
+`metadata.ndjson` contract described above.
+
+### `coverage_summary.json` top-level keys
+
+Current top-level keys are:
+
+- `generated_at`
+- `num_datasets`
+- `task_counts`
+- `histogram_bins`
+- `quantiles`
+- `max_values_per_metric`
+- `mechanism_family_summary`
+- `steering`
+- `metrics`
+
+### `steering` sub-object
+
+Present in `coverage_summary.json`. Always emitted; when steering is disabled it
+reports `enabled=false` and an empty `stages` list.
+
+| Key                 | Type         | Description                                                             |
+| ------------------- | ------------ | ----------------------------------------------------------------------- |
+| `enabled`           | bool         | Whether steering was enabled for the run                                |
+| `authoring_form`    | str          | `disabled`, `preset`, or `explicit_stages`                              |
+| `preset`            | str or null  | Steering preset name when present                                       |
+| `stage_count`       | int          | Number of normalized steering stages                                    |
+| `resolution_checks` | object       | Requested-versus-emitted consistency counters for the generated bundles |
+| `stages`            | list[object] | Per-stage requested authoring plus realized steering and metric summary |
+
+Each `stages[*]` entry contains:
+
+- `index`, `name`, `fraction`
+- `requested`
+- `dataset_count`
+- `dataset_index_range`
+- `progress_range`
+- `requested_effective`
+- `realized`
+- `metrics`
+
+`requested` preserves the normalized authored stage payload. `requested_effective`
+summarizes the effective per-dataset steering resolution for bundles assigned to
+that stage, while `realized` summarizes the emitted missingness, shift, and
+noise metadata actually observed in those bundles. `metrics` reuses the same
+coverage-metric summary shape as the top-level `metrics` section, scoped to one
+stage.
+
+`coverage_summary.md` renders the same steering analysis as a condensed
+human-readable section and does not introduce additional contract fields beyond
+the JSON artifact described here.
+
+______________________________________________________________________
+
 ## Lineage schema
 
 Schema name: `dagzoo.dag_lineage`

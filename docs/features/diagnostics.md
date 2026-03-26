@@ -106,7 +106,7 @@ ______________________________________________________________________
 ## What to inspect
 
 - Per-dataset `metadata.ndjson` records for realized generation parameters.
-- Coverage summaries for meta-features and enabled observability metrics.
+- Coverage summaries for meta-features, enabled observability metrics, and steering movement when curriculum steering is enabled.
 - Benchmark summary guardrail sections that include diagnostics context.
 
 Exact output contracts are documented in
@@ -120,6 +120,19 @@ Diagnostics supports optional `diagnostics.meta_feature_targets` to annotate
 coverage summaries with in-band counts/fractions for selected metrics.
 
 Target bands do not alter generation; they are reporting metadata only.
+
+When steering is enabled, the same `coverage_summary.json` and
+`coverage_summary.md` artifacts add a top-level `steering` section instead of
+emitting a separate artifact family. That section reports:
+
+- The steering authoring form (`preset` or explicit stages).
+- Requested stage definitions and fractions.
+- Per-stage realized missingness, shift, and noise summaries.
+- Resolution-consistency checks comparing requested steering resolution against
+  emitted metadata for the generated run.
+
+This steering analysis is additive: it does not add new CLI flags and does not
+change the per-dataset `metadata.ndjson` contract.
 
 ______________________________________________________________________
 
