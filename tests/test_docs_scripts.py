@@ -21,6 +21,24 @@ def test_sync_docs_helpers_handle_route_aliases_and_heading_attrs() -> None:
     assert route_map["transforms.html"] == "/dagzoo/docs/transforms/"
 
 
+def test_sync_docs_rewrites_usage_guide_links_to_steering_page() -> None:
+    module = load_script_module("sync_hugo_content", "scripts/docs/sync_hugo_content.py")
+
+    route_map = module._build_route_map("/dagzoo")
+    rewritten = module._rewrite_markdown_links(
+        "Detailed guide: [Meta-Feature Coverage Steering](features/steering.md)\n",
+        "usage-guide.md",
+        route_map,
+    )
+
+    assert route_map["features/steering.md"] == "/dagzoo/docs/features/steering/"
+    assert (
+        rewritten
+        == "Detailed guide: [Meta-Feature Coverage Steering](/dagzoo/docs/features/steering/)\n"
+    )
+    assert module.PAGE_METADATA["features/steering.md"].weight == 64
+
+
 def test_sync_docs_front_matter_includes_aliases_and_page_flags() -> None:
     module = load_script_module("sync_hugo_content", "scripts/docs/sync_hugo_content.py")
     meta = module.PAGE_METADATA["how-it-works.md"]

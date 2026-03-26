@@ -45,6 +45,7 @@ USER_MD_SOURCES = [
     "features/missingness.md",
     "features/many-class.md",
     "features/shift.md",
+    "features/steering.md",
     "features/noise.md",
     "features/benchmark-guardrails.md",
     "features/mechanism-diversity.md",
@@ -96,16 +97,20 @@ PAGE_METADATA: dict[str, PageMeta] = {
         weight=63,
         description="Distribution-shift controls for graph, mechanism, and noise.",
     ),
-    "features/noise.md": PageMeta(
+    "features/steering.md": PageMeta(
         weight=64,
+        description="Meta-feature steering presets for auditable harder-front workflows.",
+    ),
+    "features/noise.md": PageMeta(
+        weight=65,
         description="Noise family selection, mixture modes, and per-dataset resolution.",
     ),
     "features/benchmark-guardrails.md": PageMeta(
-        weight=65,
+        weight=66,
         description="Automated quality checks for benchmark suite runs.",
     ),
     "features/mechanism-diversity.md": PageMeta(
-        weight=66,
+        weight=67,
         description="Opt-in mechanism-family rollout workflows and diagnostics checks.",
     ),
 }
