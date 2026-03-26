@@ -463,6 +463,53 @@ def test_benchmark_cli_diagnostics_pointers_resolve_when_roots_differ(tmp_path) 
     assert md_path.resolve().is_relative_to(diagnostics_out.resolve())
 
 
+def test_benchmark_cli_steering_diagnostics_artifacts_capture_requested_vs_realized_motion(
+    tmp_path,
+) -> None:
+    out_dir = tmp_path / "steering_results"
+    code = main(
+        [
+            "benchmark",
+            "--config",
+            "configs/preset_steering_anti_memorization_benchmark_smoke.yaml",
+            "--preset",
+            "custom",
+            "--suite",
+            "smoke",
+            "--num-datasets",
+            "5",
+            "--warmup",
+            "0",
+            "--hardware-policy",
+            "none",
+            "--no-memory",
+            "--diagnostics",
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+    assert code == 0
+
+    payload = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    profile = payload["preset_results"][0]
+    assert profile["diagnostics_enabled"] is True
+    assert "steering_guardrails" not in profile
+
+    artifacts = profile["diagnostics_artifacts"]
+    assert isinstance(artifacts, dict)
+    json_path = Path(artifacts["json"])
+    md_path = Path(artifacts["markdown"])
+    assert json_path.exists()
+    assert md_path.exists()
+
+    coverage_summary = json.loads(json_path.read_text(encoding="utf-8"))
+    steering = coverage_summary["steering"]
+    assert steering["enabled"] is True
+    assert steering["preset"] == "anti_memorization_piecewise_v1"
+    assert int(steering["stage_count"]) > 0
+    assert int(steering["resolution_checks"]["datasets_checked"]) > 0
+
+
 def test_benchmark_cli_missingness_guardrails_are_emitted(tmp_path) -> None:
     out = tmp_path / "summary_missingness.json"
     code = main(
