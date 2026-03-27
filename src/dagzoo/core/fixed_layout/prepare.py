@@ -70,7 +70,11 @@ def realize_generation_config_for_run(
 
     if config.stress.profile is not None:
         config.validate_generation_constraints()
-        realized = materialize_stress_profile(config, revalidate=False)
+        realized = materialize_stress_profile(
+            config,
+            revalidate=False,
+            clear_selector=True,
+        )
     else:
         realized = clone_generator_config(config, revalidate=False)
     rows_seed = KeyedRng(run_seed).child_seed("rows")

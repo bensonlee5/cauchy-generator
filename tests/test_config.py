@@ -355,6 +355,28 @@ def test_stress_profile_rejects_unknown_name_via_config() -> None:
         GeneratorConfig.from_dict({"stress": {"profile": "not_a_real_profile"}})
 
 
+@pytest.mark.parametrize("stress_value", [[], "", False])
+def test_stress_profile_rejects_non_mapping_section_types(stress_value: object) -> None:
+    with pytest.raises(TypeError, match=r"stress must be a mapping"):
+        GeneratorConfig.from_dict({"stress": stress_value})
+
+
+def test_stress_profile_accepts_matching_explicit_steering_authoring() -> None:
+    cfg = GeneratorConfig.from_dict(
+        {
+            "steering": {
+                "enabled": True,
+                "preset": "anti_memorization_piecewise_v1",
+            },
+            "stress": {"profile": _STRESS_PROFILE},
+        }
+    )
+
+    assert cfg.stress.profile == _STRESS_PROFILE
+    assert cfg.steering.enabled is True
+    assert cfg.steering.preset == "anti_memorization_piecewise_v1"
+
+
 @pytest.mark.parametrize(
     ("payload", "error_pattern"),
     [
@@ -399,6 +421,22 @@ def test_stress_profile_rejects_unknown_name_via_config() -> None:
                 "stress": {"profile": _STRESS_PROFILE},
             },
             r"steering must use exactly one authoring form",
+        ),
+        (
+            {
+                "steering": {
+                    "enabled": False,
+                },
+                "stress": {"profile": _STRESS_PROFILE},
+            },
+            r"requires any explicit steering section to match the built-in steering definition exactly",
+        ),
+        (
+            {
+                "steering": {},
+                "stress": {"profile": _STRESS_PROFILE},
+            },
+            r"requires any explicit steering section to match the built-in steering definition exactly",
         ),
     ],
 )

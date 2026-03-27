@@ -198,6 +198,68 @@ def test_generate_cli_rejects_missingness_override_for_stress_profile(
     assert "locks dataset.missing_rate to 0.0" in capsys.readouterr().err
 
 
+def test_generate_cli_stress_profile_effective_config_is_concrete(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = load_repo_config()
+    cfg.stress.profile = "anti_memorization_piecewise_classification_slice_v1"
+    config_path = write_config(tmp_path, cfg, "stress_profile.yaml")
+    out_dir = tmp_path / "stress_run"
+
+    def _stub_generate_batch_iter(
+        config,
+        *,
+        num_datasets: int,
+        seed: int | None = None,
+        device: str | None = None,
+    ):
+        _ = seed
+        _ = device
+        assert config.stress.profile is None
+        for _ in range(num_datasets):
+            yield object()
+
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.generate.generate_batch_iter",
+        _stub_generate_batch_iter,
+    )
+
+    code = main(
+        [
+            "generate",
+            "--config",
+            str(config_path),
+            "--num-datasets",
+            "1",
+            "--device",
+            "cpu",
+            "--hardware-policy",
+            "none",
+            "--out",
+            str(out_dir),
+            "--no-dataset-write",
+        ]
+    )
+
+    assert code == 0
+    effective_config = yaml.safe_load(
+        (out_dir / "effective_config.yaml").read_text(encoding="utf-8")
+    )
+    assert "stress" not in effective_config
+    assert effective_config["steering"]["preset"] == "anti_memorization_piecewise_v1"
+
+    trace_payload = yaml.safe_load(
+        (out_dir / "effective_config_trace.yaml").read_text(encoding="utf-8")
+    )
+    assert any(
+        isinstance(item, dict)
+        and item.get("source") == "stress.profile_materialization"
+        and item.get("path") == "stress.profile"
+        and item.get("new_value") is None
+        for item in trace_payload
+    )
+
+
 def test_fixed_layout_subcommand_is_removed() -> None:
     with pytest.raises(SystemExit) as exc:
         main(["fixed-layout", "sample", "--config", "configs/default.yaml"])

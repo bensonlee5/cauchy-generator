@@ -26,8 +26,12 @@ records the later `dagsynth -> dagzoo` rename on the current release line.
 ### Changed
 
 - Effective generate and benchmark configs now record stress-profile
-  materialization in their resolution traces while continuing to omit
-  `stress` from emitted per-dataset `metadata.config`.
+  materialization in their resolution traces, materialize stress selectors
+  into concrete effective configs, and continue to omit `stress` from emitted
+  per-dataset `metadata.config`.
+- Stress-profile resolution now validates authored selectors before
+  materialization, then allows repo-owned smoke caps, CUDA hardware policy
+  expansion, and microbenchmark downsizing to operate on the concrete config.
 - Removed one unused internal stress-profile helper so the shipped RD-005
   selector branch stays clean under dead-code enforcement.
 - Roadmap and reference-pack docs now distinguish curated recipe `stress profile` examples from the first RD-005 carried-slice contract used for

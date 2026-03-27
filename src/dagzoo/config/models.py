@@ -250,6 +250,48 @@ def _format_stress_locked_value(value: object) -> str:
     return repr(value)
 
 
+def _section_mapping_payload(
+    data: dict[str, Any],
+    *,
+    section_name: str,
+) -> tuple[bool, dict[str, Any]]:
+    """Return one authored section payload while rejecting non-mapping section types."""
+
+    if section_name not in data or data[section_name] is None:
+        return False, {}
+    value = data[section_name]
+    if not isinstance(value, dict):
+        raise TypeError(f"{section_name} must be a mapping, got {type(value).__name__}.")
+    return True, dict(value)
+
+
+def _validate_explicit_stress_authoring(
+    *,
+    stress_payload: dict[str, Any],
+    steering_present: bool,
+    steering_payload: dict[str, Any],
+) -> None:
+    """Reject explicit steering authoring that conflicts with a selected stress profile."""
+
+    raw_profile = stress_payload.get("profile")
+    if raw_profile is None or not steering_present:
+        return
+
+    profile = _normalize_stress_profile(raw_profile)
+    assert profile is not None
+    if steering_payload == asdict(SteeringConfig()):
+        return
+
+    authored_steering = SteeringConfig(**steering_payload)
+    _stage2_validate_steering_constraints(authored_steering)
+    expected_steering = SteeringConfig(**(stress_profile_definition(profile).get("steering") or {}))
+    if authored_steering != expected_steering:
+        raise ValueError(
+            f"stress.profile {profile!r} requires any explicit steering section to match "
+            "the built-in steering definition exactly."
+        )
+
+
 def _stage2_validate_stress_constraints(config: "GeneratorConfig") -> None:
     """Stage 2: validate stress-profile identity locking before materialization."""
 
@@ -275,19 +317,34 @@ def materialize_stress_profile(
     config: "GeneratorConfig",
     *,
     revalidate: bool,
+    clear_selector: bool = False,
 ) -> "GeneratorConfig":
     """Return a config clone with the selected stress profile applied."""
 
     effective = copy.deepcopy(config)
     profile = effective.stress.profile
     if profile is None:
+        if clear_selector:
+            effective.stress = StressConfig()
         if revalidate:
             effective.validate_generation_constraints()
         return effective
     _apply_stress_profile_patch(effective, profile=profile)
+    if clear_selector:
+        effective.stress = StressConfig()
     if revalidate:
         effective.validate_generation_constraints()
     return effective
+
+
+def effective_config_payload(config: "GeneratorConfig") -> dict[str, Any]:
+    """Serialize one effective config payload for artifact/reporting surfaces."""
+
+    payload = config.to_dict()
+    stress_payload = payload.get("stress")
+    if isinstance(stress_payload, dict) and stress_payload.get("profile") is None:
+        payload.pop("stress", None)
+    return payload
 
 
 def _normalize_dataset_fields(dataset: DatasetConfig) -> None:
@@ -1465,18 +1522,30 @@ class GeneratorConfig:
                 f"{joined} is no longer supported. Parallel generation has been removed; "
                 "remove these runtime keys from the config."
             )
-        steering_payload = dict(data.get("steering") or {})
+        steering_present, steering_payload = _section_mapping_payload(
+            data,
+            section_name="steering",
+        )
         if "target_metrics" in steering_payload:
             raise ValueError(
                 "steering.target_metrics is not supported yet. Remove it from the config."
             )
+        _, stress_payload = _section_mapping_payload(
+            data,
+            section_name="stress",
+        )
+        _validate_explicit_stress_authoring(
+            stress_payload=stress_payload,
+            steering_present=steering_present,
+            steering_payload=steering_payload,
+        )
         dataset = DatasetConfig(**(data.get("dataset") or {}))
         graph = GraphConfig(**(data.get("graph") or {}))
         mechanism = MechanismConfig(**(data.get("mechanism") or {}))
         shift = ShiftConfig(**(data.get("shift") or {}))
         noise = NoiseConfig(**(data.get("noise") or {}))
         steering = SteeringConfig(**steering_payload)
-        stress = StressConfig(**(data.get("stress") or {}))
+        stress = StressConfig(**stress_payload)
         runtime = RuntimeConfig(**runtime_payload)
         output = OutputConfig(**(data.get("output") or {}))
         diagnostics = DiagnosticsConfig(**(data.get("diagnostics") or {}))

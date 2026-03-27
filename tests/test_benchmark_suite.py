@@ -2253,6 +2253,32 @@ def test_run_microbenchmarks_synchronizes_generate_one_timing_on_cuda(
     assert sync_calls == ["cuda", "cuda"]
 
 
+def test_run_microbenchmarks_materializes_stress_profile_before_generate_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = GeneratorConfig.from_dict(
+        {"stress": {"profile": "anti_memorization_piecewise_classification_slice_v1"}}
+    )
+    captured: dict[str, int | None] = {}
+
+    def _stub_generate_one(config: GeneratorConfig, **_kwargs):
+        captured["n_train"] = int(config.dataset.n_train)
+        captured["n_test"] = int(config.dataset.n_test)
+        captured["stress_profile"] = config.stress.profile
+        return object()
+
+    monkeypatch.setattr(micro_mod, "generate_one", _stub_generate_one)
+
+    res = micro_mod.run_microbenchmarks(cfg, device="cpu", repeats=1)
+
+    assert res["micro_generate_one_ms"] is not None
+    assert captured == {
+        "n_train": 128,
+        "n_test": 64,
+        "stress_profile": None,
+    }
+
+
 def test_collect_latency_synchronizes_accelerator_per_sample(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

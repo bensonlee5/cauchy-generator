@@ -7,14 +7,14 @@ from typing import Any
 
 import yaml
 
-from dagzoo.config import GeneratorConfig
+from dagzoo.config import GeneratorConfig, effective_config_payload
 
 
 def effective_config_yaml(config: GeneratorConfig) -> str:
     """Render an effective config payload as YAML text."""
 
     return yaml.safe_dump(
-        config.to_dict(),
+        effective_config_payload(config),
         sort_keys=False,
         default_flow_style=False,
     )
