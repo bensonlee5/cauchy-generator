@@ -9,7 +9,8 @@ from typing import Any
 
 import torch
 
-from dagzoo.config import MISSINGNESS_MECHANISM_NONE, GeneratorConfig
+from dagzoo.config import GeneratorConfig
+from dagzoo.core.config_predicates import missingness_enabled as _is_missingness_enabled
 from dagzoo.core.layout_types import LayoutPlan
 from dagzoo.core.metadata import _build_lineage_metadata, _build_shift_metadata
 from dagzoo.core.noise_runtime import (
@@ -181,15 +182,6 @@ def _normalized_filter_metadata(aux_meta: dict[str, Any]) -> dict[str, Any]:
     if isinstance(filter_metadata, dict):
         return dict(filter_metadata)
     return {"mode": "deferred", "status": "not_run"}
-
-
-def _is_missingness_enabled(config: GeneratorConfig) -> bool:
-    """Return whether missingness injection can mutate emitted feature tensors."""
-
-    return (
-        float(config.dataset.missing_rate) > 0.0
-        and str(config.dataset.missing_mechanism).strip().lower() != MISSINGNESS_MECHANISM_NONE
-    )
 
 
 def _base_bundle_metadata_for_layout(

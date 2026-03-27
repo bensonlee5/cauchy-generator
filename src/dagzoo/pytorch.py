@@ -10,11 +10,7 @@ import torch
 from torch.utils.data import DataLoader, IterableDataset, get_worker_info
 
 from dagzoo.config import GeneratorConfig, clone_generator_config
-from dagzoo.core.dataset import (
-    _iter_prepared_canonical_batch_iter,
-    _validate_public_generation_config,
-)
-from dagzoo.core.fixed_layout.runtime import prepare_canonical_fixed_layout_run
+from dagzoo.core.dataset import _validate_public_generation_config, generate_batch_iter
 from dagzoo.recipes import load_config_reference
 from dagzoo.types import DatasetBundle
 
@@ -112,15 +108,11 @@ class DagzooDataset(IterableDataset[DagzooSample]):
             )
         if self._num_datasets == 0:
             return
-        prepared = prepare_canonical_fixed_layout_run(
+        for bundle in generate_batch_iter(
             self._config,
             num_datasets=self._num_datasets,
             seed=self._seed,
             device=self._device,
-        )
-        for bundle in _iter_prepared_canonical_batch_iter(
-            prepared,
-            num_datasets=self._num_datasets,
         ):
             yield _bundle_to_sample(bundle)
 

@@ -8,8 +8,10 @@ from conftest import load_repo_config, write_config
 
 from dagzoo.bench.constants import SMOKE_N_TEST_CAP, SMOKE_N_TRAIN_CAP
 from dagzoo.cli.commands.benchmark import _print_preset_result_line
+from dagzoo.cli.effective_config import effective_config_payload_yaml, effective_config_yaml
 from dagzoo.cli.entrypoint import main
 from dagzoo.cli.parsing import DEVICE_CHOICES, HARDWARE_POLICY_CHOICES
+from dagzoo.config import effective_config_payload
 
 
 def test_cli_parser_choice_constants_are_stable() -> None:
@@ -88,6 +90,12 @@ def test_benchmark_cli_realizes_dataset_rows_once_per_preset(tmp_path) -> None:
     effective_config = result["effective_config"]
     assert int(result["dataset_rows_total"]) <= int(SMOKE_N_TRAIN_CAP + SMOKE_N_TEST_CAP)
     assert effective_config["dataset"]["rows"] is None
+    config_files = sorted(
+        path
+        for path in (out_dir / "effective_configs").glob("*.yaml")
+        if not path.name.endswith("_trace.yaml")
+    )
+    assert config_files
     trace_files = sorted((out_dir / "effective_configs").glob("*_trace.yaml"))
     assert trace_files
     trace_payload = yaml.safe_load(trace_files[0].read_text(encoding="utf-8"))
@@ -95,6 +103,49 @@ def test_benchmark_cli_realizes_dataset_rows_once_per_preset(tmp_path) -> None:
         isinstance(item, dict) and item.get("source") == "benchmark.smoke_rows_cap"
         for item in trace_payload
     )
+
+
+def test_effective_config_payload_yaml_matches_config_yaml() -> None:
+    cfg = load_repo_config()
+
+    assert effective_config_payload_yaml(effective_config_payload(cfg)) == effective_config_yaml(
+        cfg
+    )
+
+
+def test_benchmark_cli_prints_effective_config_with_shared_yaml_shape(
+    tmp_path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out_dir = tmp_path / "printed_effective_config"
+
+    code = main(
+        [
+            "benchmark",
+            "--config",
+            "configs/default.yaml",
+            "--preset",
+            "custom",
+            "--suite",
+            "smoke",
+            "--num-datasets",
+            "1",
+            "--warmup",
+            "0",
+            "--hardware-policy",
+            "none",
+            "--no-memory",
+            "--out-dir",
+            str(out_dir),
+            "--print-effective-config",
+        ]
+    )
+
+    assert code == 0
+    output = capsys.readouterr().out
+    assert "Effective config [" in output
+    assert "dataset:" in output
+    assert "benchmark:" in output
 
 
 @pytest.mark.parametrize(

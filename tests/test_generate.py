@@ -443,7 +443,7 @@ def test_generate_batch_with_plan_iter_batches_steering_missingness_changes(
         _stub_finalize_generated_chunk_preserve_schema,
     )
     monkeypatch.setattr(
-        "dagzoo.core.fixed_layout.runtime._generate_bundle_with_retries_compat",
+        "dagzoo.core.fixed_layout.runtime._generate_fixed_layout_bundle_with_retries",
         lambda *_args, **_kwargs: pytest.fail(
             "steering missingness-only batching should not fall back to scalar retries"
         ),
@@ -682,7 +682,7 @@ def test_generate_batch_with_plan_iter_batches_noise_only_steering_by_cohort(
         _stub_finalize_generated_chunk_preserve_schema,
     )
     monkeypatch.setattr(
-        "dagzoo.core.fixed_layout.runtime._generate_bundle_with_retries_compat",
+        "dagzoo.core.fixed_layout.runtime._generate_fixed_layout_bundle_with_retries",
         lambda *_args, **_kwargs: pytest.fail(
             "noise-only steering cohorts should stay on the grouped batch path"
         ),
@@ -925,7 +925,7 @@ def test_generate_batch_with_plan_iter_batches_graph_steering_by_effective_plan(
         _stub_finalize_generated_chunk_preserve_schema,
     )
     monkeypatch.setattr(
-        "dagzoo.core.fixed_layout.runtime._generate_bundle_with_retries_compat",
+        "dagzoo.core.fixed_layout.runtime._generate_fixed_layout_bundle_with_retries",
         lambda *_args, **_kwargs: pytest.fail(
             "graph-steered cohorts should stay on the grouped batch path"
         ),
@@ -1163,7 +1163,7 @@ def test_generate_batch_with_plan_iter_classification_steering_captures_split_fa
         assert resolved_split_indices[1] is None
         return [_make_bundle(dataset_roots[0].child_seed()), None]
 
-    def _stub_generate_bundle_with_retries_compat(
+    def _stub_generate_fixed_layout_bundle_with_retries(
         _config: GeneratorConfig,
         *,
         plan: _FixedLayoutPlan,
@@ -1207,8 +1207,8 @@ def test_generate_batch_with_plan_iter_classification_steering_captures_split_fa
         _stub_finalize_generated_chunk_preserve_schema,
     )
     monkeypatch.setattr(
-        "dagzoo.core.fixed_layout.runtime._generate_bundle_with_retries_compat",
-        _stub_generate_bundle_with_retries_compat,
+        "dagzoo.core.fixed_layout.runtime._generate_fixed_layout_bundle_with_retries",
+        _stub_generate_fixed_layout_bundle_with_retries,
     )
 
     bundles = list(
@@ -1408,7 +1408,7 @@ def test_generate_batch_with_plan_iter_dynamic_steering_uses_retry_attempt_plan_
         )
         return [_make_bundle(dataset_roots[0].child_seed())]
 
-    def _stub_generate_bundle_with_retries_compat(
+    def _stub_generate_fixed_layout_bundle_with_retries(
         _config: GeneratorConfig,
         *,
         plan: _FixedLayoutPlan,
@@ -1448,8 +1448,8 @@ def test_generate_batch_with_plan_iter_dynamic_steering_uses_retry_attempt_plan_
         _stub_finalize_generated_chunk_preserve_schema,
     )
     monkeypatch.setattr(
-        "dagzoo.core.fixed_layout.runtime._generate_bundle_with_retries_compat",
-        _stub_generate_bundle_with_retries_compat,
+        "dagzoo.core.fixed_layout.runtime._generate_fixed_layout_bundle_with_retries",
+        _stub_generate_fixed_layout_bundle_with_retries,
     )
 
     bundles = list(
@@ -1670,7 +1670,7 @@ def test_generate_batch_with_plan_iter_dynamic_steering_rejects_schema_mismatch(
         _stub_finalize_generated_chunk_preserve_schema,
     )
     monkeypatch.setattr(
-        "dagzoo.core.fixed_layout.runtime._generate_bundle_with_retries_compat",
+        "dagzoo.core.fixed_layout.runtime._generate_fixed_layout_bundle_with_retries",
         lambda *_args, **_kwargs: pytest.fail("schema mismatch should fail before retry fallback"),
     )
 
@@ -1882,7 +1882,7 @@ def test_generate_batch_with_plan_iter_dynamic_steering_requires_all_grouped_off
         _stub_finalize_generated_chunk_preserve_schema,
     )
     monkeypatch.setattr(
-        "dagzoo.core.fixed_layout.runtime._generate_bundle_with_retries_compat",
+        "dagzoo.core.fixed_layout.runtime._generate_fixed_layout_bundle_with_retries",
         lambda *_args, **_kwargs: pytest.fail(
             "missing grouped offsets should fail before retry fallback"
         ),
@@ -3532,11 +3532,13 @@ def test_generate_batch_with_plan_iter_groups_mixed_noise_runtime_subbatches(
         device,
         noise_sigma_multiplier,
         noise_spec,
+        runtime_metrics_out=None,
     ):
         _ = execution_plan
         _ = device
         _ = noise_sigma_multiplier
         _ = noise_spec
+        _ = runtime_metrics_out
         grouped_call_sizes.append(len(dataset_seeds))
         batch_size = len(dataset_seeds)
         n_rows = cfg.dataset.n_train + cfg.dataset.n_test
@@ -3920,11 +3922,13 @@ def test_auto_surfaces_mps_runtime_failure_in_generate_one(
         device,
         noise_sigma_multiplier,
         noise_spec,
+        runtime_metrics_out=None,
     ):
         _ = execution_plan
         _ = dataset_seeds
         _ = noise_sigma_multiplier
         _ = noise_spec
+        _ = runtime_metrics_out
         calls.append(str(device))
         if device == "mps":
             raise RuntimeError("simulated mps failure")
@@ -3966,11 +3970,13 @@ def test_generate_batch_iter_auto_surfaces_mps_batch_generation_failure(
         device,
         noise_sigma_multiplier,
         noise_spec,
+        runtime_metrics_out=None,
     ):
         _ = execution_plan
         _ = dataset_seeds
         _ = noise_sigma_multiplier
         _ = noise_spec
+        _ = runtime_metrics_out
         calls.append(str(device))
         if device == "mps":
             raise RuntimeError("simulated mps failure")
@@ -4578,11 +4584,13 @@ def test_generate_batch_with_plan_iter_allows_late_classification_failure_after_
         preserve_feature_schema: bool,
         start_attempt: int = 0,
         finalization_context=None,
+        on_raw_batch_metrics=None,
     ) -> DatasetBundle:
         _ = plan
         _ = requested_device
         _ = resolved_device
         _ = preserve_feature_schema
+        _ = on_raw_batch_metrics
         assert finalization_context is not None
         assert int(start_attempt) == 1
         raise ValueError("Failed to generate a valid fixed-layout dataset after 2 attempts.")
@@ -4782,11 +4790,13 @@ def test_generate_batch_with_plan_iter_uses_cached_classification_attempt_plan_f
         preserve_feature_schema: bool,
         start_attempt: int = 0,
         finalization_context=None,
+        on_raw_batch_metrics=None,
     ) -> DatasetBundle:
         _ = plan
         _ = requested_device
         _ = resolved_device
         _ = preserve_feature_schema
+        _ = on_raw_batch_metrics
         assert finalization_context is not None
         retry_starts.append(int(start_attempt))
         return _make_bundle(dataset_root.child_seed())
@@ -4870,12 +4880,14 @@ def test_generate_fixed_layout_bundle_with_retries_reuses_cached_finalization_co
         device: str,
         noise_sigma_multiplier: float,
         noise_spec,
+        runtime_metrics_out=None,
     ) -> tuple[torch.Tensor, torch.Tensor, list[dict[str, object]]]:
         _ = execution_plan
         _ = dataset_seeds
         _ = device
         _ = noise_sigma_multiplier
         _ = noise_spec
+        _ = runtime_metrics_out
         return (
             torch.zeros((1, 6, 2), dtype=torch.float32),
             torch.zeros((1, 6), dtype=torch.float32),

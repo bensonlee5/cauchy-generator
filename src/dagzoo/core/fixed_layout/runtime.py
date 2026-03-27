@@ -675,7 +675,7 @@ def _generate_batch_with_dynamic_steering_iter(
 
         for offset, descriptor in enumerate(descriptors):
             if offset in retry_offset_set:
-                bundle = _generate_bundle_with_retries_compat(
+                bundle = _generate_fixed_layout_bundle_with_retries(
                     descriptor.effective_config,
                     plan=descriptor.effective_plan,
                     dataset_root=descriptor.dataset_root,
@@ -693,7 +693,7 @@ def _generate_batch_with_dynamic_steering_iter(
                     )
                 candidate_bundle = raw_batch_by_offset[offset]
                 if candidate_bundle is None:
-                    bundle = _generate_bundle_with_retries_compat(
+                    bundle = _generate_fixed_layout_bundle_with_retries(
                         descriptor.effective_config,
                         plan=descriptor.effective_plan,
                         dataset_root=descriptor.dataset_root,
@@ -954,68 +954,16 @@ def _generate_fixed_layout_graph_batch_with_runtime_metrics(
     noise_spec,
     runtime_metrics_out: dict[str, float],
 ) -> tuple[torch.Tensor, torch.Tensor, list[dict[str, object]]]:
-    try:
-        return generate_fixed_layout_graph_batch(
-            config,
-            plan.layout,
-            execution_plan=plan.execution_plan,
-            dataset_seeds=dataset_seeds,
-            device=resolved_device,
-            noise_sigma_multiplier=noise_sigma_multiplier,
-            noise_spec=noise_spec,
-            runtime_metrics_out=runtime_metrics_out,
-        )
-    except TypeError as exc:
-        if "runtime_metrics_out" not in str(exc):
-            raise
-        return generate_fixed_layout_graph_batch(
-            config,
-            plan.layout,
-            execution_plan=plan.execution_plan,
-            dataset_seeds=dataset_seeds,
-            device=resolved_device,
-            noise_sigma_multiplier=noise_sigma_multiplier,
-            noise_spec=noise_spec,
-        )
-
-
-def _generate_bundle_with_retries_compat(
-    config: GeneratorConfig,
-    *,
-    plan: _FixedLayoutPlan,
-    dataset_root: KeyedRng,
-    requested_device: str,
-    resolved_device: str,
-    preserve_feature_schema: bool,
-    start_attempt: int,
-    finalization_context: _FixedSchemaFinalizationContext,
-    on_raw_batch_metrics: Callable[[dict[str, float]], None] | None,
-) -> DatasetBundle:
-    try:
-        return _generate_fixed_layout_bundle_with_retries(
-            config,
-            plan=plan,
-            dataset_root=dataset_root,
-            requested_device=requested_device,
-            resolved_device=resolved_device,
-            preserve_feature_schema=preserve_feature_schema,
-            start_attempt=start_attempt,
-            finalization_context=finalization_context,
-            on_raw_batch_metrics=on_raw_batch_metrics,
-        )
-    except TypeError as exc:
-        if "on_raw_batch_metrics" not in str(exc):
-            raise
-        return _generate_fixed_layout_bundle_with_retries(
-            config,
-            plan=plan,
-            dataset_root=dataset_root,
-            requested_device=requested_device,
-            resolved_device=resolved_device,
-            preserve_feature_schema=preserve_feature_schema,
-            start_attempt=start_attempt,
-            finalization_context=finalization_context,
-        )
+    return generate_fixed_layout_graph_batch(
+        config,
+        plan.layout,
+        execution_plan=plan.execution_plan,
+        dataset_seeds=dataset_seeds,
+        device=resolved_device,
+        noise_sigma_multiplier=noise_sigma_multiplier,
+        noise_spec=noise_spec,
+        runtime_metrics_out=runtime_metrics_out,
+    )
 
 
 def _generate_fixed_layout_bundle_with_retries(
@@ -1241,7 +1189,7 @@ def _generate_batch_with_plan_iter(
                 finalized_offsets.add(offset)
         for offset, dataset_root in enumerate(dataset_roots):
             if offset in retry_offset_set:
-                bundle = _generate_bundle_with_retries_compat(
+                bundle = _generate_fixed_layout_bundle_with_retries(
                     config,
                     plan=plan,
                     dataset_root=dataset_root,
@@ -1268,7 +1216,7 @@ def _generate_batch_with_plan_iter(
                 raise RuntimeError("Missing grouped raw batch entry for fixed-layout chunk offset.")
             grouped_bundle = raw_batch_by_offset[offset]
             if grouped_bundle is None:
-                grouped_bundle = _generate_bundle_with_retries_compat(
+                grouped_bundle = _generate_fixed_layout_bundle_with_retries(
                     config,
                     plan=plan,
                     dataset_root=dataset_root,

@@ -6,6 +6,7 @@ from conftest import load_repo_config, write_config
 
 from dagzoo.core.dataset import generate_batch_iter
 from dagzoo.pytorch import DagzooDataset, build_dataloader
+from dagzoo.types import DatasetBundle
 
 
 def _tiny_bridge_config():
@@ -110,3 +111,36 @@ def test_dagzoo_dataset_rejects_multi_worker_loading(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr("dagzoo.pytorch.get_worker_info", lambda: object())
     with pytest.raises(RuntimeError, match="num_workers=0"):
         _ = list(DagzooDataset(cfg, num_datasets=1, seed=7, device="cpu"))
+
+
+def test_dagzoo_dataset_delegates_to_generate_batch_iter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_bridge_config()
+    seen: dict[str, object] = {}
+
+    def _stub_generate_batch_iter(config, *, num_datasets, seed=None, device=None):
+        seen["config"] = config
+        seen["num_datasets"] = num_datasets
+        seen["seed"] = seed
+        seen["device"] = device
+        yield DatasetBundle(
+            X_train=torch.zeros((2, 2), dtype=torch.float32),
+            y_train=torch.zeros(2, dtype=torch.float32),
+            X_test=torch.zeros((1, 2), dtype=torch.float32),
+            y_test=torch.zeros(1, dtype=torch.float32),
+            feature_types=["num", "num"],
+            metadata={"dataset_id": "delegated"},
+        )
+
+    monkeypatch.setattr("dagzoo.pytorch.generate_batch_iter", _stub_generate_batch_iter)
+
+    sample = next(iter(DagzooDataset(cfg, num_datasets=1, seed=13, device="cpu")))
+
+    assert seen == {
+        "config": cfg,
+        "num_datasets": 1,
+        "seed": 13,
+        "device": "cpu",
+    }
+    assert sample["metadata"]["dataset_id"] == "delegated"

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from dagzoo.bench.constants import SMOKE_NUM_DATASETS_CAP, SMOKE_WARMUP_DATASETS_CAP
+from dagzoo.bench.runtime_support import _resolve_benchmark_run_counts
 from dagzoo.bench.stage_metrics import FilterStageMeasurement, replay_filter_stage_metrics
 from dagzoo.bench.throughput import iter_throughput_measure_bundles, run_throughput_benchmark
 from dagzoo.config import GeneratorConfig, clone_generator_config
@@ -57,10 +57,11 @@ def resolve_corpus_probe_counts(
         num_datasets = int(num_datasets_override)
     if warmup_override is not None:
         warmup = int(warmup_override)
-    if suite == "smoke":
-        num_datasets = min(num_datasets, SMOKE_NUM_DATASETS_CAP)
-        warmup = min(warmup, SMOKE_WARMUP_DATASETS_CAP)
-    return max(1, num_datasets), max(0, warmup)
+    return _resolve_benchmark_run_counts(
+        num_datasets=num_datasets,
+        warmup_datasets=warmup,
+        suite=suite,
+    )
 
 
 def build_corpus_probe_coverage_config(config: GeneratorConfig) -> CoverageAggregationConfig:

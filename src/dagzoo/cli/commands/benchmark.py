@@ -8,8 +8,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from dagzoo.bench.baseline import (
     build_baseline_payload,
     load_baseline,
@@ -20,7 +18,12 @@ from dagzoo.bench.suite import resolve_preset_run_specs, run_benchmark_suite
 from dagzoo.config import GeneratorConfig
 
 from ..common import load_config_or_usage_error, raise_usage_error
-from ..effective_config import print_resolution_trace
+from ..effective_config import (
+    print_effective_config_payload,
+    print_resolution_trace,
+    write_effective_config_payload,
+    write_effective_config_trace,
+)
 
 
 def _default_benchmark_config(args: argparse.Namespace) -> GeneratorConfig:
@@ -97,19 +100,13 @@ def _write_benchmark_effective_configs(
         count = key_counts[key]
         suffix = f"_run{count}" if count > 1 else ""
         path = out_root / f"{key}{suffix}.yaml"
-        path.write_text(
-            yaml.safe_dump(payload, sort_keys=False, default_flow_style=False),
-            encoding="utf-8",
-        )
+        write_effective_config_payload(payload, path)
         config_paths.append(path)
 
         trace_payload = result.get("effective_config_trace")
         if isinstance(trace_payload, list):
             trace_path = out_root / f"{key}{suffix}_trace.yaml"
-            trace_path.write_text(
-                yaml.safe_dump(trace_payload, sort_keys=False, default_flow_style=False),
-                encoding="utf-8",
-            )
+            write_effective_config_trace(trace_payload, trace_path)
             trace_paths.append(trace_path)
     return config_paths, trace_paths
 
@@ -268,8 +265,7 @@ def run_benchmark_command(args: argparse.Namespace) -> int:
             if not isinstance(payload, dict):
                 continue
             preset_key = str(result.get("preset_key", "unknown"))
-            print(f"Effective config [{preset_key}]:")
-            print(yaml.safe_dump(payload, sort_keys=False, default_flow_style=False).rstrip())
+            print_effective_config_payload(payload, header=f"Effective config [{preset_key}]:")
     if args.print_resolution_trace:
         for result in summary.get("preset_results", []):
             if not isinstance(result, dict):
