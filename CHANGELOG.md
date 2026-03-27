@@ -10,7 +10,7 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
-## [0.14.5] - 2026-03-27
+## [0.14.6] - 2026-03-27
 
 ### Added
 
@@ -28,6 +28,8 @@ records the later `dagsynth -> dagzoo` rename on the current release line.
 - Effective generate and benchmark configs now record stress-profile
   materialization in their resolution traces while continuing to omit
   `stress` from emitted per-dataset `metadata.config`.
+- Removed one unused internal stress-profile helper so the shipped RD-005
+  selector branch stays clean under dead-code enforcement.
 - Roadmap and reference-pack docs now distinguish curated recipe `stress profile` examples from the first RD-005 carried-slice contract used for
   downstream fixed-slice comparisons.
 

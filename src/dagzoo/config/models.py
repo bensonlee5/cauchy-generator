@@ -219,14 +219,6 @@ def _get_config_path_value(config: object, path: str) -> object:
     return current
 
 
-def _set_config_path_value(config: object, path: str, value: object) -> None:
-    components = path.split(".")
-    current = config
-    for component in components[:-1]:
-        current = getattr(current, component)
-    setattr(current, components[-1], copy.deepcopy(value))
-
-
 def _apply_stress_profile_patch(config: "GeneratorConfig", *, profile: str) -> None:
     """Apply one built-in stress profile onto an existing config."""
 
