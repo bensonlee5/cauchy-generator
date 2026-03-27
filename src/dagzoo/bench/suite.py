@@ -54,9 +54,6 @@ from dagzoo.bench.runtime_support import (
     _build_diagnostics_aggregator,
     _build_shift_directional_check,
     _collect_latency,
-    _is_missingness_enabled,
-    _is_noise_enabled,
-    _is_shift_enabled,
     _latency_sample_count,
     _peak_rss_mb,
     _preset_counts,
@@ -76,6 +73,15 @@ from dagzoo.config import (
     SHIFT_MODE_OFF,
     GeneratorConfig,
     effective_config_payload,
+)
+from dagzoo.core.config_predicates import (
+    missingness_enabled as _is_missingness_enabled,
+)
+from dagzoo.core.config_predicates import (
+    non_gaussian_noise_enabled as _is_noise_enabled,
+)
+from dagzoo.core.config_predicates import (
+    shift_enabled as _is_shift_enabled,
 )
 from dagzoo.core.config_resolution import (
     append_config_diff_events,

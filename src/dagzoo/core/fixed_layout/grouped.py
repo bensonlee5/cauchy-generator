@@ -112,29 +112,16 @@ def generate_grouped_raw_batches(
     for group in grouped_noise_runtime:
         noise_spec = noise_sampling_spec(group.selection)
         runtime_metrics: dict[str, float] = {}
-        try:
-            x_batch, y_batch, aux_meta_batch = generate_graph_batch(
-                config,
-                layout,
-                execution_plan=execution_plan,
-                dataset_seeds=group.generation_seeds,
-                device=resolved_device,
-                noise_sigma_multiplier=noise_sigma_multiplier,
-                noise_spec=noise_spec,
-                runtime_metrics_out=runtime_metrics,
-            )
-        except TypeError as exc:
-            if "runtime_metrics_out" not in str(exc):
-                raise
-            x_batch, y_batch, aux_meta_batch = generate_graph_batch(
-                config,
-                layout,
-                execution_plan=execution_plan,
-                dataset_seeds=group.generation_seeds,
-                device=resolved_device,
-                noise_sigma_multiplier=noise_sigma_multiplier,
-                noise_spec=noise_spec,
-            )
+        x_batch, y_batch, aux_meta_batch = generate_graph_batch(
+            config,
+            layout,
+            execution_plan=execution_plan,
+            dataset_seeds=group.generation_seeds,
+            device=resolved_device,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+            runtime_metrics_out=runtime_metrics,
+        )
         grouped_batches.append(
             _GroupedRawBatch(
                 chunk_offsets=list(group.chunk_offsets),

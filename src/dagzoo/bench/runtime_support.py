@@ -13,11 +13,7 @@ from typing import Any
 
 import torch
 
-from dagzoo.config import (
-    MISSINGNESS_MECHANISM_NONE,
-    NOISE_FAMILY_GAUSSIAN,
-    GeneratorConfig,
-)
+from dagzoo.config import GeneratorConfig
 from dagzoo.core.dataset import generate_batch_iter, generate_one
 from dagzoo.diagnostics import CoverageAggregator
 from dagzoo.diagnostics_targets import build_diagnostics_aggregation_config
@@ -98,10 +94,26 @@ def _preset_counts(
     if warmup_override is not None:
         warmup = int(warmup_override)
 
+    return _resolve_benchmark_run_counts(
+        num_datasets=num,
+        warmup_datasets=warmup,
+        suite=suite,
+    )
+
+
+def _resolve_benchmark_run_counts(
+    *,
+    num_datasets: int,
+    warmup_datasets: int,
+    suite: str,
+) -> tuple[int, int]:
+    """Apply shared benchmark-style suite caps to dataset and warmup counts."""
+
+    num = int(num_datasets)
+    warmup = int(warmup_datasets)
     if suite == "smoke":
         num = min(num, SMOKE_NUM_DATASETS_CAP)
         warmup = min(warmup, SMOKE_WARMUP_DATASETS_CAP)
-
     return max(1, num), max(0, warmup)
 
 
@@ -180,27 +192,6 @@ def _build_diagnostics_aggregator(config: GeneratorConfig) -> CoverageAggregator
     """Create a diagnostics coverage aggregator from config."""
 
     return CoverageAggregator(build_diagnostics_aggregation_config(config))
-
-
-def _is_missingness_enabled(config: GeneratorConfig) -> bool:
-    """Return whether missingness is enabled in config."""
-
-    return bool(
-        float(config.dataset.missing_rate) > 0.0
-        and str(config.dataset.missing_mechanism).strip().lower() != MISSINGNESS_MECHANISM_NONE
-    )
-
-
-def _is_shift_enabled(config: GeneratorConfig) -> bool:
-    """Return whether shift controls are enabled in config."""
-
-    return bool(config.shift.enabled)
-
-
-def _is_noise_enabled(config: GeneratorConfig) -> bool:
-    """Return whether non-gaussian noise controls are enabled in config."""
-
-    return str(config.noise.family).strip().lower() != NOISE_FAMILY_GAUSSIAN
 
 
 def _build_shift_directional_check(

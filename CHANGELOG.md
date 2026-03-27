@@ -10,6 +10,17 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.15.1] - 2026-03-27
+
+### Changed
+
+- Streamlined internal generation and benchmark plumbing by removing
+  fixed-layout compatibility shims, consolidating config-resolution and
+  effective-config serialization helpers, routing the PyTorch bridge through
+  the canonical batch iterator, and centralizing shared benchmark/runtime
+  predicate and count helpers without changing the public CLI or artifact
+  contracts.
+
 ## [0.15.0] - 2026-03-27
 
 ### Changed

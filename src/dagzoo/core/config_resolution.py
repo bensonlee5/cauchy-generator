@@ -255,6 +255,72 @@ def cap_rows_spec_to_total(config: GeneratorConfig, *, total_rows_cap: int) -> N
     config.dataset.rows = DatasetRowsSpec(mode="range", start=capped_start, stop=capped_stop)
 
 
+def _resolve_config_with_policy(
+    config: GeneratorConfig,
+    *,
+    device_override: str | None,
+    device_source: str,
+    hardware_policy: str,
+    before_materialization_hook: Callable[[GeneratorConfig, list[ResolutionEvent]], None] | None,
+    after_policy_hook: Callable[[GeneratorConfig, list[ResolutionEvent]], None] | None,
+) -> ResolvedConfigBundle:
+    """Resolve shared device/materialization/policy flow for command paths."""
+
+    resolved = _clone_config(config)
+    trace_events: list[ResolutionEvent] = []
+
+    requested_device = _normalize_requested_device(device_override, resolved.runtime.device)
+    _set_config_path(
+        resolved,
+        path="runtime.device",
+        value=requested_device,
+        source=device_source,
+        events=trace_events,
+    )
+    if before_materialization_hook is not None:
+        before_materialization_hook(resolved, trace_events)
+
+    resolved.validate_generation_constraints()
+    materialized = materialize_stress_profile(
+        resolved,
+        revalidate=False,
+        clear_selector=True,
+    )
+    append_config_diff_events(
+        resolved,
+        materialized,
+        source="stress.profile_materialization",
+        events=trace_events,
+    )
+    resolved = materialized
+
+    hw = detect_hardware(requested_device)
+    before_policy = resolved.to_dict()
+    resolved = apply_hardware_policy(
+        resolved,
+        hw,
+        policy_name=hardware_policy,
+        validate=False,
+    )
+    after_policy = resolved.to_dict()
+    _append_diff_events(
+        before_policy,
+        after_policy,
+        source=f"hardware_policy.{str(hardware_policy).strip().lower()}",
+        events=trace_events,
+    )
+    _apply_default_cuda_fixed_layout_target_floor(resolved, hw=hw, events=trace_events)
+    if after_policy_hook is not None:
+        after_policy_hook(resolved, trace_events)
+    resolved.validate_generation_constraints()
+    return {
+        "config": resolved,
+        "hardware": hw,
+        "requested_device": requested_device,
+        "trace_events": trace_events,
+    }
+
+
 def resolve_generate_config(
     config: GeneratorConfig,
     *,
@@ -268,73 +334,35 @@ def resolve_generate_config(
 ) -> ResolvedConfigBundle:
     """Resolve effective config for one generate command invocation."""
 
-    resolved = _clone_config(config)
-    trace_events: list[ResolutionEvent] = []
+    def _before_materialization(
+        resolved: GeneratorConfig,
+        trace_events: list[ResolutionEvent],
+    ) -> None:
+        _apply_rows_override(resolved, rows=rows, source=rows_source, events=trace_events)
+        if path_overrides:
+            _apply_path_overrides(
+                resolved,
+                overrides=path_overrides,
+                source="cli.set",
+                events=trace_events,
+            )
+        if diagnostics_enabled:
+            _set_config_path(
+                resolved,
+                path="diagnostics.enabled",
+                value=True,
+                source="cli.diagnostics",
+                events=trace_events,
+            )
 
-    requested_device = _normalize_requested_device(device_override, resolved.runtime.device)
-    _set_config_path(
-        resolved,
-        path="runtime.device",
-        value=requested_device,
-        source="cli.device",
-        events=trace_events,
+    return _resolve_config_with_policy(
+        config,
+        device_override=device_override,
+        device_source="cli.device",
+        hardware_policy=hardware_policy,
+        before_materialization_hook=_before_materialization,
+        after_policy_hook=post_policy_hook,
     )
-    _apply_rows_override(resolved, rows=rows, source=rows_source, events=trace_events)
-    if path_overrides:
-        _apply_path_overrides(
-            resolved,
-            overrides=path_overrides,
-            source="cli.set",
-            events=trace_events,
-        )
-    if diagnostics_enabled:
-        _set_config_path(
-            resolved,
-            path="diagnostics.enabled",
-            value=True,
-            source="cli.diagnostics",
-            events=trace_events,
-        )
-
-    resolved.validate_generation_constraints()
-    materialized = materialize_stress_profile(
-        resolved,
-        revalidate=False,
-        clear_selector=True,
-    )
-    append_config_diff_events(
-        resolved,
-        materialized,
-        source="stress.profile_materialization",
-        events=trace_events,
-    )
-    resolved = materialized
-
-    hw = detect_hardware(requested_device)
-    before_policy = resolved.to_dict()
-    resolved = apply_hardware_policy(
-        resolved,
-        hw,
-        policy_name=hardware_policy,
-        validate=False,
-    )
-    after_policy = resolved.to_dict()
-    _append_diff_events(
-        before_policy,
-        after_policy,
-        source=f"hardware_policy.{str(hardware_policy).strip().lower()}",
-        events=trace_events,
-    )
-    _apply_default_cuda_fixed_layout_target_floor(resolved, hw=hw, events=trace_events)
-    if post_policy_hook is not None:
-        post_policy_hook(resolved, trace_events)
-    resolved.validate_generation_constraints()
-    return {
-        "config": resolved,
-        "hardware": hw,
-        "requested_device": requested_device,
-        "trace_events": trace_events,
-    }
 
 
 def resolve_benchmark_preset_config(
@@ -348,61 +376,24 @@ def resolve_benchmark_preset_config(
 ) -> ResolvedConfigBundle:
     """Resolve effective config for one benchmark preset run."""
 
-    resolved = _clone_config(config)
-    trace_events: list[ResolutionEvent] = []
-
-    requested_device = _normalize_requested_device(preset_device, resolved.runtime.device)
-    _set_config_path(
-        resolved,
-        path="runtime.device",
-        value=requested_device,
-        source="benchmark.preset_device",
-        events=trace_events,
-    )
-
-    resolved.validate_generation_constraints()
-    materialized = materialize_stress_profile(
-        resolved,
-        revalidate=False,
-        clear_selector=True,
-    )
-    append_config_diff_events(
-        resolved,
-        materialized,
-        source="stress.profile_materialization",
-        events=trace_events,
-    )
-    resolved = materialized
-
-    hw = detect_hardware(requested_device)
-    before_policy = resolved.to_dict()
-    resolved = apply_hardware_policy(
-        resolved,
-        hw,
-        policy_name=hardware_policy,
-        validate=False,
-    )
-    after_policy = resolved.to_dict()
-    _append_diff_events(
-        before_policy,
-        after_policy,
-        source=f"hardware_policy.{str(hardware_policy).strip().lower()}",
-        events=trace_events,
-    )
-    _apply_default_cuda_fixed_layout_target_floor(resolved, hw=hw, events=trace_events)
-
-    if str(suite).strip().lower() == "smoke":
+    def _after_policy(resolved: GeneratorConfig, trace_events: list[ResolutionEvent]) -> None:
+        if str(suite).strip().lower() != "smoke":
+            return
         if smoke_caps is None:
             raise ValueError("Benchmark smoke suite config resolution requires smoke cap values.")
         _apply_smoke_caps(resolved, smoke_caps=smoke_caps, events=trace_events)
 
-    resolved.validate_generation_constraints()
+    resolved = _resolve_config_with_policy(
+        config,
+        device_override=preset_device,
+        device_source="benchmark.preset_device",
+        hardware_policy=hardware_policy,
+        before_materialization_hook=None,
+        after_policy_hook=_after_policy,
+    )
     return {
         "preset_key": preset_key,
-        "config": resolved,
-        "hardware": hw,
-        "requested_device": requested_device,
-        "trace_events": trace_events,
+        **resolved,
     }
 
 
