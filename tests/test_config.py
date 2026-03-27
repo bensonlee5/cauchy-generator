@@ -13,8 +13,14 @@ from dagzoo.config import (
     NOISE_MIXTURE_COMPONENT_STUDENT_T,
     GeneratorConfig,
 )
-from dagzoo.config.models import steering_preset_definition, steering_stage_definitions
+from dagzoo.config.models import (
+    steering_preset_definition,
+    steering_stage_definitions,
+    stress_profile_definition,
+)
 from dagzoo.io.lineage_schema import validate_metadata_lineage
+
+_STRESS_PROFILE = "anti_memorization_piecewise_classification_slice_v1"
 
 
 def test_load_default_config() -> None:
@@ -44,6 +50,7 @@ def test_load_default_config() -> None:
     assert cfg.steering.enabled is False
     assert cfg.steering.preset is None
     assert cfg.steering.stages == []
+    assert cfg.stress.profile is None
 
 
 def test_config_package_reexports_noise_mixture_component_constants() -> None:
@@ -328,6 +335,117 @@ def test_steering_preset_round_trips_via_yaml() -> None:
     assert round_tripped.steering.enabled is True
     assert round_tripped.steering.preset == "anti_memorization_piecewise_v1"
     assert round_tripped.steering.stages == []
+
+
+def test_stress_profile_accepts_profile_only_authoring() -> None:
+    cfg = GeneratorConfig.from_dict({"stress": {"profile": _STRESS_PROFILE}})
+
+    assert cfg.stress.profile == _STRESS_PROFILE
+    assert cfg.steering.enabled is False
+    assert cfg.steering.preset is None
+
+
+def test_stress_profile_definition_rejects_unknown_name() -> None:
+    with pytest.raises(ValueError, match="Unsupported stress.profile 'not_a_real_profile'"):
+        stress_profile_definition("not_a_real_profile")
+
+
+def test_stress_profile_rejects_unknown_name_via_config() -> None:
+    with pytest.raises(ValueError, match="Unsupported stress.profile 'not_a_real_profile'"):
+        GeneratorConfig.from_dict({"stress": {"profile": "not_a_real_profile"}})
+
+
+@pytest.mark.parametrize("stress_value", [[], "", False])
+def test_stress_profile_rejects_non_mapping_section_types(stress_value: object) -> None:
+    with pytest.raises(TypeError, match=r"stress must be a mapping"):
+        GeneratorConfig.from_dict({"stress": stress_value})
+
+
+def test_stress_profile_accepts_matching_explicit_steering_authoring() -> None:
+    cfg = GeneratorConfig.from_dict(
+        {
+            "steering": {
+                "enabled": True,
+                "preset": "anti_memorization_piecewise_v1",
+            },
+            "stress": {"profile": _STRESS_PROFILE},
+        }
+    )
+
+    assert cfg.stress.profile == _STRESS_PROFILE
+    assert cfg.steering.enabled is True
+    assert cfg.steering.preset == "anti_memorization_piecewise_v1"
+
+
+@pytest.mark.parametrize(
+    ("payload", "error_pattern"),
+    [
+        (
+            {"dataset": {"rows": 1024}, "stress": {"profile": _STRESS_PROFILE}},
+            r"stress\.profile 'anti_memorization_piecewise_classification_slice_v1' locks dataset\.rows to unset",
+        ),
+        (
+            {"graph": {"n_nodes_max": 24}, "stress": {"profile": _STRESS_PROFILE}},
+            r"stress\.profile 'anti_memorization_piecewise_classification_slice_v1' locks graph\.n_nodes_max to 32",
+        ),
+        (
+            {
+                "noise": {"family": "laplace"},
+                "stress": {"profile": _STRESS_PROFILE},
+            },
+            r"stress\.profile 'anti_memorization_piecewise_classification_slice_v1' locks noise\.family to 'gaussian'",
+        ),
+        (
+            {
+                "steering": {"enabled": True, "preset": "not_a_real_preset"},
+                "stress": {"profile": _STRESS_PROFILE},
+            },
+            r"Unsupported steering\.preset 'not_a_real_preset'",
+        ),
+        (
+            {
+                "steering": {
+                    "enabled": True,
+                    "preset": "anti_memorization_piecewise_v1",
+                    "stages": [
+                        {
+                            "name": "extra",
+                            "fraction": 1.0,
+                            "dataset": {
+                                "missing_rate": [0.0, 0.1],
+                                "missing_mechanism": "mcar",
+                            },
+                        }
+                    ],
+                },
+                "stress": {"profile": _STRESS_PROFILE},
+            },
+            r"steering must use exactly one authoring form",
+        ),
+        (
+            {
+                "steering": {
+                    "enabled": False,
+                },
+                "stress": {"profile": _STRESS_PROFILE},
+            },
+            r"requires any explicit steering section to match the built-in steering definition exactly",
+        ),
+        (
+            {
+                "steering": {},
+                "stress": {"profile": _STRESS_PROFILE},
+            },
+            r"requires any explicit steering section to match the built-in steering definition exactly",
+        ),
+    ],
+)
+def test_stress_profile_rejects_conflicting_identity_fields(
+    payload: dict[str, object],
+    error_pattern: str,
+) -> None:
+    with pytest.raises(ValueError, match=error_pattern):
+        GeneratorConfig.from_dict(payload)
 
 
 def test_steering_explicit_stage_round_trips_via_yaml() -> None:

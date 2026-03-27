@@ -73,6 +73,7 @@ from dagzoo.config import (
     NOISE_FAMILY_GAUSSIAN,
     SHIFT_MODE_OFF,
     GeneratorConfig,
+    effective_config_payload,
 )
 from dagzoo.core.config_resolution import (
     append_config_diff_events,
@@ -389,7 +390,7 @@ def run_preset_benchmark(
     result["hardware_peak_flops"] = hw.peak_flops
     result["hardware_tier"] = hw.tier
     result["hardware_policy"] = str(hardware_policy)
-    result["effective_config"] = config.to_dict()
+    result["effective_config"] = effective_config_payload(config)
     result["effective_config_trace"] = serialize_resolution_events(trace_events)
     result["diagnostics_enabled"] = diagnostics_enabled
     result["diagnostics_artifacts"] = None

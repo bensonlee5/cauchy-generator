@@ -34,6 +34,7 @@ _TOTAL_ROWS_CAP_STRATEGY = st.integers(
     min_value=DATASET_ROWS_MIN_TOTAL,
     max_value=DATASET_ROWS_MAX_TOTAL,
 )
+_STRESS_PROFILE = "anti_memorization_piecewise_classification_slice_v1"
 
 
 @st.composite
@@ -64,6 +65,17 @@ def _mock_cuda_h100(_requested_device: str) -> HardwareInfo:
         total_memory_gb=80.0,
         peak_flops=989e12,
         tier="cuda_h100",
+    )
+
+
+def _mock_cuda_datacenter(_requested_device: str) -> HardwareInfo:
+    return HardwareInfo(
+        backend="cuda",
+        requested_device="cuda",
+        device_name="NVIDIA A100 SXM",
+        total_memory_gb=80.0,
+        peak_flops=312e12,
+        tier="cuda_datacenter",
     )
 
 
@@ -126,6 +138,142 @@ def test_resolve_generate_config_applies_rows_override() -> None:
 
     trace = serialize_resolution_events(resolved.trace_events)
     assert any(event["path"] == "dataset.rows" and event["source"] == "cli.rows" for event in trace)
+
+
+def test_resolve_generate_config_materializes_stress_profile() -> None:
+    cfg = GeneratorConfig.from_dict({"stress": {"profile": _STRESS_PROFILE}})
+
+    resolved = resolve_generate_config(
+        cfg,
+        device_override="cpu",
+        rows=None,
+        hardware_policy="none",
+        missing_rate=None,
+        missing_mechanism=None,
+        missing_mar_observed_fraction=None,
+        missing_mar_logit_scale=None,
+        missing_mnar_logit_scale=None,
+        diagnostics_enabled=False,
+    )
+
+    assert resolved.config.stress.profile is None
+    assert resolved.config.dataset.task == "classification"
+    assert resolved.config.dataset.n_train == 768
+    assert resolved.config.dataset.n_test == 256
+    assert resolved.config.graph.n_nodes_min == 2
+    assert resolved.config.graph.n_nodes_max == 32
+    assert resolved.config.steering.enabled is True
+    assert resolved.config.steering.preset == "anti_memorization_piecewise_v1"
+    trace = serialize_resolution_events(resolved.trace_events)
+    assert any(
+        event["path"] == "steering.enabled"
+        and event["source"] == "stress.profile_materialization"
+        and event["new_value"] is True
+        for event in trace
+    )
+    assert any(
+        event["path"] == "stress.profile"
+        and event["source"] == "stress.profile_materialization"
+        and event["old_value"] == _STRESS_PROFILE
+        and event["new_value"] is None
+        for event in trace
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "hardware_mock",
+        "expected_n_train",
+        "expected_n_test",
+        "expected_n_features_max",
+        "expected_n_nodes_max",
+        "expected_target_cells",
+    ),
+    [
+        (_mock_cuda_datacenter, 1536, 512, 96, 48, 160_000_000),
+        (_mock_cuda_h100, 4096, 1024, 192, 64, 240_000_000),
+    ],
+)
+def test_resolve_generate_config_materializes_stress_profile_before_cuda_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    hardware_mock,
+    expected_n_train: int,
+    expected_n_test: int,
+    expected_n_features_max: int,
+    expected_n_nodes_max: int,
+    expected_target_cells: int,
+) -> None:
+    monkeypatch.setattr("dagzoo.core.config_resolution.detect_hardware", hardware_mock)
+    cfg = GeneratorConfig.from_dict({"stress": {"profile": _STRESS_PROFILE}})
+
+    resolved = resolve_generate_config(
+        cfg,
+        device_override="cuda",
+        rows=None,
+        hardware_policy="cuda_tiered_v1",
+        missing_rate=None,
+        missing_mechanism=None,
+        missing_mar_observed_fraction=None,
+        missing_mar_logit_scale=None,
+        missing_mnar_logit_scale=None,
+        diagnostics_enabled=False,
+    )
+
+    assert resolved.config.stress.profile is None
+    assert resolved.config.dataset.n_train == expected_n_train
+    assert resolved.config.dataset.n_test == expected_n_test
+    assert resolved.config.dataset.n_features_max == expected_n_features_max
+    assert resolved.config.graph.n_nodes_max == expected_n_nodes_max
+    assert resolved.config.runtime.fixed_layout_target_cells == expected_target_cells
+
+    trace = serialize_resolution_events(resolved.trace_events)
+    materialize_index = next(
+        idx
+        for idx, event in enumerate(trace)
+        if event["source"] == "stress.profile_materialization"
+    )
+    policy_index = next(
+        idx
+        for idx, event in enumerate(trace)
+        if event["source"] == "hardware_policy.cuda_tiered_v1"
+    )
+    assert materialize_index < policy_index
+
+
+def test_resolve_generate_config_rejects_rows_override_for_stress_profile() -> None:
+    cfg = GeneratorConfig.from_dict({"stress": {"profile": _STRESS_PROFILE}})
+
+    with pytest.raises(ValueError, match=r"locks dataset\.rows to unset"):
+        resolve_generate_config(
+            cfg,
+            device_override="cpu",
+            rows="400..60000",
+            hardware_policy="none",
+            missing_rate=None,
+            missing_mechanism=None,
+            missing_mar_observed_fraction=None,
+            missing_mar_logit_scale=None,
+            missing_mnar_logit_scale=None,
+            diagnostics_enabled=False,
+        )
+
+
+def test_resolve_generate_config_rejects_missingness_override_for_stress_profile() -> None:
+    cfg = GeneratorConfig.from_dict({"stress": {"profile": _STRESS_PROFILE}})
+
+    with pytest.raises(ValueError, match=r"locks dataset\.missing_rate to 0\.0"):
+        resolve_generate_config(
+            cfg,
+            device_override="cpu",
+            rows=None,
+            hardware_policy="none",
+            missing_rate=0.2,
+            missing_mechanism="mnar",
+            missing_mar_observed_fraction=None,
+            missing_mar_logit_scale=None,
+            missing_mnar_logit_scale=None,
+            diagnostics_enabled=False,
+        )
 
 
 def test_cap_rows_spec_to_total_clears_rows_when_cap_is_below_min_total() -> None:
@@ -467,6 +615,67 @@ def test_resolve_benchmark_preset_config_preserves_dataset_rows_for_standard_sui
     assert resolved.config.dataset.rows.mode == "range"
     assert resolved.config.dataset.rows.start == 2000
     assert resolved.config.dataset.rows.stop == 60000
+
+
+def test_resolve_benchmark_preset_config_materializes_stress_profile_for_standard_suite() -> None:
+    cfg = GeneratorConfig.from_dict({"stress": {"profile": _STRESS_PROFILE}})
+
+    resolved = resolve_benchmark_preset_config(
+        preset_key="stress_profile",
+        config=cfg,
+        preset_device="cpu",
+        suite="standard",
+        hardware_policy="none",
+        smoke_caps=None,
+    )
+
+    assert resolved.config.stress.profile is None
+    assert resolved.config.dataset.n_train == 768
+    assert resolved.config.dataset.n_test == 256
+    assert resolved.config.steering.enabled is True
+    assert resolved.config.steering.preset == "anti_memorization_piecewise_v1"
+
+
+def test_resolve_benchmark_preset_config_materializes_stress_profile_before_smoke_caps() -> None:
+    cfg = GeneratorConfig.from_dict({"stress": {"profile": _STRESS_PROFILE}})
+
+    resolved = resolve_benchmark_preset_config(
+        preset_key="stress_profile",
+        config=cfg,
+        preset_device="cpu",
+        suite="smoke",
+        hardware_policy="none",
+        smoke_caps=BenchmarkSmokeCaps(
+            n_train=SMOKE_N_TRAIN_CAP,
+            n_test=SMOKE_N_TEST_CAP,
+            n_features=SMOKE_N_FEATURES_CAP,
+            n_nodes=SMOKE_N_NODES_CAP,
+        ),
+    )
+
+    assert resolved.config.stress.profile is None
+    assert resolved.config.dataset.n_train == SMOKE_N_TRAIN_CAP
+    assert resolved.config.dataset.n_test == SMOKE_N_TEST_CAP
+    assert resolved.config.dataset.n_features_max == SMOKE_N_FEATURES_CAP
+    assert resolved.config.graph.n_nodes_max == SMOKE_N_NODES_CAP
+
+    trace = serialize_resolution_events(resolved.trace_events)
+    materialize_index = next(
+        idx
+        for idx, event in enumerate(trace)
+        if event["source"] == "stress.profile_materialization"
+    )
+    smoke_index = next(
+        idx for idx, event in enumerate(trace) if event["source"] == "benchmark.suite_smoke_caps"
+    )
+    assert materialize_index < smoke_index
+    assert any(
+        event["path"] == "stress.profile"
+        and event["source"] == "stress.profile_materialization"
+        and event["old_value"] == _STRESS_PROFILE
+        and event["new_value"] is None
+        for event in trace
+    )
 
 
 def test_resolve_benchmark_preset_config_preserves_dataset_rows_after_policy_transform(

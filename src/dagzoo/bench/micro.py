@@ -18,7 +18,7 @@ from dagzoo.bench.constants import (
     MICROBENCH_SYNTH_ROWS,
     MILLISECONDS_PER_SECOND,
 )
-from dagzoo.config import GeneratorConfig, clone_generator_config
+from dagzoo.config import GeneratorConfig, clone_generator_config, materialize_stress_profile
 from dagzoo.core.dataset import generate_one
 from dagzoo.core.fixed_layout.plan_types import FixedLayoutConverterSpec
 from dagzoo.core.node_pipeline import apply_node_pipeline
@@ -45,7 +45,15 @@ def _time_ms(func: Callable[[], None], repeats: int, *, device: str | None = Non
 def _micro_config(config: GeneratorConfig) -> GeneratorConfig:
     """Create a lightweight config variant for inexpensive microbenchmarks."""
 
-    c = clone_generator_config(config, revalidate=False)
+    if config.stress.profile is not None:
+        config.validate_generation_constraints()
+        c = materialize_stress_profile(
+            config,
+            revalidate=False,
+            clear_selector=True,
+        )
+    else:
+        c = clone_generator_config(config, revalidate=False)
     c.dataset.n_train = min(MICRO_CONFIG_N_TRAIN_CAP, c.dataset.n_train)
     c.dataset.n_test = min(MICRO_CONFIG_N_TEST_CAP, c.dataset.n_test)
     c.dataset.n_features_min = min(MICRO_CONFIG_N_FEATURES_CAP, c.dataset.n_features_min)

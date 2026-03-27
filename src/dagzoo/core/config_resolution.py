@@ -11,6 +11,7 @@ from dagzoo.config import (
     DatasetRowsSpec,
     GeneratorConfig,
     clone_generator_config,
+    materialize_stress_profile,
     normalize_dataset_rows,
 )
 from dagzoo.hardware import HardwareInfo, detect_hardware
@@ -345,29 +346,6 @@ def resolve_generate_config(
         events=trace_events,
     )
 
-    hw = detect_hardware(requested_device)
-    before_policy = resolved.to_dict()
-    resolved = apply_hardware_policy(
-        resolved,
-        hw,
-        policy_name=hardware_policy,
-        validate=False,
-    )
-    after_policy = resolved.to_dict()
-    _append_diff_events(
-        before_policy,
-        after_policy,
-        source=f"hardware_policy.{str(hardware_policy).strip().lower()}",
-        events=trace_events,
-    )
-    _apply_default_cuda_fixed_layout_target_floor(
-        resolved,
-        hw=hw,
-        events=trace_events,
-    )
-    if post_policy_hook is not None:
-        post_policy_hook(resolved, trace_events)
-
     _apply_rows_override(
         resolved,
         rows=rows,
@@ -394,6 +372,41 @@ def resolve_generate_config(
             events=trace_events,
         )
 
+    resolved.validate_generation_constraints()
+    materialized = materialize_stress_profile(
+        resolved,
+        revalidate=False,
+        clear_selector=True,
+    )
+    append_config_diff_events(
+        resolved,
+        materialized,
+        source="stress.profile_materialization",
+        events=trace_events,
+    )
+    resolved = materialized
+    hw = detect_hardware(requested_device)
+    before_policy = resolved.to_dict()
+    resolved = apply_hardware_policy(
+        resolved,
+        hw,
+        policy_name=hardware_policy,
+        validate=False,
+    )
+    after_policy = resolved.to_dict()
+    _append_diff_events(
+        before_policy,
+        after_policy,
+        source=f"hardware_policy.{str(hardware_policy).strip().lower()}",
+        events=trace_events,
+    )
+    _apply_default_cuda_fixed_layout_target_floor(
+        resolved,
+        hw=hw,
+        events=trace_events,
+    )
+    if post_policy_hook is not None:
+        post_policy_hook(resolved, trace_events)
     resolved.validate_generation_constraints()
     return ResolvedGenerateConfig(
         config=resolved,
@@ -426,9 +439,27 @@ def resolve_benchmark_preset_config(
         events=trace_events,
     )
 
+    resolved.validate_generation_constraints()
+    materialized = materialize_stress_profile(
+        resolved,
+        revalidate=False,
+        clear_selector=True,
+    )
+    append_config_diff_events(
+        resolved,
+        materialized,
+        source="stress.profile_materialization",
+        events=trace_events,
+    )
+    resolved = materialized
     hw = detect_hardware(requested_device)
     before_policy = resolved.to_dict()
-    resolved = apply_hardware_policy(resolved, hw, policy_name=hardware_policy)
+    resolved = apply_hardware_policy(
+        resolved,
+        hw,
+        policy_name=hardware_policy,
+        validate=False,
+    )
     after_policy = resolved.to_dict()
     _append_diff_events(
         before_policy,

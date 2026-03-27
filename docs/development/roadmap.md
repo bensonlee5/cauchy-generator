@@ -47,6 +47,11 @@ Roadmap ranking is currently optimized for downstream PFN utility:
 - primary: curriculum-aware dataset levers that improve downstream model quality
   by making generated corpora thoughtfully harder while preserving
   reproducibility and acceptable throughput
+- near-term downstream contract: `tab-foundry` now needs one carried dagzoo
+  curriculum/SCM slice with comparable dataset-size and task-complexity bands
+  for classification scaling, so steering and stress-profile work should
+  preserve stable regime identity rather than reopen retired stagewise
+  complexity controls
 - near-term evidence: `tab-foundry` harder-ladder results currently favor
   noise drift, graph drift, and structured missingness over broader new
   generator subsystems as the next harder-front candidates
@@ -54,6 +59,9 @@ Roadmap ranking is currently optimized for downstream PFN utility:
   `dagzoo generate --handoff-root` plus `handoff_manifest.json` so downstream
   repos such as `tab-foundry` can consume generated corpora without a parallel
   request-only contract
+- immediate follow-on: the next downstream ask is not a new handoff protocol;
+  it is stable carried-slice identity and regime metadata on top of the
+  shipped one-way handoff
 - deferred: closed-loop feedback from downstream model predictions back into generation policy after the one-way handoff is stable
 
 ## Canonical Priority Queue
@@ -300,19 +308,34 @@ Use the canonical docs instead:
 - Milestone: `Now`
 - Mission alignment: robustness testing
 - Pillar alignment: tabular realism
-- Goal: define reproducible named stress profiles built from the current harder-data levers so contributors can run benchmark-guarded hard-task and adversarial-style regimes without inventing one-off configs.
+- Goal: define reproducible named stress profiles and carried regime slices
+  built from the current harder-data levers so contributors can run
+  benchmark-guarded hard-task and adversarial-style regimes without inventing
+  one-off configs, and downstream repos can hold the data regime fixed while
+  comparing model scales.
 - GitHub tracking: `#247 -> #252 -> #257 -> #262 -> #267`
-- Repo touchpoints: `src/dagzoo/config/`, `src/dagzoo/functions/random_functions.py`, `src/dagzoo/postprocess/postprocess.py`, `src/dagzoo/bench/`, `src/dagzoo/sampling/missingness.py`, `src/dagzoo/core/shift.py`, `src/dagzoo/core/noise_runtime.py`
+- Repo touchpoints: `src/dagzoo/config/`, `src/dagzoo/core/config_resolution.py`, `src/dagzoo/functions/random_functions.py`, `src/dagzoo/postprocess/postprocess.py`, `src/dagzoo/bench/`, `src/dagzoo/sampling/missingness.py`, `src/dagzoo/core/shift.py`, `src/dagzoo/core/noise_runtime.py`
 - Exit criteria:
   - Reproducible named stress presets are selectable via config/CLI and remain opt-in.
   - Stress profiles are composed from the lever families surfaced by RD-008, RD-003, RD-004, and RD-012 rather than bespoke parallel plumbing.
   - Benchmarks and diagnostics confirm regimes differ from baseline in intended directions.
+  - Profiles expose stable regime identifiers and enough metadata for
+    downstream matched-regime-budget comparisons, including comparable
+    dataset-size/task-complexity envelopes when they are used as scaling
+    slices.
   - Reproducibility tests pass for fixed seed runs.
 - Delivery issues:
   - `#252` `spec(stress): define named robustness stress profiles and validation`
   - `#257` `feat(stress): integrate named stress profiles into generate and filter workflows`
   - `#262` `analysis(stress): add regime characterization and baseline-comparison diagnostics`
   - `#267` `docs(stress): add presets, tests, and benchmark guardrails for robustness profiles`
+- Current repo baseline:
+  - Curated recipe entries labeled `stress profile` remain adoption-layer
+    examples rather than the carried-slice contract for downstream scaling.
+  - `#252` introduces the first carried classification slice as
+    `stress.profile=anti_memorization_piecewise_classification_slice_v1`,
+    resolving onto the default classification envelope plus
+    `steering.preset=anti_memorization_piecewise_v1`.
 
 ### RD-006: Staged Complexity Scaling (Features + Graph)
 
@@ -366,9 +389,15 @@ Use the canonical docs instead:
 - Evidence context:
   - `tab-foundry` branch `tf-rd-020-harder-dagzoo-ladder-v1-execute` currently shows the strongest validation log-loss improvements from noise drift v2 (`-3.897`), graph drift v2 (`-3.892`), MNAR v2 (`-3.851`), and MAR v2 (`-3.850`).
   - This points toward a curriculum built from progressively harder missingness and drift regimes rather than a return to the retired RD-006 shell.
+  - The current `tab-foundry` classification-first scaling plan now treats RD-008
+    steering outputs as the upstream source for one carried harder-front slice;
+    follow-on stress-profile work should preserve that fixed-slice identity.
 - Current repo baseline:
   - `diagnostics.meta_feature_targets` remains supported as reporting-only metadata for coverage summaries.
   - Steering is part of the current implementation baseline rather than future roadmap scope.
+  - The next downstream ask is not a new curriculum subsystem; it is a stable
+    naming/metadata contract over the shipped steering outputs so carried
+    slices remain comparable in downstream scaling work.
 
 ### RD-009: Filtered Dataset Throughput and Deferred-Filter Scaling
 
@@ -526,6 +555,8 @@ Use the canonical docs instead:
   - Handoff runs publish a versioned `handoff_manifest.json` at the handoff root with generate invocation metadata, artifact paths, throughput context, hardware metadata, and nullable diversity-artifact paths.
   - Public docs cover the handoff artifact layout, manifest contract, and one-way downstream smoke workflow.
   - The Linear implementation chain `BL-143 -> BL-144 -> BL-145 -> BL-146 -> BL-147` is closed.
+  - The next downstream follow-on is carried regime identity on top of this
+    manifest contract, not a second handoff protocol.
 
 ## Milestone Board
 
@@ -559,11 +590,24 @@ Use the canonical docs instead:
 - RD-015 is implemented and provides the semantic RNG contract that active throughput or handoff work must preserve.
 - RD-009 is implemented and now serves as the baseline canonical `generate -> filter` pipeline for later handoff and runtime work.
 - RD-016 is implemented on top of the canonical `generate -> filter` pipeline from RD-009 and does not introduce a parallel configuration surface that the repo has already removed.
+- RD-016 is sufficient for the current one-way `dagzoo -> tab-foundry` contract;
+  the next downstream gap is stable carried-slice identity and regime metadata,
+  not a new handoff protocol.
 - RD-011 is implemented and provides the shipped mechanism-diversity baseline; `#220` remains a later analytical follow-on rather than unfinished roadmap delivery.
 - RD-008 is the top active data-lever item because current `tab-foundry` harder-ladder evidence favors noise drift, graph drift, and structured missingness as the strongest near-term harder fronts.
 - RD-008 should compose existing RD-003, RD-004, and RD-012 surfaces plus `diagnostics.meta_feature_targets` rather than reviving the retired RD-006 stagewise feature/node/graph shell.
+- RD-008 should now also be read as the upstream contract for one carried
+  harder-front slice in downstream classification scaling rather than as purely
+  exploratory steering.
 - RD-012 is implemented and provides explicit noise-family controls that RD-005 can consume later for stress-profile composition.
-- RD-005 packages the lever families surfaced by RD-008 into reproducible named stress regimes and depends primarily on RD-003, RD-004, RD-008, and RD-012 plus the existing filter and diagnostics observability.
+- RD-005 packages the lever families surfaced by RD-008 into reproducible named
+  stress regimes and carried scaling slices with stable identifiers and
+  comparable regime metadata; it depends primarily on RD-003, RD-004, RD-008,
+  and RD-012 plus the existing filter and diagnostics observability.
+- The first RD-005 carried-slice spec is
+  `stress.profile=anti_memorization_piecewise_classification_slice_v1`; the
+  older curated recipe `stress profile` labels remain examples rather than the
+  fixed-slice retrieval contract.
 - RD-013 fans out after `#253` into the temporal runtime lane `#258` and the metadata-contract lane `#263`, which rejoin at docs and guardrails `#268`.
 - RD-013 remains later because the near-term downstream contract is one-way tabular corpus handoff, not temporal generation.
 - RD-002 builds on completed RD-001 lineage artifacts for intervention metadata extensions.

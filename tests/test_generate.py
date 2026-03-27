@@ -171,6 +171,19 @@ def test_generate_one_omits_steering_from_metadata_config() -> None:
     assert "steering" not in bundle.metadata["config"]
 
 
+def test_generate_one_with_stress_profile_omits_stress_from_metadata_config() -> None:
+    cfg = load_repo_config()
+    cfg.stress.profile = "anti_memorization_piecewise_classification_slice_v1"
+
+    bundle = generate_one(cfg, seed=10, device="cpu")
+
+    assert bundle.metadata["config"]["dataset"]["task"] == "classification"
+    assert int(bundle.metadata["config"]["dataset"]["n_train"]) == 768
+    assert int(bundle.metadata["config"]["dataset"]["n_test"]) == 256
+    assert "stress" not in bundle.metadata["config"]
+    assert "steering" not in bundle.metadata["config"]
+
+
 def test_generate_batch_dynamic_steering_changes_metadata_over_dataset_order() -> None:
     cfg = _tiny_regression_config()
     cfg.steering.enabled = True
