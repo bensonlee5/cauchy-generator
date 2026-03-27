@@ -13,11 +13,13 @@ import torch
 
 from dagzoo.bench.baseline import compare_summary_to_baseline
 from dagzoo.bench.collectors import (
+    _BundleMetricsCollector,
     _compose_bundle_callback,
-    _MissingnessAcceptanceCollector,
-    _NoiseGuardrailCollector,
-    _ShiftGuardrailCollector,
-    _ThroughputPressureCollector,
+    build_filtering_metrics,
+    build_missingness_metrics,
+    build_noise_metrics,
+    build_pressure_metrics,
+    build_shift_metrics,
 )
 from dagzoo.bench.constants import (
     DIAGNOSTICS_DUPLICATE_PRESET_SUFFIX_BASE,
@@ -31,8 +33,7 @@ from dagzoo.bench.constants import (
 )
 from dagzoo.bench.guardrails import (
     _build_guardrail_issue,
-    _collect_guardrail_regression_issues,
-    _collect_lineage_guardrails,
+    _collect_scenario_regression_issues,
     _issue_sort_key,
     _severity_from_thresholds,
     _status_from_issues,
@@ -63,6 +64,7 @@ from dagzoo.bench.runtime_support import (
     _synchronize_accelerator,
 )
 from dagzoo.bench.stage_metrics import (
+    FilterStageMeasurement,
     StageSampleCollector,
     measure_filter_stage_metrics,
     measure_write_stage_metrics,
@@ -161,6 +163,423 @@ def _build_fixed_layout_evidence(
     }
 
 
+def _build_scenario(
+    enabled: bool,
+    *,
+    metrics: dict[str, Any] | None = None,
+    control_metrics: dict[str, Any] | None = None,
+    issues: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    scenario_issues = list(issues or [])
+    payload: dict[str, Any] = {
+        "enabled": bool(enabled),
+        "status": "off" if not enabled else _status_from_issues(scenario_issues),
+        "metrics": dict(metrics or {}),
+        "issues": scenario_issues,
+    }
+    if control_metrics is not None:
+        payload["control_metrics"] = dict(control_metrics)
+    return payload
+
+
+def _build_on_bundle_callback(
+    *,
+    diagnostics_aggregator: CoverageAggregator | None,
+    collector: _BundleMetricsCollector,
+    stage_sample_cap: int,
+) -> tuple[Callable[[DatasetBundle], None], StageSampleCollector]:
+    stage_sample_collector = StageSampleCollector(max_samples=stage_sample_cap)
+    composed_on_bundle_callback = _compose_bundle_callback(
+        diagnostics_aggregator=diagnostics_aggregator,
+        collector=collector,
+    )
+
+    def on_bundle_callback(bundle: DatasetBundle) -> None:
+        stage_sample_collector.update(bundle)
+        if composed_on_bundle_callback is not None:
+            composed_on_bundle_callback(bundle)
+
+    return on_bundle_callback, stage_sample_collector
+
+
+def _run_control_benchmark(
+    config: GeneratorConfig,
+    *,
+    requested_device: str | None,
+    num_datasets: int,
+    warmup: int,
+    stage_sample_cap: int,
+    diagnostics_enabled: bool,
+) -> tuple[float, _BundleMetricsCollector]:
+    diagnostics_aggregator = _build_diagnostics_aggregator(config) if diagnostics_enabled else None
+    collector = _BundleMetricsCollector(expected_noise_family_requested=str(config.noise.family))
+    on_bundle_callback, stage_sample_collector = _build_on_bundle_callback(
+        diagnostics_aggregator=diagnostics_aggregator,
+        collector=collector,
+        stage_sample_cap=stage_sample_cap,
+    )
+    throughput = run_throughput_benchmark(
+        config,
+        num_datasets=num_datasets,
+        warmup_datasets=warmup,
+        device=requested_device,
+        on_bundle=on_bundle_callback,
+    )
+    stage_sample_collector.bundles.clear()
+    return float(throughput.get("datasets_per_minute", 0.0)), collector
+
+
+def _missingness_scenario(
+    *,
+    config: GeneratorConfig,
+    generation_config: GeneratorConfig,
+    collector: _BundleMetricsCollector,
+    requested_device: str | None,
+    num_datasets: int,
+    warmup: int,
+    stage_sample_cap: int,
+    current_dpm: float,
+    warn_threshold_pct: float,
+    fail_threshold_pct: float,
+    diagnostics_enabled: bool,
+) -> dict[str, Any]:
+    if not _is_missingness_enabled(config):
+        return _build_scenario(False)
+
+    candidate_metrics = build_missingness_metrics(
+        collector,
+        target_rate=float(config.dataset.missing_rate),
+    )
+    issues: list[dict[str, Any]] = []
+    metadata_coverage_rate = float(candidate_metrics["metadata_coverage_rate"])
+    if metadata_coverage_rate < 1.0:
+        issues.append(
+            _build_guardrail_issue(
+                metric="missingness_metadata_coverage",
+                severity="fail",
+                current=metadata_coverage_rate,
+                baseline=1.0,
+                degradation_pct=float(max(0.0, (1.0 - metadata_coverage_rate) * 100.0)),
+                detail="Missingness metadata must be present for all generated bundles.",
+            )
+        )
+
+    rate_abs_error = float(candidate_metrics["rate_abs_error"])
+    rate_error_pp = rate_abs_error * 100.0
+    rate_severity = _severity_from_thresholds(
+        rate_abs_error,
+        warn=MISSINGNESS_RATE_WARN_ABS_ERROR,
+        fail=MISSINGNESS_RATE_FAIL_ABS_ERROR,
+    )
+    if rate_severity != "pass":
+        threshold_pp = (
+            MISSINGNESS_RATE_FAIL_ABS_ERROR * 100.0
+            if rate_severity == "fail"
+            else MISSINGNESS_RATE_WARN_ABS_ERROR * 100.0
+        )
+        issues.append(
+            _build_guardrail_issue(
+                metric="missingness_realized_rate_error_pp",
+                severity=rate_severity,
+                current=float(rate_error_pp),
+                baseline=float(threshold_pp),
+                degradation_pct=float(rate_error_pp),
+                detail="Realized missing rate drifted from configured target.",
+            )
+        )
+
+    baseline_config = _copy_runtime_config(generation_config)
+    baseline_config.dataset.missing_rate = 0.0
+    baseline_config.dataset.missing_mechanism = MISSINGNESS_MECHANISM_NONE
+    baseline_dpm, _ = _run_control_benchmark(
+        baseline_config,
+        requested_device=requested_device,
+        num_datasets=num_datasets,
+        warmup=warmup,
+        stage_sample_cap=stage_sample_cap,
+        diagnostics_enabled=diagnostics_enabled,
+    )
+    runtime_degradation = degradation_percent("datasets_per_minute", current_dpm, baseline_dpm)
+    runtime_degradation_value = (
+        float(runtime_degradation) if runtime_degradation is not None else 0.0
+    )
+    runtime_severity = _severity_from_thresholds(
+        runtime_degradation_value,
+        warn=float(warn_threshold_pct),
+        fail=float(fail_threshold_pct),
+    )
+    if runtime_severity != "pass":
+        issues.append(
+            _build_guardrail_issue(
+                metric="missingness_runtime_degradation_pct",
+                severity=runtime_severity,
+                current=current_dpm,
+                baseline=baseline_dpm,
+                degradation_pct=runtime_degradation_value,
+                detail=(
+                    "Missingness-enabled throughput regressed versus an equivalent "
+                    "missingness-disabled control run."
+                ),
+            )
+        )
+
+    candidate_metrics["datasets_per_minute"] = current_dpm
+    candidate_metrics["rate_warn_abs_error"] = float(MISSINGNESS_RATE_WARN_ABS_ERROR)
+    candidate_metrics["rate_fail_abs_error"] = float(MISSINGNESS_RATE_FAIL_ABS_ERROR)
+    return _build_scenario(
+        True,
+        metrics=candidate_metrics,
+        control_metrics={"datasets_per_minute": baseline_dpm},
+        issues=issues,
+    )
+
+
+def _shift_scenario(
+    *,
+    config: GeneratorConfig,
+    generation_config: GeneratorConfig,
+    collector: _BundleMetricsCollector,
+    requested_device: str | None,
+    num_datasets: int,
+    warmup: int,
+    stage_sample_cap: int,
+    current_dpm: float,
+    warn_threshold_pct: float,
+    fail_threshold_pct: float,
+    diagnostics_enabled: bool,
+) -> dict[str, Any]:
+    if not _is_shift_enabled(config):
+        return _build_scenario(False)
+
+    shift_params = resolve_shift_runtime_params(config)
+    candidate_metrics = build_shift_metrics(collector)
+    baseline_config = _copy_runtime_config(generation_config)
+    baseline_config.shift.enabled = False
+    baseline_config.shift.mode = SHIFT_MODE_OFF
+    baseline_config.shift.graph_scale = None
+    baseline_config.shift.mechanism_scale = None
+    baseline_config.shift.variance_scale = None
+    baseline_dpm, baseline_collector = _run_control_benchmark(
+        baseline_config,
+        requested_device=requested_device,
+        num_datasets=num_datasets,
+        warmup=warmup,
+        stage_sample_cap=stage_sample_cap,
+        diagnostics_enabled=diagnostics_enabled,
+    )
+    control_metrics = build_shift_metrics(baseline_collector)
+    control_metrics["datasets_per_minute"] = baseline_dpm
+
+    runtime_degradation = degradation_percent("datasets_per_minute", current_dpm, baseline_dpm)
+    runtime_degradation_value = (
+        float(runtime_degradation) if runtime_degradation is not None else 0.0
+    )
+    runtime_severity = _severity_from_thresholds(
+        runtime_degradation_value,
+        warn=float(warn_threshold_pct),
+        fail=float(fail_threshold_pct),
+    )
+    runtime_gating_enabled = num_datasets >= SHIFT_GUARDRAIL_RUNTIME_GATING_MIN_SAMPLE
+    directional_gating_enabled = num_datasets >= SHIFT_GUARDRAIL_DIRECTIONAL_GATING_MIN_SAMPLE
+
+    issues: list[dict[str, Any]] = []
+    metadata_coverage_rate = float(candidate_metrics["metadata_coverage_rate"])
+    if metadata_coverage_rate < 1.0:
+        issues.append(
+            _build_guardrail_issue(
+                metric="shift_metadata_coverage",
+                severity="fail",
+                current=metadata_coverage_rate,
+                baseline=1.0,
+                degradation_pct=float(max(0.0, (1.0 - metadata_coverage_rate) * 100.0)),
+                detail="Shift metadata must be present for all shift-enabled bundles.",
+            )
+        )
+    shift_enabled_coverage_rate = float(candidate_metrics["shift_enabled_coverage_rate"])
+    if shift_enabled_coverage_rate < 1.0:
+        issues.append(
+            _build_guardrail_issue(
+                metric="shift_enabled_metadata_coverage",
+                severity="fail",
+                current=shift_enabled_coverage_rate,
+                baseline=1.0,
+                degradation_pct=float(max(0.0, (1.0 - shift_enabled_coverage_rate) * 100.0)),
+                detail="Shift-enabled benchmark runs must emit shift.enabled=true metadata.",
+            )
+        )
+    if runtime_gating_enabled and runtime_severity != "pass":
+        issues.append(
+            _build_guardrail_issue(
+                metric="shift_runtime_degradation_pct",
+                severity=runtime_severity,
+                current=current_dpm,
+                baseline=baseline_dpm,
+                degradation_pct=runtime_degradation_value,
+                detail=(
+                    "Shift-enabled throughput regressed versus an equivalent "
+                    "shift-disabled control run."
+                ),
+            )
+        )
+
+    graph_check, graph_issue = _build_shift_directional_check(
+        metric="graph_edge_density",
+        enabled=float(shift_params.graph_scale) > 0.0,
+        gating_enabled=directional_gating_enabled,
+        current=candidate_metrics.get("mean_graph_edge_density"),
+        baseline=control_metrics.get("mean_graph_edge_density"),
+        detail=(
+            "Graph shift should increase mean graph edge density "
+            "relative to a shift-disabled control run."
+        ),
+    )
+    mechanism_check, mechanism_issue = _build_shift_directional_check(
+        metric="mechanism_nonlinear_mass",
+        enabled=float(shift_params.mechanism_scale) > 0.0,
+        gating_enabled=directional_gating_enabled,
+        current=candidate_metrics.get("mean_mechanism_nonlinear_mass"),
+        baseline=control_metrics.get("mean_mechanism_nonlinear_mass"),
+        detail=(
+            "Mechanism shift should increase nonlinear family mass "
+            "relative to a shift-disabled control run."
+        ),
+    )
+    noise_check, noise_issue = _build_shift_directional_check(
+        metric="noise_variance_multiplier",
+        enabled=float(shift_params.variance_scale) > 0.0,
+        gating_enabled=directional_gating_enabled,
+        current=candidate_metrics.get("mean_noise_variance_multiplier"),
+        baseline=control_metrics.get("mean_noise_variance_multiplier"),
+        detail=(
+            "Noise shift should increase noise variance multiplier "
+            "relative to a shift-disabled control run."
+        ),
+    )
+    for maybe_issue in (graph_issue, mechanism_issue, noise_issue):
+        if maybe_issue is not None:
+            issues.append(maybe_issue)
+
+    candidate_metrics.update(
+        {
+            "datasets_per_minute": current_dpm,
+            "mode": str(shift_params.mode),
+            "graph_scale": float(shift_params.graph_scale),
+            "mechanism_scale": float(shift_params.mechanism_scale),
+            "variance_scale": float(shift_params.variance_scale),
+            "runtime_gating_enabled": bool(runtime_gating_enabled),
+            "directional_gating_enabled": bool(directional_gating_enabled),
+            "directional_checks": {
+                "graph_edge_density": graph_check,
+                "mechanism_nonlinear_mass": mechanism_check,
+                "noise_variance_multiplier": noise_check,
+            },
+        }
+    )
+    return _build_scenario(
+        True,
+        metrics=candidate_metrics,
+        control_metrics=control_metrics,
+        issues=issues,
+    )
+
+
+def _noise_scenario(
+    *,
+    config: GeneratorConfig,
+    generation_config: GeneratorConfig,
+    collector: _BundleMetricsCollector,
+    requested_device: str | None,
+    num_datasets: int,
+    warmup: int,
+    stage_sample_cap: int,
+    current_dpm: float,
+    warn_threshold_pct: float,
+    fail_threshold_pct: float,
+    diagnostics_enabled: bool,
+) -> dict[str, Any]:
+    if not _is_noise_enabled(config):
+        return _build_scenario(False)
+
+    candidate_metrics = build_noise_metrics(collector)
+    baseline_config = _copy_runtime_config(generation_config)
+    baseline_config.noise.family = NOISE_FAMILY_GAUSSIAN
+    baseline_config.noise.base_scale = 1.0
+    baseline_config.noise.student_t_df = 5.0
+    baseline_config.noise.mixture_weights = None
+    baseline_dpm, baseline_collector = _run_control_benchmark(
+        baseline_config,
+        requested_device=requested_device,
+        num_datasets=num_datasets,
+        warmup=warmup,
+        stage_sample_cap=stage_sample_cap,
+        diagnostics_enabled=diagnostics_enabled,
+    )
+    control_metrics = build_noise_metrics(baseline_collector)
+    control_metrics["datasets_per_minute"] = baseline_dpm
+    control_metrics["family_requested"] = str(baseline_config.noise.family)
+
+    runtime_degradation = degradation_percent("datasets_per_minute", current_dpm, baseline_dpm)
+    runtime_degradation_value = (
+        float(runtime_degradation) if runtime_degradation is not None else 0.0
+    )
+    runtime_severity = _severity_from_thresholds(
+        runtime_degradation_value,
+        warn=float(warn_threshold_pct),
+        fail=float(fail_threshold_pct),
+    )
+    runtime_gating_enabled = num_datasets >= NOISE_GUARDRAIL_RUNTIME_GATING_MIN_SAMPLE
+
+    issues: list[dict[str, Any]] = []
+    metadata_coverage_rate = float(candidate_metrics["metadata_coverage_rate"])
+    if metadata_coverage_rate < 1.0:
+        issues.append(
+            _build_guardrail_issue(
+                metric="noise_metadata_coverage",
+                severity="fail",
+                current=metadata_coverage_rate,
+                baseline=1.0,
+                degradation_pct=float(max(0.0, (1.0 - metadata_coverage_rate) * 100.0)),
+                detail="Noise metadata must be present for all generated bundles.",
+            )
+        )
+    metadata_valid_rate = float(candidate_metrics["metadata_valid_rate"])
+    if metadata_valid_rate < 1.0:
+        issues.append(
+            _build_guardrail_issue(
+                metric="noise_metadata_validity",
+                severity="fail",
+                current=metadata_valid_rate,
+                baseline=1.0,
+                degradation_pct=float(max(0.0, (1.0 - metadata_valid_rate) * 100.0)),
+                detail="Noise metadata must be valid and consistent with configured family.",
+            )
+        )
+    if runtime_gating_enabled and runtime_severity != "pass":
+        issues.append(
+            _build_guardrail_issue(
+                metric="noise_runtime_degradation_pct",
+                severity=runtime_severity,
+                current=current_dpm,
+                baseline=baseline_dpm,
+                degradation_pct=runtime_degradation_value,
+                detail=(
+                    "Non-gaussian noise throughput regressed versus an equivalent "
+                    "gaussian-noise control run."
+                ),
+            )
+        )
+
+    candidate_metrics["datasets_per_minute"] = current_dpm
+    candidate_metrics["family_requested"] = str(config.noise.family)
+    candidate_metrics["runtime_gating_enabled"] = bool(runtime_gating_enabled)
+    return _build_scenario(
+        True,
+        metrics=candidate_metrics,
+        control_metrics=control_metrics,
+        issues=issues,
+    )
+
+
 def run_preset_benchmark(
     spec: PresetRunSpec,
     *,
@@ -178,7 +597,7 @@ def run_preset_benchmark(
     diagnostics_occurrence_index: int,
     diagnostics_occurrence_total: int,
 ) -> dict[str, Any]:
-    """Run one benchmark preset and collect throughput, latency, and optional diagnostics."""
+    """Run one benchmark preset and collect throughput, latency, and scenario metrics."""
 
     def _resolve_preset_for_requested_device(requested_device: str):
         return resolve_benchmark_preset_config(
@@ -192,20 +611,20 @@ def run_preset_benchmark(
 
     normalized_preset_device = (spec.device or spec.config.runtime.device or "auto").lower()
     resolved_preset = _resolve_preset_for_requested_device(normalized_preset_device)
-    pre_realization_config = _copy_runtime_config(resolved_preset.config)
-    trace_events = list(resolved_preset.trace_events)
+    pre_realization_config = _copy_runtime_config(resolved_preset["config"])
+    trace_events = list(resolved_preset["trace_events"])
     if suite == "smoke":
         _cap_smoke_rows_spec(pre_realization_config)
         append_config_diff_events(
-            resolved_preset.config,
+            resolved_preset["config"],
             pre_realization_config,
             source="benchmark.smoke_rows_cap",
             events=trace_events,
         )
     config, _run_seed, requested_device, _resolved_device = realize_generation_config_for_run(
         pre_realization_config,
-        seed=resolved_preset.config.seed,
-        device=resolved_preset.requested_device,
+        seed=resolved_preset["config"].seed,
+        device=str(resolved_preset["requested_device"]),
     )
     append_config_diff_events(
         pre_realization_config,
@@ -213,7 +632,7 @@ def run_preset_benchmark(
         source="benchmark.run_realization",
         events=trace_events,
     )
-    hw = resolved_preset.hardware
+    hw = resolved_preset["hardware"]
     num_datasets, warmup = _preset_counts(
         config,
         preset_key=spec.key,
@@ -233,21 +652,8 @@ def run_preset_benchmark(
     if diagnostics_enabled:
         diagnostics_aggregator = _build_diagnostics_aggregator(config)
 
-    missingness_enabled = _is_missingness_enabled(config)
-    missingness_acceptance = (
-        _MissingnessAcceptanceCollector(target_rate=float(config.dataset.missing_rate))
-        if missingness_enabled
-        else None
-    )
-    shift_enabled = _is_shift_enabled(config)
-    shift_guardrails = _ShiftGuardrailCollector() if shift_enabled else None
-    noise_enabled = _is_noise_enabled(config)
-    noise_guardrails = (
-        _NoiseGuardrailCollector(expected_family_requested=str(config.noise.family))
-        if noise_enabled
-        else None
-    )
     stage_sample_cap = _latency_sample_count(config, suite, num_datasets)
+    collector = _BundleMetricsCollector(expected_noise_family_requested=str(config.noise.family))
 
     generation_config = _copy_runtime_config(config)
     generation_config.filter.enabled = False
@@ -256,44 +662,10 @@ def run_preset_benchmark(
         device=requested_device,
         num_datasets=num_datasets,
     )
-
-    def _build_throughput_on_bundle_callback(
-        *,
-        diagnostics_aggregator: CoverageAggregator | None,
-        missingness_acceptance: _MissingnessAcceptanceCollector | None,
-        shift_guardrails: _ShiftGuardrailCollector | None,
-        noise_guardrails: _NoiseGuardrailCollector | None,
-    ) -> tuple[
-        Callable[[DatasetBundle], None],
-        StageSampleCollector,
-        _ThroughputPressureCollector,
-    ]:
-        throughput_pressure = _ThroughputPressureCollector()
-        stage_sample_collector = StageSampleCollector(max_samples=stage_sample_cap)
-        composed_on_bundle_callback = _compose_bundle_callback(
-            diagnostics_aggregator=diagnostics_aggregator,
-            missingness_acceptance=missingness_acceptance,
-            shift_guardrails=shift_guardrails,
-            noise_guardrails=noise_guardrails,
-            throughput_pressure=throughput_pressure,
-        )
-
-        def on_bundle_callback(bundle: DatasetBundle) -> None:
-            stage_sample_collector.update(bundle)
-            if composed_on_bundle_callback is not None:
-                composed_on_bundle_callback(bundle)
-
-        return on_bundle_callback, stage_sample_collector, throughput_pressure
-
-    (
-        on_bundle_callback,
-        stage_sample_collector,
-        throughput_pressure,
-    ) = _build_throughput_on_bundle_callback(
+    on_bundle_callback, stage_sample_collector = _build_on_bundle_callback(
         diagnostics_aggregator=diagnostics_aggregator,
-        missingness_acceptance=missingness_acceptance,
-        shift_guardrails=shift_guardrails,
-        noise_guardrails=noise_guardrails,
+        collector=collector,
+        stage_sample_cap=stage_sample_cap,
     )
 
     result = run_throughput_benchmark(
@@ -309,73 +681,46 @@ def run_preset_benchmark(
     prepare_cpu_time_seconds = float(result.get("prepare_cpu_time_seconds", 0.0) or 0.0)
     sampled_bundles = stage_sample_collector.bundles
     stage_sample_datasets = len(sampled_bundles)
+
     write_stage_measurement = (
         measure_write_stage_metrics(sampled_bundles, config=config)
         if sampled_bundles
         else measure_write_stage_metrics([], config=config)
     )
-    write_dpm = float(getattr(write_stage_measurement, "datasets_per_minute", 0.0))
     filter_stage_enabled = bool(config.filter.enabled)
-    filter_dpm: float | None
-    if filter_stage_enabled:
-        filter_stage_measurement = (
-            measure_filter_stage_metrics(sampled_bundles, config=config)
-            if sampled_bundles
-            else None
-        )
-        filter_dpm = (
-            float(filter_stage_measurement.datasets_per_minute)
-            if filter_stage_measurement is not None
-            else 0.0
-        )
-    else:
-        filter_stage_measurement = None
-        filter_dpm = None
-    throughput_pressure_summary = throughput_pressure.build_summary()
-    filter_attempts_total = int(throughput_pressure_summary["filter_attempts_total"])
-    filter_rejections_total = int(throughput_pressure_summary["filter_rejections_total"])
-    filter_retry_dataset_count = int(throughput_pressure_summary["filter_retry_dataset_count"])
-    filter_retry_dataset_denominator = int(throughput_pressure_summary["datasets_seen"])
+    filter_stage_measurement: FilterStageMeasurement | None = None
+    if filter_stage_enabled and sampled_bundles:
+        filter_stage_measurement = measure_filter_stage_metrics(sampled_bundles, config=config)
+
+    pressure_metrics = build_pressure_metrics(collector)
+    generation_dpm = float(result.get("datasets_per_minute", 0.0))
+    write_dpm = float(getattr(write_stage_measurement, "datasets_per_minute", 0.0))
+    filtering_metrics: dict[str, Any] | None = None
+    filter_dpm: float | None = None
+    filter_accepted_datasets_per_minute: float | None = None
+    filter_acceptance_rate_dataset_level: float | None = None
+    filter_rejection_rate_dataset_level: float | None = None
+    filter_attempts_total = int(pressure_metrics["filter_attempts_total"])
+    filter_rejections_total = int(pressure_metrics["filter_rejections_total"])
+    filter_retry_dataset_count = int(pressure_metrics["filter_retry_dataset_count"])
+    filter_retry_dataset_rate = pressure_metrics["filter_retry_dataset_rate"]
     filter_accepted_datasets_measured = 0
     filter_rejected_datasets_measured = 0
     if filter_stage_measurement is not None:
-        filter_attempts_total = int(filter_stage_measurement.filter_attempts_total)
-        filter_rejections_total = int(filter_stage_measurement.filter_rejections_total)
-        filter_retry_dataset_count = int(filter_stage_measurement.filter_rejections_total)
-        filter_retry_dataset_denominator = int(stage_sample_datasets)
-        filter_accepted_datasets_measured = int(filter_stage_measurement.filter_accepted_datasets)
-        filter_rejected_datasets_measured = int(filter_stage_measurement.filter_rejected_datasets)
-    filter_rejection_rate_attempt_level = (
-        float(filter_rejections_total) / float(filter_attempts_total)
-        if filter_attempts_total > 0
-        else None
-    )
-    filter_dataset_yield_total = (
-        filter_accepted_datasets_measured + filter_rejected_datasets_measured
-    )
-    filter_acceptance_rate_dataset_level = (
-        float(filter_accepted_datasets_measured) / float(filter_dataset_yield_total)
-        if filter_dataset_yield_total > 0
-        else None
-    )
-    filter_accepted_datasets_per_minute = (
-        float(filter_dpm) * float(filter_acceptance_rate_dataset_level)
-        if filter_dpm is not None and filter_acceptance_rate_dataset_level is not None
-        else None
-    )
-    filter_rejection_rate_dataset_level = (
-        float(filter_rejected_datasets_measured) / float(filter_dataset_yield_total)
-        if filter_dataset_yield_total > 0
-        else None
-    )
-    filter_retry_dataset_rate = (
-        float(filter_retry_dataset_count) / float(filter_retry_dataset_denominator)
-        if filter_retry_dataset_denominator > 0 and filter_attempts_total > 0
-        else None
-    )
-
-    generation_dpm = float(result.get("datasets_per_minute", 0.0))
-    mean_attempts_per_dataset = float(throughput_pressure_summary["attempts_per_dataset_mean"])
+        filtering_metrics = build_filtering_metrics(
+            collector,
+            filter_stage_measurement=filter_stage_measurement,
+        )
+        filter_dpm = float(filtering_metrics["datasets_per_minute"])
+        filter_accepted_datasets_per_minute = filtering_metrics["accepted_datasets_per_minute"]
+        filter_acceptance_rate_dataset_level = filtering_metrics["acceptance_rate_dataset_level"]
+        filter_rejection_rate_dataset_level = filtering_metrics["rejection_rate_dataset_level"]
+        filter_attempts_total = int(filtering_metrics["filter_attempts_total"])
+        filter_rejections_total = int(filtering_metrics["filter_rejections_total"])
+        filter_retry_dataset_count = int(filtering_metrics["filter_retry_dataset_count"])
+        filter_retry_dataset_rate = filtering_metrics["filter_retry_dataset_rate"]
+        filter_accepted_datasets_measured = int(filtering_metrics["accepted_datasets"])
+        filter_rejected_datasets_measured = int(filtering_metrics["rejected_datasets"])
 
     result["preset_key"] = spec.key
     result["suite"] = suite
@@ -452,28 +797,26 @@ def run_preset_benchmark(
     )
     result["stage_sample_datasets"] = int(stage_sample_datasets)
     result["filter_stage_enabled"] = filter_stage_enabled
-    result["total_attempts"] = int(throughput_pressure_summary["attempts_total"])
-    result["mean_attempts_per_dataset"] = mean_attempts_per_dataset
-    result["retry_dataset_count"] = int(throughput_pressure_summary["retry_dataset_count"])
-    result["retry_dataset_rate"] = throughput_pressure_summary["retry_dataset_rate"]
+    result["total_attempts"] = int(pressure_metrics["attempts_total"])
+    result["mean_attempts_per_dataset"] = float(pressure_metrics["attempts_per_dataset_mean"])
+    result["retry_dataset_count"] = int(pressure_metrics["retry_dataset_count"])
+    result["retry_dataset_rate"] = pressure_metrics["retry_dataset_rate"]
     result["filter_attempts_total"] = int(filter_attempts_total)
     result["filter_rejections_total"] = int(filter_rejections_total)
     result["filter_accepted_datasets_measured"] = int(filter_accepted_datasets_measured)
     result["filter_rejected_datasets_measured"] = int(filter_rejected_datasets_measured)
     result["filter_acceptance_rate_dataset_level"] = filter_acceptance_rate_dataset_level
     result["filter_rejection_rate_dataset_level"] = filter_rejection_rate_dataset_level
-    result["filter_rejection_rate_attempt_level"] = filter_rejection_rate_attempt_level
-    result["filter_retry_dataset_count"] = filter_retry_dataset_count
+    result["filter_rejection_rate_attempt_level"] = pressure_metrics[
+        "filter_rejection_rate_attempt_level"
+    ]
+    result["filter_retry_dataset_count"] = int(filter_retry_dataset_count)
     result["filter_retry_dataset_rate"] = filter_retry_dataset_rate
-    result["estimated_attempts_per_minute"] = generation_dpm * mean_attempts_per_dataset
+    result["estimated_attempts_per_minute"] = generation_dpm * float(
+        pressure_metrics["attempts_per_dataset_mean"]
+    )
     result.update(fixed_layout_evidence)
-    result["missingness_guardrails"] = {"enabled": False}
-    result["lineage_guardrails"] = {"enabled": False}
-    result["shift_guardrails"] = {"enabled": False}
-    result["noise_guardrails"] = {"enabled": False}
 
-    # Stage probes are complete; release retained bundles before latency and
-    # control-run guardrail benchmarks to avoid unnecessary memory retention.
     sampled_bundles.clear()
 
     latency_stats: Mapping[str, float | None] = _collect_latency(
@@ -541,379 +884,76 @@ def run_preset_benchmark(
             )
         )
 
-    if missingness_enabled and missingness_acceptance is not None:
-        baseline_config = _copy_runtime_config(generation_config)
-        baseline_config.dataset.missing_rate = 0.0
-        baseline_config.dataset.missing_mechanism = MISSINGNESS_MECHANISM_NONE
-        missingness_baseline_diagnostics_aggregator: CoverageAggregator | None = None
-        if diagnostics_aggregator is not None:
-            missingness_baseline_diagnostics_aggregator = _build_diagnostics_aggregator(
-                baseline_config
-            )
-        baseline_missingness_acceptance = _MissingnessAcceptanceCollector(
-            target_rate=float(config.dataset.missing_rate)
-        )
-        # Keep control-run callback instrumentation equivalent so runtime delta
-        # reflects missingness overhead instead of callback overhead skew.
-        (
-            baseline_on_bundle_callback,
-            baseline_stage_sample_collector,
-            _,
-        ) = _build_throughput_on_bundle_callback(
-            diagnostics_aggregator=missingness_baseline_diagnostics_aggregator,
-            missingness_acceptance=baseline_missingness_acceptance,
-            shift_guardrails=_ShiftGuardrailCollector() if shift_enabled else None,
-            noise_guardrails=(
-                _NoiseGuardrailCollector(expected_family_requested=str(config.noise.family))
-                if noise_enabled
-                else None
-            ),
-        )
-
-        baseline_throughput = run_throughput_benchmark(
-            baseline_config,
-            num_datasets=num_datasets,
-            warmup_datasets=warmup,
-            device=requested_device,
-            on_bundle=baseline_on_bundle_callback,
-        )
-        baseline_stage_sample_collector.bundles.clear()
-        baseline_dpm = float(baseline_throughput.get("datasets_per_minute", 0.0))
-        current_dpm = float(result.get("datasets_per_minute", 0.0))
-        runtime_degradation = degradation_percent("datasets_per_minute", current_dpm, baseline_dpm)
-        runtime_degradation_value = (
-            float(runtime_degradation) if runtime_degradation is not None else 0.0
-        )
-        runtime_severity = _severity_from_thresholds(
-            runtime_degradation_value,
-            warn=float(warn_threshold_pct),
-            fail=float(fail_threshold_pct),
-        )
-
-        acceptance_summary = missingness_acceptance.build_summary()
-        issues = list(acceptance_summary["issues"])
-        if runtime_severity != "pass":
-            issues.append(
-                _build_guardrail_issue(
-                    metric="missingness_runtime_degradation_pct",
-                    severity=runtime_severity,
-                    current=current_dpm,
-                    baseline=baseline_dpm,
-                    degradation_pct=runtime_degradation_value,
-                    detail=(
-                        "Missingness-enabled throughput regressed versus an equivalent "
-                        "missingness-disabled control run."
-                    ),
-                )
-            )
-
-        result["missingness_guardrails"] = {
-            "enabled": True,
-            "mechanism": str(config.dataset.missing_mechanism),
-            "target_rate": float(config.dataset.missing_rate),
-            "metadata_coverage_rate": float(acceptance_summary["metadata_coverage_rate"]),
-            "realized_rate_overall": float(acceptance_summary["realized_rate_overall"]),
-            "rate_abs_error": float(acceptance_summary["rate_abs_error"]),
-            "rate_warn_abs_error": float(MISSINGNESS_RATE_WARN_ABS_ERROR),
-            "rate_fail_abs_error": float(MISSINGNESS_RATE_FAIL_ABS_ERROR),
-            "runtime_baseline_datasets_per_minute": baseline_dpm,
-            "runtime_degradation_pct": (
-                float(runtime_degradation) if runtime_degradation is not None else None
-            ),
-            "runtime_warn_threshold_pct": float(warn_threshold_pct),
-            "runtime_fail_threshold_pct": float(fail_threshold_pct),
-            "issues": issues,
-            "status": _status_from_issues(issues),
-        }
-
-    if shift_enabled and shift_guardrails is not None:
-        shift_params = resolve_shift_runtime_params(config)
-        baseline_config = _copy_runtime_config(generation_config)
-        baseline_config.shift.enabled = False
-        baseline_config.shift.mode = SHIFT_MODE_OFF
-        baseline_config.shift.graph_scale = None
-        baseline_config.shift.mechanism_scale = None
-        baseline_config.shift.variance_scale = None
-        shift_baseline_diagnostics_aggregator: CoverageAggregator | None = None
-        if diagnostics_aggregator is not None:
-            shift_baseline_diagnostics_aggregator = _build_diagnostics_aggregator(baseline_config)
-        shift_baseline_missingness_acceptance = (
-            _MissingnessAcceptanceCollector(target_rate=float(config.dataset.missing_rate))
-            if missingness_acceptance is not None
-            else None
-        )
-        baseline_shift_guardrails = _ShiftGuardrailCollector()
-        (
-            baseline_on_bundle_callback,
-            baseline_stage_sample_collector,
-            _,
-        ) = _build_throughput_on_bundle_callback(
-            diagnostics_aggregator=shift_baseline_diagnostics_aggregator,
-            missingness_acceptance=shift_baseline_missingness_acceptance,
-            shift_guardrails=baseline_shift_guardrails,
-            noise_guardrails=(
-                _NoiseGuardrailCollector(expected_family_requested=str(config.noise.family))
-                if noise_enabled
-                else None
-            ),
-        )
-
-        baseline_throughput = run_throughput_benchmark(
-            baseline_config,
-            num_datasets=num_datasets,
-            warmup_datasets=warmup,
-            device=requested_device,
-            on_bundle=baseline_on_bundle_callback,
-        )
-        baseline_stage_sample_collector.bundles.clear()
-        baseline_dpm = float(baseline_throughput.get("datasets_per_minute", 0.0))
-        current_dpm = float(result.get("datasets_per_minute", 0.0))
-        runtime_degradation = degradation_percent("datasets_per_minute", current_dpm, baseline_dpm)
-        runtime_degradation_value = (
-            float(runtime_degradation) if runtime_degradation is not None else 0.0
-        )
-        runtime_severity = _severity_from_thresholds(
-            runtime_degradation_value,
-            warn=float(warn_threshold_pct),
-            fail=float(fail_threshold_pct),
-        )
-        runtime_gating_enabled = num_datasets >= SHIFT_GUARDRAIL_RUNTIME_GATING_MIN_SAMPLE
-        directional_gating_enabled = num_datasets >= SHIFT_GUARDRAIL_DIRECTIONAL_GATING_MIN_SAMPLE
-
-        current_summary = shift_guardrails.build_summary()
-        baseline_summary = baseline_shift_guardrails.build_summary()
-
-        shift_issues: list[dict[str, Any]] = []
-        metadata_coverage_rate = float(current_summary["metadata_coverage_rate"])
-        if metadata_coverage_rate < 1.0:
-            shift_issues.append(
-                _build_guardrail_issue(
-                    metric="shift_metadata_coverage",
-                    severity="fail",
-                    current=metadata_coverage_rate,
-                    baseline=1.0,
-                    degradation_pct=float(max(0.0, (1.0 - metadata_coverage_rate) * 100.0)),
-                    detail="Shift metadata must be present for all shift-enabled bundles.",
-                )
-            )
-        shift_enabled_coverage_rate = float(current_summary["shift_enabled_coverage_rate"])
-        if shift_enabled_coverage_rate < 1.0:
-            shift_issues.append(
-                _build_guardrail_issue(
-                    metric="shift_enabled_metadata_coverage",
-                    severity="fail",
-                    current=shift_enabled_coverage_rate,
-                    baseline=1.0,
-                    degradation_pct=float(max(0.0, (1.0 - shift_enabled_coverage_rate) * 100.0)),
-                    detail="Shift-enabled benchmark runs must emit shift.enabled=true metadata.",
-                )
-            )
-        if runtime_gating_enabled and runtime_severity != "pass":
-            shift_issues.append(
-                _build_guardrail_issue(
-                    metric="shift_runtime_degradation_pct",
-                    severity=runtime_severity,
-                    current=current_dpm,
-                    baseline=baseline_dpm,
-                    degradation_pct=runtime_degradation_value,
-                    detail=(
-                        "Shift-enabled throughput regressed versus an equivalent "
-                        "shift-disabled control run."
-                    ),
-                )
-            )
-
-        graph_check, graph_issue = _build_shift_directional_check(
-            metric="graph_edge_density",
-            enabled=float(shift_params.graph_scale) > 0.0,
-            gating_enabled=directional_gating_enabled,
-            current=current_summary.get("mean_graph_edge_density"),
-            baseline=baseline_summary.get("mean_graph_edge_density"),
-            detail=(
-                "Graph shift should increase mean graph edge density "
-                "relative to a shift-disabled control run."
-            ),
-        )
-        mechanism_check, mechanism_issue = _build_shift_directional_check(
-            metric="mechanism_nonlinear_mass",
-            enabled=float(shift_params.mechanism_scale) > 0.0,
-            gating_enabled=directional_gating_enabled,
-            current=current_summary.get("mean_mechanism_nonlinear_mass"),
-            baseline=baseline_summary.get("mean_mechanism_nonlinear_mass"),
-            detail=(
-                "Mechanism shift should increase nonlinear family mass "
-                "relative to a shift-disabled control run."
-            ),
-        )
-        noise_check, noise_issue = _build_shift_directional_check(
-            metric="noise_variance_multiplier",
-            enabled=float(shift_params.variance_scale) > 0.0,
-            gating_enabled=directional_gating_enabled,
-            current=current_summary.get("mean_noise_variance_multiplier"),
-            baseline=baseline_summary.get("mean_noise_variance_multiplier"),
-            detail=(
-                "Noise shift should increase noise variance multiplier "
-                "relative to a shift-disabled control run."
-            ),
-        )
-        for maybe_issue in (graph_issue, mechanism_issue, noise_issue):
-            if maybe_issue is not None:
-                shift_issues.append(maybe_issue)
-
-        result["shift_guardrails"] = {
-            "enabled": True,
-            "mode": str(shift_params.mode),
-            "graph_scale": float(shift_params.graph_scale),
-            "mechanism_scale": float(shift_params.mechanism_scale),
-            "variance_scale": float(shift_params.variance_scale),
-            "sample_datasets": int(num_datasets),
-            "metadata_coverage_rate": metadata_coverage_rate,
-            "shift_enabled_coverage_rate": shift_enabled_coverage_rate,
-            "runtime_gating_enabled": bool(runtime_gating_enabled),
-            "runtime_gating_min_sample_datasets": int(SHIFT_GUARDRAIL_RUNTIME_GATING_MIN_SAMPLE),
-            "runtime_gating_suppressed_reason": (
-                None if runtime_gating_enabled else "insufficient_sample_size"
-            ),
-            "directional_gating_enabled": bool(directional_gating_enabled),
-            "directional_gating_min_sample_datasets": int(
-                SHIFT_GUARDRAIL_DIRECTIONAL_GATING_MIN_SAMPLE
-            ),
-            "directional_gating_suppressed_reason": (
-                None if directional_gating_enabled else "insufficient_sample_size"
-            ),
-            "current_means": {
-                "graph_edge_density": current_summary.get("mean_graph_edge_density"),
-                "edge_odds_multiplier": current_summary.get("mean_edge_odds_multiplier"),
-                "mechanism_nonlinear_mass": current_summary.get("mean_mechanism_nonlinear_mass"),
-                "noise_variance_multiplier": current_summary.get("mean_noise_variance_multiplier"),
+    scenarios = {
+        "baseline": _build_scenario(
+            True,
+            metrics={
+                "datasets_per_minute": generation_dpm,
+                "generation_datasets_per_minute": generation_dpm,
+                "write_datasets_per_minute": write_dpm,
+                "filter_datasets_per_minute": filter_dpm,
+                "filter_accepted_datasets_per_minute": filter_accepted_datasets_per_minute,
+                "latency_p95_ms": result.get("latency_p95_ms"),
+                "peak_rss_mb": result.get("peak_rss_mb"),
             },
-            "baseline_means": {
-                "graph_edge_density": baseline_summary.get("mean_graph_edge_density"),
-                "edge_odds_multiplier": baseline_summary.get("mean_edge_odds_multiplier"),
-                "mechanism_nonlinear_mass": baseline_summary.get("mean_mechanism_nonlinear_mass"),
-                "noise_variance_multiplier": baseline_summary.get("mean_noise_variance_multiplier"),
+        ),
+        "throughput": _build_scenario(
+            True,
+            metrics={
+                **build_pressure_metrics(collector),
+                "datasets_per_minute": generation_dpm,
+                "generation_datasets_per_minute": generation_dpm,
+                "write_datasets_per_minute": write_dpm,
+                "filter_datasets_per_minute": filter_dpm,
+                "filter_accepted_datasets_per_minute": filter_accepted_datasets_per_minute,
+                "stage_sample_datasets": int(stage_sample_datasets),
             },
-            "directional_checks": {
-                "graph_edge_density": graph_check,
-                "mechanism_nonlinear_mass": mechanism_check,
-                "noise_variance_multiplier": noise_check,
-            },
-            "runtime_baseline_datasets_per_minute": baseline_dpm,
-            "runtime_with_shift_datasets_per_minute": current_dpm,
-            "runtime_degradation_pct": (
-                float(runtime_degradation) if runtime_degradation is not None else None
-            ),
-            "runtime_warn_threshold_pct": float(warn_threshold_pct),
-            "runtime_fail_threshold_pct": float(fail_threshold_pct),
-            "issues": shift_issues,
-            "status": _status_from_issues(shift_issues),
-        }
-
-    if noise_enabled and noise_guardrails is not None:
-        baseline_config = _copy_runtime_config(generation_config)
-        baseline_config.noise.family = NOISE_FAMILY_GAUSSIAN
-        baseline_config.noise.base_scale = 1.0
-        baseline_config.noise.student_t_df = 5.0
-        baseline_config.noise.mixture_weights = None
-        noise_baseline_diagnostics_aggregator: CoverageAggregator | None = None
-        if diagnostics_aggregator is not None:
-            noise_baseline_diagnostics_aggregator = _build_diagnostics_aggregator(baseline_config)
-        noise_baseline_missingness_acceptance = (
-            _MissingnessAcceptanceCollector(target_rate=float(config.dataset.missing_rate))
-            if missingness_acceptance is not None
-            else None
-        )
-        noise_baseline_shift_guardrails = _ShiftGuardrailCollector() if shift_enabled else None
-        baseline_noise_guardrails = _NoiseGuardrailCollector(
-            expected_family_requested=str(baseline_config.noise.family)
-        )
-        (
-            baseline_on_bundle_callback,
-            baseline_stage_sample_collector,
-            _,
-        ) = _build_throughput_on_bundle_callback(
-            diagnostics_aggregator=noise_baseline_diagnostics_aggregator,
-            missingness_acceptance=noise_baseline_missingness_acceptance,
-            shift_guardrails=noise_baseline_shift_guardrails,
-            noise_guardrails=baseline_noise_guardrails,
-        )
-        baseline_throughput = run_throughput_benchmark(
-            baseline_config,
-            num_datasets=num_datasets,
-            warmup_datasets=warmup,
-            device=requested_device,
-            on_bundle=baseline_on_bundle_callback,
-        )
-        baseline_stage_sample_collector.bundles.clear()
-
-        baseline_dpm = float(baseline_throughput.get("datasets_per_minute", 0.0))
-        current_dpm = float(result.get("datasets_per_minute", 0.0))
-        runtime_degradation = degradation_percent("datasets_per_minute", current_dpm, baseline_dpm)
-        runtime_degradation_value = (
-            float(runtime_degradation) if runtime_degradation is not None else 0.0
-        )
-        runtime_severity = _severity_from_thresholds(
-            runtime_degradation_value,
-            warn=float(warn_threshold_pct),
-            fail=float(fail_threshold_pct),
-        )
-        runtime_gating_enabled = num_datasets >= NOISE_GUARDRAIL_RUNTIME_GATING_MIN_SAMPLE
-
-        current_summary = noise_guardrails.build_summary()
-        baseline_summary = baseline_noise_guardrails.build_summary()
-        noise_issues = list(current_summary["issues"])
-        if runtime_gating_enabled and runtime_severity != "pass":
-            noise_issues.append(
-                _build_guardrail_issue(
-                    metric="noise_runtime_degradation_pct",
-                    severity=runtime_severity,
-                    current=current_dpm,
-                    baseline=baseline_dpm,
-                    degradation_pct=runtime_degradation_value,
-                    detail=(
-                        "Non-gaussian noise throughput regressed versus an equivalent "
-                        "gaussian-noise control run."
-                    ),
-                )
-            )
-
-        result["noise_guardrails"] = {
-            "enabled": True,
-            "family_requested": str(config.noise.family),
-            "sample_datasets": int(num_datasets),
-            "metadata_coverage_rate": float(current_summary["metadata_coverage_rate"]),
-            "metadata_valid_rate": float(current_summary["metadata_valid_rate"]),
-            "valid_metadata_count": int(current_summary["valid_metadata_count"]),
-            "sampled_family_counts": dict(current_summary["sampled_family_counts"]),
-            "invalid_reason_counts": dict(current_summary["invalid_reason_counts"]),
-            "runtime_gating_enabled": bool(runtime_gating_enabled),
-            "runtime_gating_min_sample_datasets": int(NOISE_GUARDRAIL_RUNTIME_GATING_MIN_SAMPLE),
-            "runtime_gating_suppressed_reason": (
-                None if runtime_gating_enabled else "insufficient_sample_size"
-            ),
-            "runtime_baseline_family_requested": str(baseline_config.noise.family),
-            "runtime_baseline_sampled_family_counts": dict(
-                baseline_summary["sampled_family_counts"]
-            ),
-            "runtime_baseline_datasets_per_minute": baseline_dpm,
-            "runtime_with_noise_datasets_per_minute": current_dpm,
-            "runtime_degradation_pct": (
-                float(runtime_degradation) if runtime_degradation is not None else None
-            ),
-            "runtime_warn_threshold_pct": float(warn_threshold_pct),
-            "runtime_fail_threshold_pct": float(fail_threshold_pct),
-            "issues": noise_issues,
-            "status": _status_from_issues(noise_issues),
-        }
-
-    result["lineage_guardrails"] = _collect_lineage_guardrails(
-        generation_config,
-        suite=suite,
+        ),
+        "filtering": _build_scenario(
+            filter_stage_measurement is not None and filter_stage_enabled,
+            metrics=filtering_metrics or {},
+        ),
+    }
+    scenarios["missingness"] = _missingness_scenario(
+        config=config,
+        generation_config=generation_config,
+        collector=collector,
+        requested_device=requested_device,
         num_datasets=num_datasets,
-        device=requested_device,
-        warn_threshold_pct=float(warn_threshold_pct),
-        fail_threshold_pct=float(fail_threshold_pct),
+        warmup=warmup,
+        stage_sample_cap=stage_sample_cap,
+        current_dpm=generation_dpm,
+        warn_threshold_pct=warn_threshold_pct,
+        fail_threshold_pct=fail_threshold_pct,
+        diagnostics_enabled=diagnostics_enabled,
     )
+    scenarios["shift"] = _shift_scenario(
+        config=config,
+        generation_config=generation_config,
+        collector=collector,
+        requested_device=requested_device,
+        num_datasets=num_datasets,
+        warmup=warmup,
+        stage_sample_cap=stage_sample_cap,
+        current_dpm=generation_dpm,
+        warn_threshold_pct=warn_threshold_pct,
+        fail_threshold_pct=fail_threshold_pct,
+        diagnostics_enabled=diagnostics_enabled,
+    )
+    scenarios["noise"] = _noise_scenario(
+        config=config,
+        generation_config=generation_config,
+        collector=collector,
+        requested_device=requested_device,
+        num_datasets=num_datasets,
+        warmup=warmup,
+        stage_sample_cap=stage_sample_cap,
+        current_dpm=generation_dpm,
+        warn_threshold_pct=warn_threshold_pct,
+        fail_threshold_pct=fail_threshold_pct,
+        diagnostics_enabled=diagnostics_enabled,
+    )
+    result["scenarios"] = scenarios
 
     if (
         diagnostics_enabled
@@ -1011,7 +1051,6 @@ def run_benchmark_suite(
         "preset_results": preset_results,
     }
 
-    regression: dict[str, Any]
     if baseline_payload is not None:
         regression = compare_summary_to_baseline(
             summary,
@@ -1027,19 +1066,7 @@ def run_benchmark_suite(
             "issues": [],
         }
 
-    missingness_issues = _collect_guardrail_regression_issues(
-        preset_results, guardrail_key="missingness_guardrails"
-    )
-    lineage_issues = _collect_guardrail_regression_issues(
-        preset_results, guardrail_key="lineage_guardrails"
-    )
-    shift_issues = _collect_guardrail_regression_issues(
-        preset_results, guardrail_key="shift_guardrails"
-    )
-    noise_issues = _collect_guardrail_regression_issues(
-        preset_results, guardrail_key="noise_guardrails"
-    )
-    additional_issues = [*missingness_issues, *lineage_issues, *shift_issues, *noise_issues]
+    additional_issues = _collect_scenario_regression_issues(preset_results)
     if additional_issues:
         existing_issues = regression.get("issues", [])
         if not isinstance(existing_issues, list):

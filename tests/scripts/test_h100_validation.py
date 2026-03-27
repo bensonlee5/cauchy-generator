@@ -1,24 +1,25 @@
+from __future__ import annotations
+
 import json
 from pathlib import Path
 
 import yaml
+from conftest import load_script_module
 
 from dagzoo.bench.gpu_telemetry import GpuTelemetrySample
-from dagzoo.bench.h100_validation import (
-    ValidationPhase,
-    _build_saturation_summary,
-    _build_validation_phases,
-    _run_validation_phase,
-    _write_saturation_config,
-    run_h100_validation,
-)
 
 
-def test_build_validation_phases_orders_primary_and_feature_runs(tmp_path, monkeypatch) -> None:
-    repo_root = Path(__file__).resolve().parents[1]
-    monkeypatch.setattr("dagzoo.bench.h100_validation._repo_root", lambda: repo_root)
+def _load_module():
+    return load_script_module("h100_validation_script", "scripts/ci/h100_validation.py")
 
-    phases = _build_validation_phases(tmp_path, python_executable="/tmp/python")
+
+def test_build_validation_phases_orders_primary_and_feature_runs(tmp_path) -> None:
+    module = _load_module()
+    repo_root = Path(__file__).resolve().parents[2]
+    assert callable(getattr(module, "_repo_root"))
+    setattr(module, "_repo_root", lambda: repo_root)
+
+    phases = module._build_validation_phases(tmp_path, python_executable="/tmp/python")
 
     assert [phase.name for phase in phases[:6]] == [
         "cuda_h100_smoke",
@@ -38,6 +39,7 @@ def test_build_validation_phases_orders_primary_and_feature_runs(tmp_path, monke
 
 
 def test_write_saturation_config_sets_target_cells_and_preserves_base_fields(tmp_path) -> None:
+    module = _load_module()
     base_config_path = tmp_path / "benchmark_cuda_h100_saturation.yaml"
     base_config_path.write_text(
         "\n".join(
@@ -56,14 +58,13 @@ def test_write_saturation_config_sets_target_cells_and_preserves_base_fields(tmp
     out_path = tmp_path / "generated" / "benchmark_cuda_h100_saturation_240000000.yaml"
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    written_path = _write_saturation_config(
+    written_path = module._write_saturation_config(
         base_config_path=base_config_path,
         out_path=out_path,
         target_cells=240_000_000,
     )
 
     assert written_path == out_path
-    assert out_path.exists()
     payload = yaml.safe_load(out_path.read_text(encoding="utf-8"))
     assert payload["runtime"]["fixed_layout_target_cells"] == 240_000_000
     assert payload["runtime"]["device"] == "cuda"
@@ -72,7 +73,8 @@ def test_write_saturation_config_sets_target_cells_and_preserves_base_fields(tmp
 
 
 def test_build_saturation_summary_prefers_smaller_target_on_tie() -> None:
-    summary = _build_saturation_summary(
+    module = _load_module()
+    summary = module._build_saturation_summary(
         [
             {
                 "name": "cuda_h100_saturation_160000000",
@@ -92,10 +94,9 @@ def test_build_saturation_summary_prefers_smaller_target_on_tie() -> None:
     assert summary["recommended_fixed_layout_target_cells"] == 160_000_000
 
 
-def test_run_validation_phase_writes_required_artifacts_and_telemetry(
-    tmp_path,
-    monkeypatch,
-) -> None:
+def test_run_validation_phase_writes_required_artifacts_and_telemetry(tmp_path) -> None:
+    module = _load_module()
+
     class _FakeSampler:
         def __init__(self, *, interval_seconds: float) -> None:
             _ = interval_seconds
@@ -141,11 +142,12 @@ def test_run_validation_phase_writes_required_artifacts_and_telemetry(
         (tmp_path / "phase" / "summary.md").write_text("# summary\n", encoding="utf-8")
         return type("CompletedProcess", (), {"returncode": 0})()
 
-    monkeypatch.setattr("dagzoo.bench.h100_validation.NvidiaSmiSampler", _FakeSampler)
-    monkeypatch.setattr("dagzoo.bench.h100_validation.subprocess.run", _stub_run)
+    assert hasattr(module, "NvidiaSmiSampler")
+    setattr(module, "NvidiaSmiSampler", _FakeSampler)
+    module.subprocess.run = _stub_run
 
-    result = _run_validation_phase(
-        ValidationPhase(
+    result = module._run_validation_phase(
+        module.ValidationPhase(
             name="cuda_h100_standard",
             command=["python", "-m", "dagzoo", "benchmark"],
             out_dir=tmp_path / "phase",
@@ -164,12 +166,12 @@ def test_run_validation_phase_writes_required_artifacts_and_telemetry(
     assert (tmp_path / "phase" / "gpu_telemetry_summary.json").exists()
 
 
-def test_run_h100_validation_marks_missing_primary_telemetry_incomplete(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(
-        "dagzoo.bench.h100_validation._torch_cuda_report",
+def test_run_h100_validation_marks_missing_primary_telemetry_incomplete(tmp_path) -> None:
+    module = _load_module()
+    assert callable(getattr(module, "_torch_cuda_report"))
+    setattr(
+        module,
+        "_torch_cuda_report",
         lambda: {
             "torch_version": "2.0",
             "cuda_available": True,
@@ -177,8 +179,10 @@ def test_run_h100_validation_marks_missing_primary_telemetry_incomplete(
             "device_names": ["NVIDIA H100 NVL"],
         },
     )
-    monkeypatch.setattr(
-        "dagzoo.bench.h100_validation._hardware_report",
+    assert callable(getattr(module, "_hardware_report"))
+    setattr(
+        module,
+        "_hardware_report",
         lambda: {
             "backend": "cuda",
             "requested_device": "cuda",
@@ -188,31 +192,28 @@ def test_run_h100_validation_marks_missing_primary_telemetry_incomplete(
             "tier": "cuda_h100",
         },
     )
-    monkeypatch.setattr(
-        "dagzoo.bench.h100_validation._build_validation_phases",
-        lambda _out_root, *, python_executable: [
-            ValidationPhase(
-                name="cuda_h100_standard",
-                command=[python_executable, "-m", "dagzoo", "benchmark"],
-                out_dir=tmp_path / "cuda_h100_standard",
-                require_telemetry=True,
-            )
-        ],
-    )
-    monkeypatch.setattr(
-        "dagzoo.bench.h100_validation._run_validation_phase",
-        lambda phase, *, repo_root, telemetry_interval_seconds: {
-            "name": phase.name,
-            "group": phase.group,
-            "target_cells": phase.target_cells,
-            "exit_code": 0,
-            "validation_status": "incomplete",
-            "datasets_per_minute": 100.0,
-            "artifacts": {"out_dir": str(phase.out_dir)},
+    module._build_validation_phases = lambda _out_root, *, python_executable: [
+        module.ValidationPhase(
+            name="cuda_h100_standard",
+            command=[python_executable, "-m", "dagzoo", "benchmark"],
+            out_dir=tmp_path / "cuda_h100_standard",
+            require_telemetry=True,
+        )
+    ]
+    module._run_validation_phase = lambda phase, *, repo_root, telemetry_interval_seconds: {
+        "name": phase.name,
+        "group": phase.group,
+        "target_cells": phase.target_cells,
+        "exit_code": 0,
+        "validation_status": "incomplete",
+        "datasets_per_minute": 100.0,
+        "artifacts": {
+            "out_dir": str(phase.out_dir),
+            "telemetry_interval_seconds": float(telemetry_interval_seconds),
         },
-    )
+    }
 
-    manifest = run_h100_validation(out_root=tmp_path, telemetry_interval_seconds=1.0)
+    manifest = module.run_h100_validation(out_root=tmp_path, telemetry_interval_seconds=1.0)
 
     assert manifest["overall_status"] == "incomplete"
     assert (tmp_path / "validation_manifest.json").exists()

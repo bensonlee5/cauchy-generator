@@ -1,4 +1,4 @@
-"""Per-bundle collector helpers for benchmark diagnostics and guardrails."""
+"""Per-bundle metrics collection for benchmark scenarios."""
 
 from __future__ import annotations
 
@@ -11,12 +11,6 @@ from dagzoo.math import (
     coerce_optional_finite_float as _coerce_optional_finite_float,
 )
 from dagzoo.types import DatasetBundle
-
-from .constants import MISSINGNESS_RATE_FAIL_ABS_ERROR, MISSINGNESS_RATE_WARN_ABS_ERROR
-from .guardrails import (
-    _severity_from_thresholds,
-    _status_from_issues,
-)
 
 _NOISE_FAMILY_MIXTURE = "mixture"
 _NOISE_MIXTURE_COMPONENTS = {"gaussian", "laplace", "student_t"}
@@ -36,20 +30,112 @@ def _matrix_cell_count(matrix: Any) -> int:
     return n_rows * n_cols
 
 
-@dataclass(slots=True)
-class _MissingnessAcceptanceCollector:
-    """Collect per-bundle missingness metadata for acceptance guardrails."""
+def _mean_or_none(*, total: float, count: int) -> float | None:
+    if count <= 0:
+        return None
+    return float(total / float(count))
 
-    target_rate: float
-    bundles_seen: int = 0
-    bundles_with_metadata: int = 0
+
+@dataclass(slots=True)
+class _BundleMetricsCollector:
+    """Collect benchmark scenario metrics from emitted bundles."""
+
+    expected_noise_family_requested: str
+    datasets_seen: int = 0
+    attempts_total: int = 0
+    retry_dataset_count: int = 0
+    filter_attempts_total: int = 0
+    filter_rejections_total: int = 0
+    filter_retry_dataset_count: int = 0
+    missingness_bundles_with_metadata: int = 0
     missing_cells: int = 0
     total_cells: int = 0
+    shift_bundles_with_metadata: int = 0
+    shift_enabled_true: int = 0
+    graph_edge_density_sum: float = 0.0
+    graph_edge_density_count: int = 0
+    edge_odds_multiplier_sum: float = 0.0
+    edge_odds_multiplier_count: int = 0
+    mechanism_nonlinear_mass_sum: float = 0.0
+    mechanism_nonlinear_mass_count: int = 0
+    noise_variance_multiplier_sum: float = 0.0
+    noise_variance_multiplier_count: int = 0
+    noise_bundles_with_metadata: int = 0
+    noise_bundles_with_valid_metadata: int = 0
+    noise_sampled_family_counts: dict[str, int] = field(default_factory=dict)
+    noise_invalid_reason_counts: dict[str, int] = field(default_factory=dict)
+
+    @staticmethod
+    def _coerce_non_negative_int(value: Any, *, default: int) -> int:
+        if isinstance(value, bool):
+            return int(default)
+        if isinstance(value, int):
+            return int(max(0, value))
+        if isinstance(value, float):
+            if not math.isfinite(value):
+                return int(default)
+            return int(max(0, int(value)))
+        if isinstance(value, str):
+            normalized = value.strip()
+            signless = normalized[1:] if normalized.startswith(("+", "-")) else normalized
+            if not signless.isdigit():
+                return int(default)
+            return int(max(0, int(normalized)))
+        return int(default)
 
     def update(self, bundle: DatasetBundle) -> None:
-        """Collect missingness counters for one generated bundle."""
+        """Collect metrics for one emitted bundle."""
 
-        self.bundles_seen += 1
+        self.datasets_seen += 1
+        self._update_pressure(bundle)
+        self._update_missingness(bundle)
+        self._update_shift(bundle)
+        self._update_noise(bundle)
+
+    def _update_pressure(self, bundle: DatasetBundle) -> None:
+        metadata = bundle.metadata
+        attempts_payload = metadata.get("generation_attempts")
+
+        total_attempts = 1
+        filter_attempts = 0
+        filter_rejections = 0
+
+        if isinstance(attempts_payload, dict):
+            total_attempts = self._coerce_non_negative_int(
+                attempts_payload.get("total_attempts"),
+                default=1,
+            )
+            filter_attempts = self._coerce_non_negative_int(
+                attempts_payload.get("filter_attempts"),
+                default=0,
+            )
+            filter_rejections = self._coerce_non_negative_int(
+                attempts_payload.get("filter_rejections"),
+                default=0,
+            )
+        else:
+            attempt_used = self._coerce_non_negative_int(metadata.get("attempt_used"), default=0)
+            total_attempts = max(1, attempt_used + 1)
+            filter_payload = metadata.get("filter")
+            if isinstance(filter_payload, dict) and bool(filter_payload.get("enabled")):
+                filter_attempts = 1
+                if not bool(filter_payload.get("accepted", False)):
+                    filter_rejections = 1
+
+        total_attempts = max(1, int(total_attempts))
+        filter_attempts = max(0, int(filter_attempts))
+        filter_rejections = max(0, min(int(filter_rejections), filter_attempts))
+
+        self.attempts_total += total_attempts
+        if total_attempts > 1:
+            self.retry_dataset_count += 1
+
+        self.filter_attempts_total += filter_attempts
+        self.filter_rejections_total += filter_rejections
+        if filter_rejections > 0:
+            self.filter_retry_dataset_count += 1
+
+    def _update_missingness(self, bundle: DatasetBundle) -> None:
         payload = bundle.metadata.get("missingness")
         if not isinstance(payload, dict):
             return
@@ -63,96 +149,18 @@ class _MissingnessAcceptanceCollector:
             return
         missing_count = int(max(0, min(total_cells, int(missing_count_raw))))
 
-        self.bundles_with_metadata += 1
+        self.missingness_bundles_with_metadata += 1
         self.total_cells += total_cells
         self.missing_cells += missing_count
 
-    def build_summary(self) -> dict[str, Any]:
-        """Build acceptance guardrail metrics and issues."""
-
-        coverage_rate = (
-            float(self.bundles_with_metadata) / float(self.bundles_seen)
-            if self.bundles_seen > 0
-            else 0.0
-        )
-        realized_rate = (
-            float(self.missing_cells) / float(self.total_cells) if self.total_cells > 0 else 0.0
-        )
-        rate_abs_error = abs(realized_rate - float(self.target_rate))
-
-        issues: list[dict[str, Any]] = []
-        if self.bundles_with_metadata != self.bundles_seen:
-            issues.append(
-                {
-                    "metric": "missingness_metadata_coverage",
-                    "severity": "fail",
-                    "current": float(coverage_rate),
-                    "baseline": 1.0,
-                    "degradation_pct": float(max(0.0, (1.0 - coverage_rate) * 100.0)),
-                    "detail": "Missingness metadata must be present for all generated bundles.",
-                }
-            )
-
-        rate_error_pp = rate_abs_error * 100.0
-        rate_severity = _severity_from_thresholds(
-            rate_abs_error,
-            warn=MISSINGNESS_RATE_WARN_ABS_ERROR,
-            fail=MISSINGNESS_RATE_FAIL_ABS_ERROR,
-        )
-        if rate_severity != "pass":
-            threshold_pp = (
-                MISSINGNESS_RATE_FAIL_ABS_ERROR * 100.0
-                if rate_severity == "fail"
-                else MISSINGNESS_RATE_WARN_ABS_ERROR * 100.0
-            )
-            issues.append(
-                {
-                    "metric": "missingness_realized_rate_error_pp",
-                    "severity": rate_severity,
-                    "current": float(rate_error_pp),
-                    "baseline": float(threshold_pp),
-                    "degradation_pct": float(rate_error_pp),
-                    "detail": "Realized missing rate drifted from configured target.",
-                }
-            )
-
-        return {
-            "metadata_coverage_rate": float(coverage_rate),
-            "realized_rate_overall": float(realized_rate),
-            "rate_abs_error": float(rate_abs_error),
-            "issues": issues,
-            "status": _status_from_issues(issues),
-        }
-
-
-@dataclass(slots=True)
-class _ShiftGuardrailCollector:
-    """Collect shift metadata coverage and directional observability signals."""
-
-    bundles_seen: int = 0
-    bundles_with_shift_metadata: int = 0
-    bundles_with_shift_enabled_true: int = 0
-
-    graph_edge_density_sum: float = 0.0
-    graph_edge_density_count: int = 0
-    edge_odds_multiplier_sum: float = 0.0
-    edge_odds_multiplier_count: int = 0
-    mechanism_nonlinear_mass_sum: float = 0.0
-    mechanism_nonlinear_mass_count: int = 0
-    noise_variance_multiplier_sum: float = 0.0
-    noise_variance_multiplier_count: int = 0
-
-    def update(self, bundle: DatasetBundle) -> None:
-        """Collect shift metadata counters and directional metrics for one bundle."""
-
-        self.bundles_seen += 1
+    def _update_shift(self, bundle: DatasetBundle) -> None:
         shift_payload = bundle.metadata.get("shift")
         if not isinstance(shift_payload, dict):
             return
 
-        self.bundles_with_shift_metadata += 1
+        self.shift_bundles_with_metadata += 1
         if shift_payload.get("enabled") is True:
-            self.bundles_with_shift_enabled_true += 1
+            self.shift_enabled_true += 1
 
         graph_edge_density = _coerce_optional_finite_float(
             bundle.metadata.get("graph_edge_density")
@@ -182,76 +190,27 @@ class _ShiftGuardrailCollector:
             self.noise_variance_multiplier_sum += float(noise_variance_multiplier)
             self.noise_variance_multiplier_count += 1
 
-    def build_summary(self) -> dict[str, Any]:
-        """Build shift metadata coverage and directional-mean summary."""
-
-        metadata_coverage_rate = (
-            float(self.bundles_with_shift_metadata) / float(self.bundles_seen)
-            if self.bundles_seen > 0
-            else 0.0
-        )
-        shift_enabled_coverage_rate = (
-            float(self.bundles_with_shift_enabled_true) / float(self.bundles_seen)
-            if self.bundles_seen > 0
-            else 0.0
-        )
-        return {
-            "metadata_coverage_rate": float(metadata_coverage_rate),
-            "shift_enabled_coverage_rate": float(shift_enabled_coverage_rate),
-            "mean_graph_edge_density": _mean_or_none(
-                total=self.graph_edge_density_sum,
-                count=self.graph_edge_density_count,
-            ),
-            "mean_edge_odds_multiplier": _mean_or_none(
-                total=self.edge_odds_multiplier_sum,
-                count=self.edge_odds_multiplier_count,
-            ),
-            "mean_mechanism_nonlinear_mass": _mean_or_none(
-                total=self.mechanism_nonlinear_mass_sum,
-                count=self.mechanism_nonlinear_mass_count,
-            ),
-            "mean_noise_variance_multiplier": _mean_or_none(
-                total=self.noise_variance_multiplier_sum,
-                count=self.noise_variance_multiplier_count,
-            ),
-        }
-
-
-@dataclass(slots=True)
-class _NoiseGuardrailCollector:
-    """Collect noise metadata coverage and validity checks."""
-
-    expected_family_requested: str
-    bundles_seen: int = 0
-    bundles_with_metadata: int = 0
-    bundles_with_valid_metadata: int = 0
-    sampled_family_counts: dict[str, int] = field(default_factory=dict)
-    invalid_reason_counts: dict[str, int] = field(default_factory=dict)
-
-    def update(self, bundle: DatasetBundle) -> None:
-        """Collect noise metadata validity counters for one generated bundle."""
-
-        self.bundles_seen += 1
+    def _update_noise(self, bundle: DatasetBundle) -> None:
         payload = bundle.metadata.get("noise_distribution")
         if not isinstance(payload, dict):
             return
 
-        self.bundles_with_metadata += 1
-        valid, sampled_family, reason = self._validate_payload(payload)
+        self.noise_bundles_with_metadata += 1
+        valid, sampled_family, reason = self._validate_noise_payload(payload)
         if not valid:
             if reason is not None:
-                self.invalid_reason_counts[reason] = (
-                    int(self.invalid_reason_counts.get(reason, 0)) + 1
+                self.noise_invalid_reason_counts[reason] = (
+                    int(self.noise_invalid_reason_counts.get(reason, 0)) + 1
                 )
             return
 
-        self.bundles_with_valid_metadata += 1
-        self.sampled_family_counts[sampled_family] = (
-            int(self.sampled_family_counts.get(sampled_family, 0)) + 1
+        self.noise_bundles_with_valid_metadata += 1
+        self.noise_sampled_family_counts[sampled_family] = (
+            int(self.noise_sampled_family_counts.get(sampled_family, 0)) + 1
         )
 
-    def _validate_payload(self, payload: dict[str, Any]) -> tuple[bool, str, str | None]:
-        expected = str(self.expected_family_requested).strip().lower()
+    def _validate_noise_payload(self, payload: dict[str, Any]) -> tuple[bool, str, str | None]:
+        expected = str(self.expected_noise_family_requested).strip().lower()
         family_requested_raw = payload.get("family_requested")
         family_sampled_raw = payload.get("family_sampled")
         sampling_strategy_raw = payload.get("sampling_strategy")
@@ -310,206 +269,179 @@ class _NoiseGuardrailCollector:
             return False, "", "mixture_weights_total_not_one"
         return True, family_sampled, None
 
-    def build_summary(self) -> dict[str, Any]:
-        """Build noise metadata coverage/validity summary."""
 
-        metadata_coverage_rate = (
-            float(self.bundles_with_metadata) / float(self.bundles_seen)
-            if self.bundles_seen > 0
-            else 0.0
-        )
-        metadata_valid_rate = (
-            float(self.bundles_with_valid_metadata) / float(self.bundles_seen)
-            if self.bundles_seen > 0
-            else 0.0
-        )
+def build_pressure_metrics(collector: _BundleMetricsCollector) -> dict[str, Any]:
+    datasets = int(collector.datasets_seen)
+    attempts = int(collector.attempts_total)
+    filter_attempts = int(collector.filter_attempts_total)
+    filter_rejections = int(collector.filter_rejections_total)
+    retry_datasets = int(collector.retry_dataset_count)
+    filter_retry_datasets = int(collector.filter_retry_dataset_count)
 
-        issues: list[dict[str, Any]] = []
-        if self.bundles_with_metadata != self.bundles_seen:
-            issues.append(
-                {
-                    "metric": "noise_metadata_coverage",
-                    "severity": "fail",
-                    "current": float(metadata_coverage_rate),
-                    "baseline": 1.0,
-                    "degradation_pct": float(max(0.0, (1.0 - metadata_coverage_rate) * 100.0)),
-                    "detail": "Noise metadata must be present for all generated bundles.",
-                }
-            )
-        if self.bundles_with_valid_metadata != self.bundles_seen:
-            issues.append(
-                {
-                    "metric": "noise_metadata_validity",
-                    "severity": "fail",
-                    "current": float(metadata_valid_rate),
-                    "baseline": 1.0,
-                    "degradation_pct": float(max(0.0, (1.0 - metadata_valid_rate) * 100.0)),
-                    "detail": "Noise metadata must be valid and consistent with configured family.",
-                }
-            )
-
-        return {
-            "metadata_coverage_rate": float(metadata_coverage_rate),
-            "metadata_valid_rate": float(metadata_valid_rate),
-            "valid_metadata_count": int(self.bundles_with_valid_metadata),
-            "sampled_family_counts": {
-                key: int(self.sampled_family_counts[key])
-                for key in sorted(self.sampled_family_counts)
-            },
-            "invalid_reason_counts": {
-                key: int(self.invalid_reason_counts[key])
-                for key in sorted(self.invalid_reason_counts)
-            },
-            "issues": issues,
-            "status": _status_from_issues(issues),
-        }
+    attempts_per_dataset = float(attempts) / float(datasets) if datasets > 0 else 0.0
+    retry_dataset_rate = float(retry_datasets) / float(datasets) if datasets > 0 else None
+    filter_retry_dataset_rate = (
+        float(filter_retry_datasets) / float(datasets)
+        if datasets > 0 and filter_attempts > 0
+        else None
+    )
+    filter_rejection_rate_attempt_level = (
+        float(filter_rejections) / float(filter_attempts) if filter_attempts > 0 else None
+    )
+    return {
+        "datasets_seen": datasets,
+        "attempts_total": attempts,
+        "attempts_per_dataset_mean": float(attempts_per_dataset),
+        "retry_dataset_count": retry_datasets,
+        "retry_dataset_rate": retry_dataset_rate,
+        "filter_attempts_total": filter_attempts,
+        "filter_rejections_total": filter_rejections,
+        "filter_rejection_rate_attempt_level": filter_rejection_rate_attempt_level,
+        "filter_retry_dataset_count": filter_retry_datasets,
+        "filter_retry_dataset_rate": filter_retry_dataset_rate,
+    }
 
 
-@dataclass(slots=True)
-class _ThroughputPressureCollector:
-    """Collect attempt and filter-pressure counters needed for throughput attribution."""
+def build_missingness_metrics(
+    collector: _BundleMetricsCollector,
+    *,
+    target_rate: float,
+) -> dict[str, Any]:
+    coverage_rate = (
+        float(collector.missingness_bundles_with_metadata) / float(collector.datasets_seen)
+        if collector.datasets_seen > 0
+        else 0.0
+    )
+    realized_rate = (
+        float(collector.missing_cells) / float(collector.total_cells)
+        if collector.total_cells > 0
+        else 0.0
+    )
+    return {
+        "metadata_coverage_rate": float(coverage_rate),
+        "realized_rate_overall": float(realized_rate),
+        "rate_abs_error": float(abs(realized_rate - float(target_rate))),
+        "target_rate": float(target_rate),
+    }
 
-    datasets_seen: int = 0
-    attempts_total: int = 0
-    retry_dataset_count: int = 0
-    filter_attempts_total: int = 0
-    filter_rejections_total: int = 0
-    filter_retry_dataset_count: int = 0
 
-    @staticmethod
-    def _coerce_non_negative_int(value: Any, *, default: int) -> int:
-        if isinstance(value, bool):
-            return int(default)
-        if isinstance(value, int):
-            return int(max(0, value))
-        if isinstance(value, float):
-            if not math.isfinite(value):
-                return int(default)
-            return int(max(0, int(value)))
-        if isinstance(value, str):
-            normalized = value.strip()
-            signless = normalized[1:] if normalized.startswith(("+", "-")) else normalized
-            if not signless.isdigit():
-                return int(default)
-            return int(max(0, int(normalized)))
-        return int(default)
+def build_shift_metrics(collector: _BundleMetricsCollector) -> dict[str, Any]:
+    metadata_coverage_rate = (
+        float(collector.shift_bundles_with_metadata) / float(collector.datasets_seen)
+        if collector.datasets_seen > 0
+        else 0.0
+    )
+    shift_enabled_coverage_rate = (
+        float(collector.shift_enabled_true) / float(collector.datasets_seen)
+        if collector.datasets_seen > 0
+        else 0.0
+    )
+    return {
+        "metadata_coverage_rate": float(metadata_coverage_rate),
+        "shift_enabled_coverage_rate": float(shift_enabled_coverage_rate),
+        "mean_graph_edge_density": _mean_or_none(
+            total=collector.graph_edge_density_sum,
+            count=collector.graph_edge_density_count,
+        ),
+        "mean_edge_odds_multiplier": _mean_or_none(
+            total=collector.edge_odds_multiplier_sum,
+            count=collector.edge_odds_multiplier_count,
+        ),
+        "mean_mechanism_nonlinear_mass": _mean_or_none(
+            total=collector.mechanism_nonlinear_mass_sum,
+            count=collector.mechanism_nonlinear_mass_count,
+        ),
+        "mean_noise_variance_multiplier": _mean_or_none(
+            total=collector.noise_variance_multiplier_sum,
+            count=collector.noise_variance_multiplier_count,
+        ),
+    }
 
-    def update(self, bundle: DatasetBundle) -> None:
-        """Collect generation-attempt and filter-retry counters for one bundle."""
 
-        self.datasets_seen += 1
-        metadata = bundle.metadata
-        attempts_payload = metadata.get("generation_attempts")
+def build_noise_metrics(collector: _BundleMetricsCollector) -> dict[str, Any]:
+    metadata_coverage_rate = (
+        float(collector.noise_bundles_with_metadata) / float(collector.datasets_seen)
+        if collector.datasets_seen > 0
+        else 0.0
+    )
+    metadata_valid_rate = (
+        float(collector.noise_bundles_with_valid_metadata) / float(collector.datasets_seen)
+        if collector.datasets_seen > 0
+        else 0.0
+    )
+    return {
+        "metadata_coverage_rate": float(metadata_coverage_rate),
+        "metadata_valid_rate": float(metadata_valid_rate),
+        "valid_metadata_count": int(collector.noise_bundles_with_valid_metadata),
+        "sampled_family_counts": {
+            key: int(collector.noise_sampled_family_counts[key])
+            for key in sorted(collector.noise_sampled_family_counts)
+        },
+        "invalid_reason_counts": {
+            key: int(collector.noise_invalid_reason_counts[key])
+            for key in sorted(collector.noise_invalid_reason_counts)
+        },
+    }
 
-        total_attempts = 1
-        filter_attempts = 0
-        filter_rejections = 0
 
-        if isinstance(attempts_payload, dict):
-            total_attempts = self._coerce_non_negative_int(
-                attempts_payload.get("total_attempts"),
-                default=1,
-            )
-            filter_attempts = self._coerce_non_negative_int(
-                attempts_payload.get("filter_attempts"),
-                default=0,
-            )
-            filter_rejections = self._coerce_non_negative_int(
-                attempts_payload.get("filter_rejections"),
-                default=0,
-            )
-        else:
-            attempt_used = self._coerce_non_negative_int(metadata.get("attempt_used"), default=0)
-            total_attempts = max(1, attempt_used + 1)
-            filter_payload = metadata.get("filter")
-            if isinstance(filter_payload, dict) and bool(filter_payload.get("enabled")):
-                filter_attempts = 1
-                if not bool(filter_payload.get("accepted", False)):
-                    filter_rejections = 1
-
-        total_attempts = max(1, int(total_attempts))
-        filter_attempts = max(0, int(filter_attempts))
-        filter_rejections = max(0, min(int(filter_rejections), filter_attempts))
-
-        self.attempts_total += total_attempts
-        if total_attempts > 1:
-            self.retry_dataset_count += 1
-
-        self.filter_attempts_total += filter_attempts
-        self.filter_rejections_total += filter_rejections
-        if filter_rejections > 0:
-            self.filter_retry_dataset_count += 1
-
-    def build_summary(self) -> dict[str, Any]:
-        """Build aggregate attempt/filter pressure summary metrics."""
-
-        datasets = int(self.datasets_seen)
-        attempts = int(self.attempts_total)
-        filter_attempts = int(self.filter_attempts_total)
-        filter_rejections = int(self.filter_rejections_total)
-        retry_datasets = int(self.retry_dataset_count)
-        filter_retry_datasets = int(self.filter_retry_dataset_count)
-
-        attempts_per_dataset = float(attempts) / float(datasets) if datasets > 0 else 0.0
-        retry_dataset_rate = float(retry_datasets) / float(datasets) if datasets > 0 else None
-        filter_retry_dataset_rate = (
-            float(filter_retry_datasets) / float(datasets)
-            if datasets > 0 and filter_attempts > 0
-            else None
-        )
-        filter_rejection_rate_attempt_level = (
-            float(filter_rejections) / float(filter_attempts) if filter_attempts > 0 else None
-        )
-
-        return {
-            "datasets_seen": datasets,
-            "attempts_total": attempts,
-            "attempts_per_dataset_mean": float(attempts_per_dataset),
-            "retry_dataset_count": retry_datasets,
-            "retry_dataset_rate": retry_dataset_rate,
-            "filter_attempts_total": filter_attempts,
-            "filter_rejections_total": filter_rejections,
-            "filter_rejection_rate_attempt_level": filter_rejection_rate_attempt_level,
-            "filter_retry_dataset_count": filter_retry_datasets,
-            "filter_retry_dataset_rate": filter_retry_dataset_rate,
-        }
+def build_filtering_metrics(
+    collector: _BundleMetricsCollector,
+    *,
+    filter_stage_measurement: Any,
+) -> dict[str, Any]:
+    pressure = build_pressure_metrics(collector)
+    datasets_measured = int(getattr(filter_stage_measurement, "filter_accepted_datasets", 0)) + int(
+        getattr(filter_stage_measurement, "filter_rejected_datasets", 0)
+    )
+    acceptance_rate = (
+        float(getattr(filter_stage_measurement, "filter_accepted_datasets", 0))
+        / float(datasets_measured)
+        if datasets_measured > 0
+        else None
+    )
+    rejection_rate = (
+        float(getattr(filter_stage_measurement, "filter_rejected_datasets", 0))
+        / float(datasets_measured)
+        if datasets_measured > 0
+        else None
+    )
+    accepted_dpm = (
+        float(getattr(filter_stage_measurement, "datasets_per_minute", 0.0))
+        * float(acceptance_rate)
+        if acceptance_rate is not None
+        else None
+    )
+    return {
+        **pressure,
+        "datasets_per_minute": float(getattr(filter_stage_measurement, "datasets_per_minute", 0.0)),
+        "accepted_datasets_per_minute": accepted_dpm,
+        "filter_attempts_total": int(getattr(filter_stage_measurement, "filter_attempts_total", 0)),
+        "filter_rejections_total": int(
+            getattr(filter_stage_measurement, "filter_rejections_total", 0)
+        ),
+        "accepted_datasets": int(getattr(filter_stage_measurement, "filter_accepted_datasets", 0)),
+        "rejected_datasets": int(getattr(filter_stage_measurement, "filter_rejected_datasets", 0)),
+        "acceptance_rate_dataset_level": acceptance_rate,
+        "rejection_rate_dataset_level": rejection_rate,
+        "elapsed_seconds": float(getattr(filter_stage_measurement, "elapsed_seconds", 0.0)),
+        "cpu_time_seconds": float(getattr(filter_stage_measurement, "cpu_time_seconds", 0.0)),
+    }
 
 
 def _compose_bundle_callback(
     *,
     diagnostics_aggregator: Any,
-    missingness_acceptance: _MissingnessAcceptanceCollector | None,
-    shift_guardrails: _ShiftGuardrailCollector | None,
-    noise_guardrails: _NoiseGuardrailCollector | None,
-    throughput_pressure: _ThroughputPressureCollector | None = None,
+    collector: _BundleMetricsCollector | None,
 ) -> Callable[[DatasetBundle], None] | None:
     """Compose optional per-bundle collectors into one callback."""
 
-    if (
-        diagnostics_aggregator is None
-        and missingness_acceptance is None
-        and shift_guardrails is None
-        and noise_guardrails is None
-        and throughput_pressure is None
-    ):
+    if diagnostics_aggregator is None and collector is None:
         return None
 
     def _on_bundle(bundle: DatasetBundle) -> None:
         if diagnostics_aggregator is not None:
             diagnostics_aggregator.update_bundle(bundle)
-        if missingness_acceptance is not None:
-            missingness_acceptance.update(bundle)
-        if shift_guardrails is not None:
-            shift_guardrails.update(bundle)
-        if noise_guardrails is not None:
-            noise_guardrails.update(bundle)
-        if throughput_pressure is not None:
-            throughput_pressure.update(bundle)
+        if collector is not None:
+            collector.update(bundle)
 
     return _on_bundle
-
-
-def _mean_or_none(*, total: float, count: int) -> float | None:
-    if count <= 0:
-        return None
-    return float(total / float(count))

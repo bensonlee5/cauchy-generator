@@ -21,7 +21,7 @@
 
 ## Verification and Review
 
-- Canonical local verification is `./scripts/dev verify quick`; use `./scripts/dev impact` when you need a dependency-aware ripple check before broader refactors.
+- Canonical local verification is `.venv/bin/nox -s quick`; use `.venv/bin/nox -s full`, `.venv/bin/nox -s docs`, and `.venv/bin/nox -s bench_smoke` for broader validation, and use `./scripts/dev impact` when you need a dependency-aware ripple check before broader refactors.
 - Prior to declaring a branch ready for review, compare branch to main and verify that all intended changes are included and no unintended changes are included.
 
 ## Versioning and Changelog

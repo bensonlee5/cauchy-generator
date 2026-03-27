@@ -1903,26 +1903,21 @@ def test_generate_batch_with_plan_iter_dynamic_steering_requires_all_grouped_off
         )
 
 
-def test_generate_batch_rows_choices_are_seed_reproducible() -> None:
+def test_generate_batch_rows_range_is_seed_reproducible() -> None:
     cfg = _tiny_config()
-    cfg.dataset.rows = [1024, 2048, 4096]  # type: ignore[assignment]
+    cfg.dataset.rows = "1024..4096"  # type: ignore[assignment]
     cfg.dataset.n_test = 256
 
     batch_a = generate_batch(cfg, num_datasets=5, seed=19, device="cpu")
     batch_b = generate_batch(cfg, num_datasets=5, seed=19, device="cpu")
 
-    allowed_train_sizes = {768, 1792, 3840}
-    assert {int(bundle.X_train.shape[0]) for bundle in batch_a} <= allowed_train_sizes
-    assert {int(bundle.X_train.shape[0]) for bundle in batch_b} <= allowed_train_sizes
-    assert {int(bundle.X_train.shape[0]) for bundle in batch_a} == {
-        int(batch_a[0].X_train.shape[0])
-    }
-    assert {int(bundle.X_train.shape[0]) for bundle in batch_b} == {
-        int(batch_b[0].X_train.shape[0])
-    }
+    train_sizes_a = {int(bundle.X_train.shape[0]) for bundle in batch_a}
+    train_sizes_b = {int(bundle.X_train.shape[0]) for bundle in batch_b}
+    assert len(train_sizes_a) == 1
+    assert len(train_sizes_b) == 1
     for bundle_a, bundle_b in zip(batch_a, batch_b, strict=True):
-        assert int(bundle_a.X_train.shape[0]) in allowed_train_sizes
-        assert int(bundle_b.X_train.shape[0]) in allowed_train_sizes
+        assert 768 <= int(bundle_a.X_train.shape[0]) <= 3840
+        assert 768 <= int(bundle_b.X_train.shape[0]) <= 3840
         assert int(bundle_a.X_train.shape[0]) == int(bundle_b.X_train.shape[0])
         assert int(bundle_a.X_test.shape[0]) == 256
         assert int(bundle_b.X_test.shape[0]) == 256

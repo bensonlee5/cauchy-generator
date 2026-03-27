@@ -89,8 +89,8 @@ def test_filter_cli_prints_curated_output_summary(
             str(tmp_path / "filter_out"),
             "--curated-out",
             str(tmp_path / "curated_out"),
-            "--easy-skill-threshold",
-            "0.7",
+            "--set",
+            "filter.easy_skill_threshold=0.7",
         ]
     )
 

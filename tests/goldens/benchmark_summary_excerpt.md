@@ -6,9 +6,9 @@
 
 ## Presets
 
-| Preset | Rows | Mode          | Device | Backend | Datasets/min | Gen/min | Write/min | Filter/min | Filter Accepted/min | Repro | Workload | Filter Reject % (attempt) | Filter Accept % (dataset) | Filter Reject % (dataset) | Filter Retry % (dataset) | Elapsed (s) | Latency p95 (ms) | Peak RSS (MB) | Diagnostics | Missingness | Lineage | Shift | Noise |
-| ------ | ---: | ------------- | ------ | ------: | -----------: | ------: | --------: | ---------: | ------------------: | ----- | -------- | ------------------------: | ------------------------: | ------------------------: | -----------------------: | ----------: | ---------------: | ------------: | ----------- | ----------- | ------- | ----- | ----- |
-| cpu    | 1024 | fixed_batched | cpu    |     cpu |       <RATE> |  <RATE> |    <RATE> |          - |                   - | match | mismatch |                         - |                         - |                         - |                        - |   <SECONDS> |             <MS> |          <MB> | on          | off         | pass    | off   | off   |
+| Preset | Rows | Mode          | Device | Backend | Datasets/min | Gen/min | Write/min | Filter/min | Filter Accepted/min | Repro | Workload | Filter Reject % (attempt) | Filter Accept % (dataset) | Filter Reject % (dataset) | Filter Retry % (dataset) | Elapsed (s) | Latency p95 (ms) | Peak RSS (MB) | Diagnostics | Filtering | Missingness | Shift | Noise | Throughput |
+| ------ | ---: | ------------- | ------ | ------: | -----------: | ------: | --------: | ---------: | ------------------: | ----- | -------- | ------------------------: | ------------------------: | ------------------------: | -----------------------: | ----------: | ---------------: | ------------: | ----------- | --------- | ----------- | ----- | ----- | ---------- |
+| cpu    | 1024 | fixed_batched | cpu    |     cpu |       <RATE> |  <RATE> |    <RATE> |          - |                   - | match | mismatch |                         - |                         - |                         - |                        - |   <SECONDS> |             <MS> |          <MB> | on          | off       | off         | off   | off   | pass       |
 
 ## Bottleneck Evidence
 

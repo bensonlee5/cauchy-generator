@@ -75,26 +75,25 @@ def _apply_stage_to_config(
     *,
     t: float,
 ) -> None:
-    if stage.dataset is not None:
-        dataset = stage.dataset
-        if dataset.missing_rate is not None:
-            config.dataset.missing_rate = _interpolate_band(dataset.missing_rate, t)
-        if dataset.missing_mechanism is not None:
-            config.dataset.missing_mechanism = dataset.missing_mechanism
-        if dataset.missing_mar_observed_fraction is not None:
-            config.dataset.missing_mar_observed_fraction = float(
-                dataset.missing_mar_observed_fraction
-            )
-        if dataset.missing_mar_logit_scale is not None:
-            config.dataset.missing_mar_logit_scale = float(dataset.missing_mar_logit_scale)
-        if dataset.missing_mnar_logit_scale is not None:
-            config.dataset.missing_mnar_logit_scale = float(dataset.missing_mnar_logit_scale)
+    if stage.missing_rate is not None:
+        config.dataset.missing_rate = _interpolate_band(stage.missing_rate, t)
+    if stage.missing_mechanism is not None:
+        config.dataset.missing_mechanism = stage.missing_mechanism
+    if stage.missing_mar_observed_fraction is not None:
+        config.dataset.missing_mar_observed_fraction = float(stage.missing_mar_observed_fraction)
+    if stage.missing_mar_logit_scale is not None:
+        config.dataset.missing_mar_logit_scale = float(stage.missing_mar_logit_scale)
+    if stage.missing_mnar_logit_scale is not None:
+        config.dataset.missing_mnar_logit_scale = float(stage.missing_mnar_logit_scale)
 
-    if stage.shift is not None:
-        shift = stage.shift
+    if (
+        stage.shift_mode is not None
+        or stage.shift_graph_scale is not None
+        or stage.shift_variance_scale is not None
+    ):
         config.shift.enabled = True
-        if shift.mode is not None:
-            config.shift.mode = shift.mode
+        if stage.shift_mode is not None:
+            config.shift.mode = stage.shift_mode
         shift_mode = str(config.shift.mode)
         # Steering stages do not author mechanism drift, so always discard any
         # inherited mechanism-scale override before applying graph/noise ramps.
@@ -105,22 +104,25 @@ def _apply_stage_to_config(
             config.shift.graph_scale = None
         elif shift_mode in {SHIFT_MODE_MIXED, SHIFT_MODE_CUSTOM}:
             config.shift.mechanism_scale = 0.0
-        if shift.graph_scale is not None:
-            config.shift.graph_scale = _interpolate_band(shift.graph_scale, t)
-        if shift.variance_scale is not None:
-            config.shift.variance_scale = _interpolate_band(shift.variance_scale, t)
+        if stage.shift_graph_scale is not None:
+            config.shift.graph_scale = _interpolate_band(stage.shift_graph_scale, t)
+        if stage.shift_variance_scale is not None:
+            config.shift.variance_scale = _interpolate_band(stage.shift_variance_scale, t)
 
-    if stage.noise is not None:
-        noise = stage.noise
-        if noise.family is not None:
-            config.noise.family = noise.family
-        if noise.student_t_df is not None:
-            config.noise.student_t_df = float(noise.student_t_df)
-        if noise.mixture_weights is not None:
+    if (
+        stage.noise_family is not None
+        or stage.noise_student_t_df is not None
+        or stage.noise_mixture_weights is not None
+    ):
+        if stage.noise_family is not None:
+            config.noise.family = stage.noise_family
+        if stage.noise_student_t_df is not None:
+            config.noise.student_t_df = float(stage.noise_student_t_df)
+        if stage.noise_mixture_weights is not None:
             resolved_weights = {
                 component: (
-                    _interpolate_band(noise.mixture_weights[component], t)
-                    if component in noise.mixture_weights
+                    _interpolate_band(stage.noise_mixture_weights[component], t)
+                    if component in stage.noise_mixture_weights
                     else 0.0
                 )
                 for component in _STEERING_MIXTURE_COMPONENTS

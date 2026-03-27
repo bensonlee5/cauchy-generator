@@ -62,7 +62,7 @@ def normalize_benchmark_summary_markdown(text: str) -> str:
             continue
         if line.startswith("| ") and line.endswith(" |"):
             cells = [cell.strip() for cell in line.strip("|").split("|")]
-            if len(cells) == 24 and cells[0] != "Preset":
+            if len(cells) == 25 and cells[0] != "Preset":
                 cells[5] = _RATE_PLACEHOLDER
                 cells[6] = _RATE_PLACEHOLDER
                 cells[7] = _RATE_PLACEHOLDER
@@ -124,15 +124,12 @@ def normalize_handoff_manifest(payload: dict[str, Any]) -> dict[str, Any]:
 
 def normalize_coverage_summary(summary: dict[str, Any]) -> dict[str, Any]:
     metrics = summary.get("metrics", {})
-    linearity = metrics.get("linearity_proxy", {}) if isinstance(metrics, dict) else {}
-    wins = metrics.get("wins_ratio_proxy", {}) if isinstance(metrics, dict) else {}
-    steering = summary.get("steering", {})
-    if not isinstance(linearity, dict):
-        linearity = {}
-    if not isinstance(wins, dict):
-        wins = {}
-    if not isinstance(steering, dict):
-        steering = {}
+    n_rows = metrics.get("n_rows", {}) if isinstance(metrics, dict) else {}
+    pearson_abs_mean = metrics.get("pearson_abs_mean", {}) if isinstance(metrics, dict) else {}
+    if not isinstance(n_rows, dict):
+        n_rows = {}
+    if not isinstance(pearson_abs_mean, dict):
+        pearson_abs_mean = {}
 
     return {
         "generated_at": _TIMESTAMP_PLACEHOLDER,
@@ -142,10 +139,9 @@ def normalize_coverage_summary(summary: dict[str, Any]) -> dict[str, Any]:
         "quantiles": summary.get("quantiles", []),
         "max_values_per_metric": summary.get("max_values_per_metric"),
         "mechanism_family_summary": _project_mechanism_family_summary(summary),
-        "steering": _project_steering_summary(steering),
         "metrics": {
-            "linearity_proxy": _project_metric(linearity),
-            "wins_ratio_proxy": _project_metric(wins),
+            "n_rows": _project_metric(n_rows),
+            "pearson_abs_mean": _project_metric(pearson_abs_mean),
         },
     }
 
@@ -162,27 +158,6 @@ def _project_mechanism_family_summary(summary: dict[str, Any]) -> dict[str, Any]
         "metadata_coverage_rate": mechanism.get("metadata_coverage_rate", 0.0),
         "bundles_with_metadata": mechanism.get("bundles_with_metadata", 0),
         "mean_total_function_plans": mechanism.get("mean_total_function_plans", 0.0),
-    }
-
-
-def _project_steering_summary(steering: dict[str, Any]) -> dict[str, Any]:
-    resolution_checks = steering.get("resolution_checks", {})
-    if not isinstance(resolution_checks, dict):
-        resolution_checks = {}
-    return {
-        "enabled": steering.get("enabled", False),
-        "authoring_form": steering.get("authoring_form", "disabled"),
-        "preset": steering.get("preset"),
-        "stage_count": steering.get("stage_count", 0),
-        "resolution_checks": {
-            "datasets_checked": resolution_checks.get("datasets_checked", 0),
-            "datasets_matching": resolution_checks.get("datasets_matching", 0),
-            "datasets_mismatched": resolution_checks.get("datasets_mismatched", 0),
-            "match_rate": resolution_checks.get("match_rate"),
-            "mismatch_counts": resolution_checks.get("mismatch_counts", {}),
-            "mismatched_dataset_indices": resolution_checks.get("mismatched_dataset_indices", []),
-        },
-        "stages": steering.get("stages", []),
     }
 
 

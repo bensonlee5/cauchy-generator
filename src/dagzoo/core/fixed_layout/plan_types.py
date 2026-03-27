@@ -53,29 +53,28 @@ FixedLayoutActivationPlan: TypeAlias = FixedActivationPlan | ParametricActivatio
 
 @dataclass(frozen=True, slots=True)
 class GaussianMatrixPlan:
-    kind: Literal["gaussian"] = "gaussian"
+    pass
 
 
 @dataclass(frozen=True, slots=True)
 class WeightsMatrixPlan:
-    kind: Literal["weights"] = "weights"
+    pass
 
 
 @dataclass(frozen=True, slots=True)
 class SingularValuesMatrixPlan:
-    kind: Literal["singular_values"] = "singular_values"
+    pass
 
 
 @dataclass(frozen=True, slots=True)
 class KernelMatrixPlan:
-    kind: Literal["kernel"] = "kernel"
+    pass
 
 
 @dataclass(frozen=True, slots=True)
 class ActivationMatrixPlan:
     base_kind: FixedLayoutMatrixBaseKind
     activation: FixedLayoutActivationPlan
-    kind: Literal["activation"] = "activation"
 
 
 FixedLayoutMatrixPlan: TypeAlias = (
@@ -90,13 +89,11 @@ FixedLayoutMatrixPlan: TypeAlias = (
 @dataclass(frozen=True, slots=True)
 class LinearFunctionPlan:
     matrix: FixedLayoutMatrixPlan
-    family: Literal["linear"] = "linear"
 
 
 @dataclass(frozen=True, slots=True)
 class QuadraticFunctionPlan:
     matrix: FixedLayoutMatrixPlan
-    family: Literal["quadratic"] = "quadratic"
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,42 +104,36 @@ class NeuralNetFunctionPlan:
     output_activation: FixedLayoutActivationPlan | None
     layer_matrices: tuple[FixedLayoutMatrixPlan, ...]
     hidden_activations: tuple[FixedLayoutActivationPlan, ...]
-    family: Literal["nn"] = "nn"
 
 
 @dataclass(frozen=True, slots=True)
 class TreeFunctionPlan:
     n_trees: int
     depths: tuple[int, ...]
-    family: Literal["tree"] = "tree"
 
 
 @dataclass(frozen=True, slots=True)
 class DiscretizationFunctionPlan:
     n_centers: int
     linear_matrix: FixedLayoutMatrixPlan
-    family: Literal["discretization"] = "discretization"
 
 
 @dataclass(frozen=True, slots=True)
 class GpFunctionPlan:
     branch_kind: FixedLayoutGpBranchKind
     variant: FixedLayoutGpVariant = "standard"
-    family: Literal["gp"] = "gp"
 
 
 @dataclass(frozen=True, slots=True)
 class EmFunctionPlan:
     m_val: int
     linear_matrix: FixedLayoutMatrixPlan
-    family: Literal["em"] = "em"
 
 
 @dataclass(frozen=True, slots=True)
 class ProductFunctionPlan:
     lhs: FixedLayoutFunctionPlan
     rhs: FixedLayoutFunctionPlan
-    family: Literal["product"] = "product"
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,7 +143,6 @@ class PiecewiseFunctionPlan:
     gate_temperature: float
     lhs: FixedLayoutFunctionPlan
     rhs: FixedLayoutFunctionPlan
-    family: Literal["piecewise"] = "piecewise"
 
 
 FixedLayoutFunctionPlan: TypeAlias = (
@@ -549,8 +539,20 @@ def function_plan_family_counts(plan: FixedLayoutFunctionPlan) -> dict[Mechanism
             for family, count in function_plan_family_counts(nested_plan).items():
                 counts[family] = int(counts.get(family, 0)) + int(count)
         return counts
-
-    _increment(plan.family)
+    if isinstance(plan, LinearFunctionPlan):
+        _increment("linear")
+    elif isinstance(plan, QuadraticFunctionPlan):
+        _increment("quadratic")
+    elif isinstance(plan, NeuralNetFunctionPlan):
+        _increment("nn")
+    elif isinstance(plan, TreeFunctionPlan):
+        _increment("tree")
+    elif isinstance(plan, DiscretizationFunctionPlan):
+        _increment("discretization")
+    elif isinstance(plan, GpFunctionPlan):
+        _increment("gp")
+    else:
+        _increment("em")
     return counts
 
 

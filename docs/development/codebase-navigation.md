@@ -83,12 +83,12 @@ To verify the current repo state while exploring the code:
 
 ```bash
 ./scripts/dev review-base
-./scripts/dev ready
+./.venv/bin/nox -s quick
 ```
 
 For more targeted local checks:
 
 ```bash
 ./scripts/dev impact
-./scripts/dev verify quick
+./.venv/bin/nox -s quick
 ```

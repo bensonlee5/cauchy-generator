@@ -10,6 +10,45 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.15.0] - 2026-03-27
+
+### Changed
+
+- **BREAKING:** Simplified generation overrides around one repeatable
+  `--set path=value` surface and removed the granular generate/filter CLI
+  flags for missingness and deferred-filter threshold tuning.
+- **BREAKING:** Simplified `dataset.rows` support to fixed totals and
+  `start..stop` ranges only; list, CSV, mapping, and public `choices`-mode
+  row specs are no longer accepted.
+- **BREAKING:** Flattened `steering.stages[*]` onto direct stage fields
+  (`missing_*`, `shift_*`, `noise_*`) instead of nested `dataset`, `shift`,
+  and `noise` blocks.
+- **BREAKING:** Simplified config-resolution results and trace artifacts to
+  plain dictionaries, including `{path, source, old_value, new_value}` trace
+  events for generate and benchmark resolution flows.
+- Stress-profile locked-path validation now derives the protected field set
+  from the built-in profile definition instead of a hand-maintained string
+  table.
+- Fixed-layout execution semantics now use the shared sampling helper module
+  directly, and the fixed-layout function/matrix plan IR now relies on class
+  types instead of redundant matrix/function discriminator fields.
+- Filtering now treats deferred replay as a supported runtime path and no
+  longer exposes the stale unsupported-feature availability shim.
+- **BREAKING:** Removed the runtime-package `dagzoo.bench.h100_validation`
+  entrypoint. The supported H100 validation path is now
+  `./.venv/bin/python scripts/ci/h100_validation.py`.
+- **BREAKING:** Benchmark preset results now emit a unified `scenarios`
+  mapping with per-scenario metrics, optional control metrics, and issues
+  instead of collector-specific guardrail payloads.
+- **BREAKING:** Diagnostics coverage summaries now emit the curated metric
+  subset used by product docs and benchmarks and no longer include the
+  top-level `steering` payload.
+- **BREAKING:** Repo-local dev tooling now keeps `impact`, `contract`, and
+  `review-base`, while verification/dependency/environment wrappers move to
+  direct `nox` and `import-linter` entrypoints.
+- Added repo-level `nox` sessions (`quick`, `full`, `docs`, `bench_smoke`) as
+  the canonical verification surface on top of the shared `.venv/`.
+
 ## [0.14.5] - 2026-03-27
 
 ### Added

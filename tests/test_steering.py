@@ -77,10 +77,8 @@ def test_resolve_steering_num_datasets_one_uses_zero_progress() -> None:
                     {
                         "name": "descending_graph",
                         "fraction": 1.0,
-                        "shift": {
-                            "mode": "graph_drift",
-                            "graph_scale": [0.5, 0.0],
-                        },
+                        "shift_mode": "graph_drift",
+                        "shift_graph_scale": [0.5, 0.0],
                     }
                 ],
             }
@@ -108,13 +106,11 @@ def test_resolve_steering_applies_missingness_auxiliary_fields() -> None:
                     {
                         "name": "mar_aux",
                         "fraction": 1.0,
-                        "dataset": {
-                            "missing_rate": [0.1, 0.2],
-                            "missing_mechanism": "mar",
-                            "missing_mar_observed_fraction": 0.75,
-                            "missing_mar_logit_scale": 1.5,
-                            "missing_mnar_logit_scale": 2.5,
-                        },
+                        "missing_rate": [0.1, 0.2],
+                        "missing_mechanism": "mar",
+                        "missing_mar_observed_fraction": 0.75,
+                        "missing_mar_logit_scale": 1.5,
+                        "missing_mnar_logit_scale": 2.5,
                     }
                 ],
             }
@@ -144,10 +140,8 @@ def test_resolve_steering_graph_stage_clears_inherited_noise_scale() -> None:
                     {
                         "name": "graph_only",
                         "fraction": 1.0,
-                        "shift": {
-                            "mode": "graph_drift",
-                            "graph_scale": [0.0, 0.5],
-                        },
+                        "shift_mode": "graph_drift",
+                        "shift_graph_scale": [0.0, 0.5],
                     }
                 ],
             },
@@ -173,19 +167,15 @@ def test_resolve_steering_graph_stage_does_not_keep_prior_mixed_noise_scale() ->
                     {
                         "name": "mixed_first",
                         "fraction": 0.5,
-                        "shift": {
-                            "mode": "mixed",
-                            "graph_scale": [0.0, 0.5],
-                            "variance_scale": [0.0, 0.5],
-                        },
+                        "shift_mode": "mixed",
+                        "shift_graph_scale": [0.0, 0.5],
+                        "shift_variance_scale": [0.0, 0.5],
                     },
                     {
                         "name": "graph_second",
                         "fraction": 0.5,
-                        "shift": {
-                            "mode": "graph_drift",
-                            "graph_scale": [0.5, 1.0],
-                        },
+                        "shift_mode": "graph_drift",
+                        "shift_graph_scale": [0.5, 1.0],
                     },
                 ],
             }
@@ -218,10 +208,8 @@ def test_resolve_steering_noise_stage_clears_inherited_graph_scale() -> None:
                     {
                         "name": "noise_only",
                         "fraction": 1.0,
-                        "shift": {
-                            "mode": "noise_drift",
-                            "variance_scale": [0.0, 0.5],
-                        },
+                        "shift_mode": "noise_drift",
+                        "shift_variance_scale": [0.0, 0.5],
                     }
                 ],
             },

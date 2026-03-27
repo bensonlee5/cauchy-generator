@@ -410,10 +410,12 @@ def test_run_deferred_filter_applies_ease_overrides_and_records_summary_provenan
     result = run_deferred_filter(
         in_dir=in_dir,
         out_dir=out_dir,
-        ease_k_small_override=8,
-        easy_skill_threshold_override=0.4,
-        easy_gain_threshold_override=0.2,
-        hard_skill_threshold_override=0.05,
+        path_overrides=(
+            ("filter.ease_k_small", 8),
+            ("filter.easy_skill_threshold", 0.4),
+            ("filter.easy_gain_threshold", 0.2),
+            ("filter.hard_skill_threshold", 0.05),
+        ),
     )
 
     assert result.accepted_datasets == 2
@@ -421,10 +423,12 @@ def test_run_deferred_filter_applies_ease_overrides_and_records_summary_provenan
     assert seen_k_small == [8, 8]
     summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
     assert summary["filter_mode"] == "small_shot_ease_v1"
-    assert summary["ease_k_small_override"] == 8
-    assert summary["easy_skill_threshold_override"] == pytest.approx(0.4)
-    assert summary["easy_gain_threshold_override"] == pytest.approx(0.2)
-    assert summary["hard_skill_threshold_override"] == pytest.approx(0.05)
+    assert summary["path_overrides"] == [
+        {"path": "filter.ease_k_small", "value": 8},
+        {"path": "filter.easy_skill_threshold", "value": 0.4},
+        {"path": "filter.easy_gain_threshold", "value": 0.2},
+        {"path": "filter.hard_skill_threshold", "value": 0.05},
+    ]
     manifest_records = _load_ndjson(result.manifest_path)
     assert manifest_records[0]["filter"]["easy_skill_threshold"] == pytest.approx(0.4)
     assert manifest_records[0]["filter"]["ease_k_small_requested"] == 8

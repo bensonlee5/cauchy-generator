@@ -39,22 +39,18 @@ _STRESS_PROFILE = "anti_memorization_piecewise_classification_slice_v1"
 
 @st.composite
 def _cap_rows_spec_strategy(draw: st.DrawFn) -> DatasetRowsSpec:
-    mode = draw(st.sampled_from(("fixed", "range", "choices")))
+    mode = draw(st.sampled_from(("fixed", "range")))
     if mode == "fixed":
         value = draw(_ROW_TOTAL_STRATEGY)
         return DatasetRowsSpec(mode="fixed", value=value)
-    if mode == "range":
-        start = draw(
-            st.integers(
-                min_value=DATASET_ROWS_MIN_TOTAL,
-                max_value=DATASET_ROWS_MAX_TOTAL - 1,
-            )
+    start = draw(
+        st.integers(
+            min_value=DATASET_ROWS_MIN_TOTAL,
+            max_value=DATASET_ROWS_MAX_TOTAL - 1,
         )
-        stop = draw(st.integers(min_value=start + 1, max_value=DATASET_ROWS_MAX_TOTAL))
-        return DatasetRowsSpec(mode="range", start=start, stop=stop)
-
-    choices = draw(st.lists(_ROW_TOTAL_STRATEGY, min_size=2, max_size=5, unique=True))
-    return DatasetRowsSpec(mode="choices", choices=choices)
+    )
+    stop = draw(st.integers(min_value=start + 1, max_value=DATASET_ROWS_MAX_TOTAL))
+    return DatasetRowsSpec(mode="range", start=start, stop=stop)
 
 
 def _mock_cuda_h100(_requested_device: str) -> HardwareInfo:
@@ -86,30 +82,31 @@ def test_resolve_generate_config_applies_cli_overrides() -> None:
         device_override="cpu",
         rows=None,
         hardware_policy="none",
-        missing_rate=0.2,
-        missing_mechanism="mnar",
-        missing_mar_observed_fraction=0.7,
-        missing_mar_logit_scale=1.5,
-        missing_mnar_logit_scale=2.5,
         diagnostics_enabled=True,
+        path_overrides=[
+            ("dataset.missing_rate", 0.2),
+            ("dataset.missing_mechanism", "mnar"),
+            ("dataset.missing_mar_observed_fraction", 0.7),
+            ("dataset.missing_mar_logit_scale", 1.5),
+            ("dataset.missing_mnar_logit_scale", 2.5),
+        ],
     )
     assert cfg.runtime.device == "auto"
-    assert resolved.requested_device == "cpu"
-    assert resolved.config.runtime.device == "cpu"
-    assert resolved.config.dataset.missing_rate == pytest.approx(0.2)
-    assert resolved.config.dataset.missing_mechanism == "mnar"
-    assert resolved.config.dataset.missing_mar_observed_fraction == pytest.approx(0.7)
-    assert resolved.config.dataset.missing_mar_logit_scale == pytest.approx(1.5)
-    assert resolved.config.dataset.missing_mnar_logit_scale == pytest.approx(2.5)
-    assert resolved.config.diagnostics.enabled is True
+    assert resolved["requested_device"] == "cpu"
+    assert resolved["config"].runtime.device == "cpu"
+    assert resolved["config"].dataset.missing_rate == pytest.approx(0.2)
+    assert resolved["config"].dataset.missing_mechanism == "mnar"
+    assert resolved["config"].dataset.missing_mar_observed_fraction == pytest.approx(0.7)
+    assert resolved["config"].dataset.missing_mar_logit_scale == pytest.approx(1.5)
+    assert resolved["config"].dataset.missing_mnar_logit_scale == pytest.approx(2.5)
+    assert resolved["config"].diagnostics.enabled is True
 
-    trace = serialize_resolution_events(resolved.trace_events)
+    trace = serialize_resolution_events(resolved["trace_events"])
     assert any(
         event["path"] == "runtime.device" and event["source"] == "cli.device" for event in trace
     )
     assert any(
-        event["path"] == "dataset.missing_rate" and event["source"] == "cli.missingness_override"
-        for event in trace
+        event["path"] == "dataset.missing_rate" and event["source"] == "cli.set" for event in trace
     )
     assert any(
         event["path"] == "diagnostics.enabled" and event["source"] == "cli.diagnostics"
@@ -124,19 +121,14 @@ def test_resolve_generate_config_applies_rows_override() -> None:
         device_override="cpu",
         rows="400..60000",
         hardware_policy="none",
-        missing_rate=None,
-        missing_mechanism=None,
-        missing_mar_observed_fraction=None,
-        missing_mar_logit_scale=None,
-        missing_mnar_logit_scale=None,
         diagnostics_enabled=False,
     )
-    assert resolved.config.dataset.rows is not None
-    assert resolved.config.dataset.rows.mode == "range"
-    assert resolved.config.dataset.rows.start == 400
-    assert resolved.config.dataset.rows.stop == 60000
+    assert resolved["config"].dataset.rows is not None
+    assert resolved["config"].dataset.rows.mode == "range"
+    assert resolved["config"].dataset.rows.start == 400
+    assert resolved["config"].dataset.rows.stop == 60000
 
-    trace = serialize_resolution_events(resolved.trace_events)
+    trace = serialize_resolution_events(resolved["trace_events"])
     assert any(event["path"] == "dataset.rows" and event["source"] == "cli.rows" for event in trace)
 
 
@@ -148,23 +140,18 @@ def test_resolve_generate_config_materializes_stress_profile() -> None:
         device_override="cpu",
         rows=None,
         hardware_policy="none",
-        missing_rate=None,
-        missing_mechanism=None,
-        missing_mar_observed_fraction=None,
-        missing_mar_logit_scale=None,
-        missing_mnar_logit_scale=None,
         diagnostics_enabled=False,
     )
 
-    assert resolved.config.stress.profile is None
-    assert resolved.config.dataset.task == "classification"
-    assert resolved.config.dataset.n_train == 768
-    assert resolved.config.dataset.n_test == 256
-    assert resolved.config.graph.n_nodes_min == 2
-    assert resolved.config.graph.n_nodes_max == 32
-    assert resolved.config.steering.enabled is True
-    assert resolved.config.steering.preset == "anti_memorization_piecewise_v1"
-    trace = serialize_resolution_events(resolved.trace_events)
+    assert resolved["config"].stress.profile is None
+    assert resolved["config"].dataset.task == "classification"
+    assert resolved["config"].dataset.n_train == 768
+    assert resolved["config"].dataset.n_test == 256
+    assert resolved["config"].graph.n_nodes_min == 2
+    assert resolved["config"].graph.n_nodes_max == 32
+    assert resolved["config"].steering.enabled is True
+    assert resolved["config"].steering.preset == "anti_memorization_piecewise_v1"
+    trace = serialize_resolution_events(resolved["trace_events"])
     assert any(
         event["path"] == "steering.enabled"
         and event["source"] == "stress.profile_materialization"
@@ -211,22 +198,17 @@ def test_resolve_generate_config_materializes_stress_profile_before_cuda_policy(
         device_override="cuda",
         rows=None,
         hardware_policy="cuda_tiered_v1",
-        missing_rate=None,
-        missing_mechanism=None,
-        missing_mar_observed_fraction=None,
-        missing_mar_logit_scale=None,
-        missing_mnar_logit_scale=None,
         diagnostics_enabled=False,
     )
 
-    assert resolved.config.stress.profile is None
-    assert resolved.config.dataset.n_train == expected_n_train
-    assert resolved.config.dataset.n_test == expected_n_test
-    assert resolved.config.dataset.n_features_max == expected_n_features_max
-    assert resolved.config.graph.n_nodes_max == expected_n_nodes_max
-    assert resolved.config.runtime.fixed_layout_target_cells == expected_target_cells
+    assert resolved["config"].stress.profile is None
+    assert resolved["config"].dataset.n_train == expected_n_train
+    assert resolved["config"].dataset.n_test == expected_n_test
+    assert resolved["config"].dataset.n_features_max == expected_n_features_max
+    assert resolved["config"].graph.n_nodes_max == expected_n_nodes_max
+    assert resolved["config"].runtime.fixed_layout_target_cells == expected_target_cells
 
-    trace = serialize_resolution_events(resolved.trace_events)
+    trace = serialize_resolution_events(resolved["trace_events"])
     materialize_index = next(
         idx
         for idx, event in enumerate(trace)
@@ -249,30 +231,23 @@ def test_resolve_generate_config_rejects_rows_override_for_stress_profile() -> N
             device_override="cpu",
             rows="400..60000",
             hardware_policy="none",
-            missing_rate=None,
-            missing_mechanism=None,
-            missing_mar_observed_fraction=None,
-            missing_mar_logit_scale=None,
-            missing_mnar_logit_scale=None,
             diagnostics_enabled=False,
         )
 
 
-def test_resolve_generate_config_rejects_missingness_override_for_stress_profile() -> None:
+def test_resolve_generate_config_rejects_locked_path_override_for_stress_profile() -> None:
     cfg = GeneratorConfig.from_dict({"stress": {"profile": _STRESS_PROFILE}})
 
-    with pytest.raises(ValueError, match=r"locks dataset\.missing_rate to 0\.0"):
+    with pytest.raises(ValueError, match=r"locks dataset\.n_train to 768"):
         resolve_generate_config(
             cfg,
             device_override="cpu",
             rows=None,
             hardware_policy="none",
-            missing_rate=0.2,
-            missing_mechanism="mnar",
-            missing_mar_observed_fraction=None,
-            missing_mar_logit_scale=None,
-            missing_mnar_logit_scale=None,
             diagnostics_enabled=False,
+            path_overrides=[
+                ("dataset.n_train", 2048),
+            ],
         )
 
 
@@ -290,13 +265,12 @@ def test_cap_rows_spec_to_total_clears_rows_when_cap_is_below_min_total() -> Non
     [
         (1024, "fixed", {"value": 500}),
         ("400..60000", "range", {"start": 400, "stop": 500}),
-        ("400,600,800", "choices", {"choices": [400, 500]}),
     ],
 )
-def test_cap_rows_spec_to_total_caps_fixed_range_and_choice_rows(
+def test_cap_rows_spec_to_total_caps_fixed_and_range_rows(
     rows_spec: object,
     expected_mode: str,
-    expected_payload: dict[str, int | list[int]],
+    expected_payload: dict[str, int],
 ) -> None:
     cfg = load_repo_config()
     cfg.dataset.rows = rows_spec  # type: ignore[assignment]
@@ -349,17 +323,7 @@ def test_cap_rows_spec_to_total_preserves_mode_contracts_hypothesis(
         assert capped_rows.stop == expected_stop
         return
 
-    expected_choices = sorted(
-        {min(int(choice), int(total_rows_cap)) for choice in rows_spec.choices}
-    )
-    if len(expected_choices) == 1:
-        assert capped_rows.mode == "fixed"
-        assert capped_rows.value == expected_choices[0]
-        return
-
-    assert capped_rows.mode == "choices"
-    assert capped_rows.choices == expected_choices
-    assert all(choice <= total_rows_cap for choice in capped_rows.choices)
+    raise AssertionError(f"Unexpected rows mode {rows_spec.mode!r}")
 
 
 def test_resolve_generate_config_rejects_invalid_missingness_combination() -> None:
@@ -373,12 +337,11 @@ def test_resolve_generate_config_rejects_invalid_missingness_combination() -> No
             device_override="cpu",
             rows=None,
             hardware_policy="none",
-            missing_rate=0.2,
-            missing_mechanism="none",
-            missing_mar_observed_fraction=None,
-            missing_mar_logit_scale=None,
-            missing_mnar_logit_scale=None,
             diagnostics_enabled=False,
+            path_overrides=[
+                ("dataset.missing_rate", 0.2),
+                ("dataset.missing_mechanism", "none"),
+            ],
         )
 
 
@@ -391,16 +354,11 @@ def test_resolve_generate_config_treats_null_runtime_device_as_auto() -> None:
         device_override=None,
         rows=None,
         hardware_policy="none",
-        missing_rate=None,
-        missing_mechanism=None,
-        missing_mar_observed_fraction=None,
-        missing_mar_logit_scale=None,
-        missing_mnar_logit_scale=None,
         diagnostics_enabled=False,
     )
 
-    assert resolved.requested_device == "auto"
-    assert resolved.config.runtime.device == "auto"
+    assert resolved["requested_device"] == "auto"
+    assert resolved["config"].runtime.device == "auto"
 
 
 def test_resolve_generate_config_applies_rows_override_after_policy_revalidation(
@@ -415,22 +373,17 @@ def test_resolve_generate_config_applies_rows_override_after_policy_revalidation
         device_override="cuda",
         rows="2000..60000",
         hardware_policy="cuda_tiered_v1",
-        missing_rate=None,
-        missing_mechanism=None,
-        missing_mar_observed_fraction=None,
-        missing_mar_logit_scale=None,
-        missing_mnar_logit_scale=None,
         diagnostics_enabled=False,
     )
 
-    assert resolved.config.dataset.rows is not None
-    assert resolved.config.dataset.rows.mode == "range"
-    assert resolved.config.dataset.rows.start == 2000
-    assert resolved.config.dataset.rows.stop == 60000
-    assert resolved.config.dataset.n_test == 1024
-    assert resolved.config.runtime.fixed_layout_target_cells == 240_000_000
+    assert resolved["config"].dataset.rows is not None
+    assert resolved["config"].dataset.rows.mode == "range"
+    assert resolved["config"].dataset.rows.start == 2000
+    assert resolved["config"].dataset.rows.stop == 60000
+    assert resolved["config"].dataset.n_test == 1024
+    assert resolved["config"].runtime.fixed_layout_target_cells == 240_000_000
 
-    trace = serialize_resolution_events(resolved.trace_events)
+    trace = serialize_resolution_events(resolved["trace_events"])
     assert any(
         event["path"] == "runtime.fixed_layout_target_cells"
         and event["source"] == "hardware_policy.cuda_tiered_v1"
@@ -451,16 +404,11 @@ def test_resolve_generate_config_applies_default_cuda_fixed_layout_floor_without
         device_override="cuda",
         rows=None,
         hardware_policy="none",
-        missing_rate=None,
-        missing_mechanism=None,
-        missing_mar_observed_fraction=None,
-        missing_mar_logit_scale=None,
-        missing_mnar_logit_scale=None,
         diagnostics_enabled=False,
     )
 
-    assert resolved.config.runtime.fixed_layout_target_cells == 240_000_000
-    trace = serialize_resolution_events(resolved.trace_events)
+    assert resolved["config"].runtime.fixed_layout_target_cells == 240_000_000
+    trace = serialize_resolution_events(resolved["trace_events"])
     assert any(
         event["path"] == "runtime.fixed_layout_target_cells"
         and event["source"] == "hardware.default_cuda_fixed_layout_target_cells"
@@ -482,16 +430,11 @@ def test_resolve_generate_config_preserves_explicit_cuda_target_without_policy(
         device_override="cuda",
         rows=None,
         hardware_policy="none",
-        missing_rate=None,
-        missing_mechanism=None,
-        missing_mar_observed_fraction=None,
-        missing_mar_logit_scale=None,
-        missing_mnar_logit_scale=None,
         diagnostics_enabled=False,
     )
 
-    assert resolved.config.runtime.fixed_layout_target_cells == 32_000_000
-    trace = serialize_resolution_events(resolved.trace_events)
+    assert resolved["config"].runtime.fixed_layout_target_cells == 32_000_000
+    trace = serialize_resolution_events(resolved["trace_events"])
     assert not any(
         event["path"] == "runtime.fixed_layout_target_cells"
         and event["source"] == "hardware.default_cuda_fixed_layout_target_cells"
@@ -520,12 +463,12 @@ def test_resolve_benchmark_preset_config_applies_smoke_caps() -> None:
         ),
     )
     assert cfg.dataset.n_train > SMOKE_N_TRAIN_CAP
-    assert resolved.config.dataset.n_train == SMOKE_N_TRAIN_CAP
-    assert resolved.config.dataset.n_test == SMOKE_N_TEST_CAP
-    assert resolved.config.dataset.n_features_max == SMOKE_N_FEATURES_CAP
-    assert resolved.config.graph.n_nodes_max == SMOKE_N_NODES_CAP
+    assert resolved["config"].dataset.n_train == SMOKE_N_TRAIN_CAP
+    assert resolved["config"].dataset.n_test == SMOKE_N_TEST_CAP
+    assert resolved["config"].dataset.n_features_max == SMOKE_N_FEATURES_CAP
+    assert resolved["config"].graph.n_nodes_max == SMOKE_N_NODES_CAP
 
-    trace = serialize_resolution_events(resolved.trace_events)
+    trace = serialize_resolution_events(resolved["trace_events"])
     assert any(
         event["path"] == "dataset.n_train"
         and event["source"] == "benchmark.suite_smoke_caps"
@@ -579,8 +522,8 @@ def test_resolve_benchmark_preset_config_treats_null_runtime_device_as_auto() ->
         smoke_caps=None,
     )
 
-    assert resolved.requested_device == "auto"
-    assert resolved.config.runtime.device == "auto"
+    assert resolved["requested_device"] == "auto"
+    assert resolved["config"].runtime.device == "auto"
 
 
 def test_resolve_benchmark_preset_config_requires_smoke_caps_for_smoke_suite() -> None:
@@ -611,10 +554,10 @@ def test_resolve_benchmark_preset_config_preserves_dataset_rows_for_standard_sui
         smoke_caps=None,
     )
 
-    assert resolved.config.dataset.rows is not None
-    assert resolved.config.dataset.rows.mode == "range"
-    assert resolved.config.dataset.rows.start == 2000
-    assert resolved.config.dataset.rows.stop == 60000
+    assert resolved["config"].dataset.rows is not None
+    assert resolved["config"].dataset.rows.mode == "range"
+    assert resolved["config"].dataset.rows.start == 2000
+    assert resolved["config"].dataset.rows.stop == 60000
 
 
 def test_resolve_benchmark_preset_config_materializes_stress_profile_for_standard_suite() -> None:
@@ -629,11 +572,11 @@ def test_resolve_benchmark_preset_config_materializes_stress_profile_for_standar
         smoke_caps=None,
     )
 
-    assert resolved.config.stress.profile is None
-    assert resolved.config.dataset.n_train == 768
-    assert resolved.config.dataset.n_test == 256
-    assert resolved.config.steering.enabled is True
-    assert resolved.config.steering.preset == "anti_memorization_piecewise_v1"
+    assert resolved["config"].stress.profile is None
+    assert resolved["config"].dataset.n_train == 768
+    assert resolved["config"].dataset.n_test == 256
+    assert resolved["config"].steering.enabled is True
+    assert resolved["config"].steering.preset == "anti_memorization_piecewise_v1"
 
 
 def test_resolve_benchmark_preset_config_materializes_stress_profile_before_smoke_caps() -> None:
@@ -653,13 +596,13 @@ def test_resolve_benchmark_preset_config_materializes_stress_profile_before_smok
         ),
     )
 
-    assert resolved.config.stress.profile is None
-    assert resolved.config.dataset.n_train == SMOKE_N_TRAIN_CAP
-    assert resolved.config.dataset.n_test == SMOKE_N_TEST_CAP
-    assert resolved.config.dataset.n_features_max == SMOKE_N_FEATURES_CAP
-    assert resolved.config.graph.n_nodes_max == SMOKE_N_NODES_CAP
+    assert resolved["config"].stress.profile is None
+    assert resolved["config"].dataset.n_train == SMOKE_N_TRAIN_CAP
+    assert resolved["config"].dataset.n_test == SMOKE_N_TEST_CAP
+    assert resolved["config"].dataset.n_features_max == SMOKE_N_FEATURES_CAP
+    assert resolved["config"].graph.n_nodes_max == SMOKE_N_NODES_CAP
 
-    trace = serialize_resolution_events(resolved.trace_events)
+    trace = serialize_resolution_events(resolved["trace_events"])
     materialize_index = next(
         idx
         for idx, event in enumerate(trace)
@@ -696,13 +639,13 @@ def test_resolve_benchmark_preset_config_preserves_dataset_rows_after_policy_tra
 
     # Benchmark preset resolution now permits variable rows; smoke-suite row
     # capping and one-time run realization happen later in benchmark orchestration.
-    assert resolved.config.dataset.rows is not None
-    assert resolved.config.dataset.rows.mode == "range"
-    assert resolved.config.dataset.rows.start == 2000
-    assert resolved.config.dataset.rows.stop == 60000
-    assert resolved.requested_device == "cuda"
-    assert resolved.config.dataset.n_test == 1024
-    assert resolved.config.runtime.fixed_layout_target_cells == 240_000_000
+    assert resolved["config"].dataset.rows is not None
+    assert resolved["config"].dataset.rows.mode == "range"
+    assert resolved["config"].dataset.rows.start == 2000
+    assert resolved["config"].dataset.rows.stop == 60000
+    assert resolved["requested_device"] == "cuda"
+    assert resolved["config"].dataset.n_test == 1024
+    assert resolved["config"].runtime.fixed_layout_target_cells == 240_000_000
 
 
 def test_resolve_benchmark_preset_config_preserves_explicit_cuda_budget_without_policy(
@@ -721,9 +664,9 @@ def test_resolve_benchmark_preset_config_preserves_explicit_cuda_budget_without_
         smoke_caps=None,
     )
 
-    assert resolved.requested_device == "cuda"
-    assert resolved.config.runtime.fixed_layout_target_cells == 32_000_000
-    trace = serialize_resolution_events(resolved.trace_events)
+    assert resolved["requested_device"] == "cuda"
+    assert resolved["config"].runtime.fixed_layout_target_cells == 32_000_000
+    trace = serialize_resolution_events(resolved["trace_events"])
     assert not any(
         event["path"] == "runtime.fixed_layout_target_cells"
         and event["source"] == "hardware.default_cuda_fixed_layout_target_cells"
@@ -747,9 +690,9 @@ def test_resolve_benchmark_preset_config_applies_default_cuda_floor_when_unset(
         smoke_caps=None,
     )
 
-    assert resolved.requested_device == "cuda"
-    assert resolved.config.runtime.fixed_layout_target_cells == 240_000_000
-    trace = serialize_resolution_events(resolved.trace_events)
+    assert resolved["requested_device"] == "cuda"
+    assert resolved["config"].runtime.fixed_layout_target_cells == 240_000_000
+    trace = serialize_resolution_events(resolved["trace_events"])
     assert any(
         event["path"] == "runtime.fixed_layout_target_cells"
         and event["source"] == "hardware.default_cuda_fixed_layout_target_cells"

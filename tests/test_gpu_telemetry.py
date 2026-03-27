@@ -1,7 +1,11 @@
+from pathlib import Path
+
 from dagzoo.bench.gpu_telemetry import (
     GpuTelemetrySample,
+    NvidiaSmiSampler,
     parse_nvidia_smi_csv,
     summarize_gpu_telemetry,
+    write_gpu_telemetry_csv,
 )
 
 
@@ -69,3 +73,47 @@ def test_summarize_gpu_telemetry_handles_empty_sample_set() -> None:
     assert summary["telemetry_available"] is False
     assert summary["sample_rows"] == 0
     assert summary["per_gpu"] == {}
+
+
+def test_nvidia_smi_sampler_collects_samples_and_stops() -> None:
+    sampler = NvidiaSmiSampler(
+        interval_seconds=0.1,
+        sample_fn=lambda: [
+            GpuTelemetrySample(
+                timestamp_utc="2026-03-15T00:00:00+00:00",
+                gpu_index=0,
+                name="NVIDIA H100 NVL",
+                utilization_gpu_pct=80.0,
+                utilization_memory_pct=25.0,
+                memory_used_mb=1024.0,
+                memory_total_mb=95830.0,
+            )
+        ],
+    )
+
+    sampler.start()
+    sampler.stop()
+
+    assert sampler.errors == []
+    assert sampler.samples
+
+
+def test_write_gpu_telemetry_csv_writes_expected_header_and_rows(tmp_path: Path) -> None:
+    out_path = write_gpu_telemetry_csv(
+        [
+            GpuTelemetrySample(
+                timestamp_utc="2026-03-15T00:00:00+00:00",
+                gpu_index=0,
+                name="NVIDIA H100 NVL",
+                utilization_gpu_pct=80.0,
+                utilization_memory_pct=25.0,
+                memory_used_mb=1024.0,
+                memory_total_mb=95830.0,
+            )
+        ],
+        tmp_path / "gpu_telemetry.csv",
+    )
+
+    payload = out_path.read_text(encoding="utf-8").splitlines()
+    assert payload[0].startswith("timestamp_utc,gpu_index,name,utilization_gpu_pct")
+    assert "NVIDIA H100 NVL" in payload[1]

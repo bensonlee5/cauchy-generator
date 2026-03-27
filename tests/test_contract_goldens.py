@@ -94,10 +94,24 @@ def _benchmark_summary_fixture(tmp_path: Path) -> dict[str, object]:
                 "peak_cuda_reserved_mb": 128.0,
                 "peak_cuda_reserved_pct_of_total_memory": 0.25,
                 "peak_cuda_headroom_mb": 256.0,
-                "missingness_guardrails": {"enabled": False, "status": "off"},
-                "lineage_guardrails": {"enabled": True, "status": "pass"},
-                "shift_guardrails": {"enabled": False, "status": "off"},
-                "noise_guardrails": {"enabled": False, "status": "off"},
+                "scenarios": {
+                    "baseline": {
+                        "enabled": True,
+                        "status": "pass",
+                        "metrics": {},
+                        "issues": [],
+                    },
+                    "throughput": {
+                        "enabled": True,
+                        "status": "pass",
+                        "metrics": {},
+                        "issues": [],
+                    },
+                    "filtering": {"enabled": False, "status": "off", "metrics": {}, "issues": []},
+                    "missingness": {"enabled": False, "status": "off", "metrics": {}, "issues": []},
+                    "shift": {"enabled": False, "status": "off", "metrics": {}, "issues": []},
+                    "noise": {"enabled": False, "status": "off", "metrics": {}, "issues": []},
+                },
             }
         ],
     }
@@ -256,7 +270,7 @@ def test_coverage_summary_contract_golden(tmp_path: Path) -> None:
         CoverageAggregationConfig(
             histogram_bins=4,
             quantiles=(0.25, 0.5, 0.75),
-            target_bands={"linearity_proxy": (0.0, 1.0)},
+            target_bands={"pearson_abs_mean": (0.0, 1.0)},
         )
     )
     agg.update_metrics(_coverage_metric_fixture())

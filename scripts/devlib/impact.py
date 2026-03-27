@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 
 from .common import normalize_files, run_git_capture, run_git_lines
-from .deps import ImportGraph, build_import_graph, module_to_package, path_to_module
+from .import_graph import ImportGraph, build_import_graph, module_to_package, path_to_module
 from .review_policy import is_release_risk_path, suggested_pytest_targets
 from .test_selection import PytestSelection, build_pytest_selection, is_docs_only_change_set
 

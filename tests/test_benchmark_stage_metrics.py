@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from dagzoo.bench.collectors import _ThroughputPressureCollector
+from dagzoo.bench.collectors import _BundleMetricsCollector, build_pressure_metrics
 from dagzoo.bench.stage_metrics import (
     StageSampleCollector,
     measure_filter_stage_metrics,
@@ -31,8 +31,8 @@ def _bundle(
     )
 
 
-def test_throughput_pressure_collector_tracks_attempt_and_filter_rejections() -> None:
-    collector = _ThroughputPressureCollector()
+def test_pressure_metrics_track_attempt_and_filter_rejections() -> None:
+    collector = _BundleMetricsCollector(expected_noise_family_requested="gaussian")
     collector.update(
         _bundle(
             metadata={
@@ -56,7 +56,7 @@ def test_throughput_pressure_collector_tracks_attempt_and_filter_rejections() ->
         )
     )
 
-    summary = collector.build_summary()
+    summary = build_pressure_metrics(collector)
     assert summary["datasets_seen"] == 2
     assert summary["attempts_total"] == 4
     assert summary["attempts_per_dataset_mean"] == 2.0
@@ -69,8 +69,8 @@ def test_throughput_pressure_collector_tracks_attempt_and_filter_rejections() ->
     assert summary["filter_retry_dataset_rate"] == 0.5
 
 
-def test_throughput_pressure_collector_falls_back_to_legacy_metadata() -> None:
-    collector = _ThroughputPressureCollector()
+def test_pressure_metrics_fall_back_to_legacy_metadata() -> None:
+    collector = _BundleMetricsCollector(expected_noise_family_requested="gaussian")
     collector.update(
         _bundle(
             metadata={
@@ -81,7 +81,7 @@ def test_throughput_pressure_collector_falls_back_to_legacy_metadata() -> None:
     )
     collector.update(_bundle(metadata={"attempt_used": 0, "filter": {"enabled": False}}))
 
-    summary = collector.build_summary()
+    summary = build_pressure_metrics(collector)
     assert summary["datasets_seen"] == 2
     assert summary["attempts_total"] == 4
     assert summary["retry_dataset_count"] == 1
@@ -92,10 +92,10 @@ def test_throughput_pressure_collector_falls_back_to_legacy_metadata() -> None:
     assert summary["filter_retry_dataset_rate"] == 0.0
 
 
-def test_throughput_pressure_collector_filter_rates_are_none_when_filter_not_attempted() -> None:
-    collector = _ThroughputPressureCollector()
+def test_pressure_metrics_filter_rates_are_none_when_filter_not_attempted() -> None:
+    collector = _BundleMetricsCollector(expected_noise_family_requested="gaussian")
     collector.update(_bundle(metadata={"attempt_used": 0, "filter": {"enabled": False}}))
-    summary = collector.build_summary()
+    summary = build_pressure_metrics(collector)
     assert summary["filter_attempts_total"] == 0
     assert summary["filter_rejection_rate_attempt_level"] is None
     assert summary["filter_retry_dataset_rate"] is None

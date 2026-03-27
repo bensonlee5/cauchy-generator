@@ -4,30 +4,15 @@ from __future__ import annotations
 
 import argparse
 import math
+from typing import Any
 
-from dagzoo.config import (
-    MISSINGNESS_MECHANISM_MAR,
-    MISSINGNESS_MECHANISM_MCAR,
-    MISSINGNESS_MECHANISM_MNAR,
-    MISSINGNESS_MECHANISM_NONE,
-    normalize_missing_mechanism,
-)
-from dagzoo.filter_thresholds import (
-    FILTER_THRESHOLD_EXPECTATION,
-    FILTER_THRESHOLD_MAX,
-    FILTER_THRESHOLD_MIN,
-)
+import yaml
+
 from dagzoo.hardware_policy import list_hardware_policies
 from dagzoo.rng import SEED32_MAX, SEED32_MIN
 
 DEVICE_CHOICES = ("auto", "cpu", "cuda", "mps")
 HARDWARE_POLICY_CHOICES = list_hardware_policies()
-MISSINGNESS_MECHANISM_CLI_CHOICES = (
-    MISSINGNESS_MECHANISM_NONE,
-    MISSINGNESS_MECHANISM_MCAR,
-    MISSINGNESS_MECHANISM_MAR,
-    MISSINGNESS_MECHANISM_MNAR,
-)
 
 
 def positive_int(value: str) -> int:
@@ -57,15 +42,6 @@ def seed_32bit_int(value: str) -> int:
             f"Expected a seed in [{SEED32_MIN}, {SEED32_MAX}], got {value}."
         )
     return parsed
-
-
-def filter_n_jobs(value: str) -> int:
-    """argparse type: parse filter worker count (-1 or >= 1)."""
-
-    parsed = int(value)
-    if parsed == -1 or parsed >= 1:
-        return parsed
-    raise argparse.ArgumentTypeError(f"Expected -1 or an integer >= 1 for --n-jobs, got {value}.")
 
 
 def parse_finite_float(raw: str, *, flag: str) -> float:
@@ -104,118 +80,6 @@ def parse_bounded_float(
     raise argparse.ArgumentTypeError(f"Invalid {flag} value '{raw}'. Expected {expectation}.")
 
 
-def parse_missing_rate_arg(raw: str) -> float:
-    """argparse type: parse missing rate in [0, 1]."""
-
-    return parse_bounded_float(
-        raw,
-        flag="--missing-rate",
-        lo=0.0,
-        hi=1.0,
-        lo_inclusive=True,
-        hi_inclusive=True,
-        expectation="a finite value in [0, 1]",
-    )
-
-
-def parse_missing_mar_observed_fraction_arg(raw: str) -> float:
-    """argparse type: parse MAR observed-feature fraction in (0, 1]."""
-
-    return parse_bounded_float(
-        raw,
-        flag="--missing-mar-observed-fraction",
-        lo=0.0,
-        hi=1.0,
-        lo_inclusive=False,
-        hi_inclusive=True,
-        expectation="a finite value in (0, 1]",
-    )
-
-
-def parse_missing_mar_logit_scale_arg(raw: str) -> float:
-    """argparse type: parse MAR logit scale > 0."""
-
-    return parse_bounded_float(
-        raw,
-        flag="--missing-mar-logit-scale",
-        lo=0.0,
-        hi=None,
-        lo_inclusive=False,
-        hi_inclusive=False,
-        expectation="a finite value > 0",
-    )
-
-
-def parse_missing_mnar_logit_scale_arg(raw: str) -> float:
-    """argparse type: parse MNAR logit scale > 0."""
-
-    return parse_bounded_float(
-        raw,
-        flag="--missing-mnar-logit-scale",
-        lo=0.0,
-        hi=None,
-        lo_inclusive=False,
-        hi_inclusive=False,
-        expectation="a finite value > 0",
-    )
-
-
-def parse_easy_skill_threshold_arg(raw: str) -> float:
-    """argparse type: parse small-shot ease threshold in [0, 1]."""
-
-    return parse_bounded_float(
-        raw,
-        flag="--easy-skill-threshold",
-        lo=FILTER_THRESHOLD_MIN,
-        hi=FILTER_THRESHOLD_MAX,
-        lo_inclusive=True,
-        hi_inclusive=True,
-        expectation=FILTER_THRESHOLD_EXPECTATION,
-    )
-
-
-def parse_easy_gain_threshold_arg(raw: str) -> float:
-    """argparse type: parse full-vs-small gain threshold in [0, 1]."""
-
-    return parse_bounded_float(
-        raw,
-        flag="--easy-gain-threshold",
-        lo=FILTER_THRESHOLD_MIN,
-        hi=FILTER_THRESHOLD_MAX,
-        lo_inclusive=True,
-        hi_inclusive=True,
-        expectation=FILTER_THRESHOLD_EXPECTATION,
-    )
-
-
-def parse_hard_skill_threshold_arg(raw: str) -> float:
-    """argparse type: parse hard-side garbage threshold in [0, 1]."""
-
-    return parse_bounded_float(
-        raw,
-        flag="--hard-skill-threshold",
-        lo=FILTER_THRESHOLD_MIN,
-        hi=FILTER_THRESHOLD_MAX,
-        lo_inclusive=True,
-        hi_inclusive=True,
-        expectation=FILTER_THRESHOLD_EXPECTATION,
-    )
-
-
-def parse_stump_skill_threshold_arg(raw: str) -> float:
-    """argparse type: parse stump-veto threshold in [0, 1]."""
-
-    return parse_bounded_float(
-        raw,
-        flag="--stump-skill-threshold",
-        lo=FILTER_THRESHOLD_MIN,
-        hi=FILTER_THRESHOLD_MAX,
-        lo_inclusive=True,
-        hi_inclusive=True,
-        expectation=FILTER_THRESHOLD_EXPECTATION,
-    )
-
-
 def parse_warn_threshold_pct_arg(raw: str) -> float:
     """argparse type: parse non-negative finite warn threshold percentages."""
 
@@ -244,10 +108,28 @@ def parse_fail_threshold_pct_arg(raw: str) -> float:
     )
 
 
-def parse_missing_mechanism_arg(raw: str) -> str:
-    """argparse type: normalize missingness mechanism values."""
+def parse_set_override(raw: str) -> tuple[str, Any]:
+    """argparse type: parse a dotted-path override in ``path=value`` form."""
 
+    path_raw, separator, value_raw = raw.partition("=")
+    if not separator:
+        raise argparse.ArgumentTypeError(
+            f"Invalid --set value '{raw}'. Expected dotted.path=value."
+        )
+    path = path_raw.strip()
+    if not path or path.startswith(".") or path.endswith(".") or ".." in path:
+        raise argparse.ArgumentTypeError(
+            f"Invalid --set path '{path_raw}'. Expected dotted.path segments."
+        )
+    for segment in path.split("."):
+        if not segment:
+            raise argparse.ArgumentTypeError(
+                f"Invalid --set path '{path_raw}'. Expected dotted.path segments."
+            )
     try:
-        return normalize_missing_mechanism(raw)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(str(exc)) from exc
+        value = yaml.safe_load(value_raw)
+    except yaml.YAMLError as exc:
+        raise argparse.ArgumentTypeError(
+            f"Invalid --set value '{value_raw}'. Expected YAML-scalar compatible syntax."
+        ) from exc
+    return path, value

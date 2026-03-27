@@ -6,22 +6,22 @@ docs helpers, and maintenance utilities rather than convenience wrappers.
 
 ## Developer CLI
 
+- `.venv/bin/nox -s quick`
+  - Canonical local code-quality verification on the shared repo `.venv/`.
+- `.venv/bin/nox -s full`
+  - Runs the quick checks, docs checks, and the full pytest suite.
+- `.venv/bin/nox -s docs`
+  - Runs the docs sync, docs link, and built-site verification workflow.
+- `.venv/bin/nox -s bench_smoke`
+  - Runs the supported smoke benchmark regression workflow.
 - `./scripts/dev bootstrap`
-  - Creates or syncs `.venv/` via `uv sync --group dev` and installs the repo pre-commit hook.
-- `./scripts/dev doctor [code|docs|all]`
-  - Verifies local toolchain prerequisites for repo work.
-- `./scripts/dev deps [--scope package|hybrid|full] [--format text|json] [--write-docs] [--check]`
-  - Builds the repo dependency graph and can refresh the checked-in docs snapshot.
+  - Creates or syncs `.venv/` via `uv sync --group dev`, installs the Hugo site Node deps with `npm ci --prefix site`, and installs the repo pre-commit hook.
 - `./scripts/dev impact [--source working-tree|staged|base] [--base <git-ref>] [--files ...] [--format text|json]`
   - Classifies changed files and shows dependency-aware downstream impact.
 - `./scripts/dev contract [--source working-tree|staged|base] [--base <git-ref>] [--files ...] [--strict]`
   - Enforces version/changelog expectations for likely user-facing changes.
-- `./scripts/dev verify quick|code|docs|bench|full|affected [--source working-tree|staged|base] [--base <git-ref>] [--files ...] [--dry-run] [--incremental] [--parallel]`
-  - Canonical local verification entrypoint for normal code, docs, and benchmark work.
 - `./scripts/dev review-base [--base-ref <git-ref>]`
   - Summarizes the current review scope against the selected base ref, including contract warnings/errors.
-- `./scripts/dev ready [--base-ref <git-ref>]`
-  - Runs `review-base`, then `verify affected` with incremental and parallel pytest defaults over the same computed review scope.
 
 ## Scripts
 
@@ -41,19 +41,16 @@ docs helpers, and maintenance utilities rather than convenience wrappers.
 ## Examples
 
 ```bash
+.venv/bin/nox -s quick
+.venv/bin/nox -s full
+.venv/bin/nox -s docs
+.venv/bin/nox -s bench_smoke
 ./scripts/dev bootstrap
-./scripts/dev doctor all
 ./scripts/dev review-base
-./scripts/dev ready
 ./scripts/dev impact
 ./scripts/dev impact --source staged
 ./scripts/dev impact --files src/dagzoo/core/execution_semantics.py
-./scripts/dev deps --write-docs
 ./scripts/dev contract --source staged
-./scripts/dev verify quick
-./scripts/dev verify code --incremental
-./scripts/dev verify docs
-./scripts/dev verify bench
 ./scripts/fetch-additional-references.sh
 ./.venv/bin/python scripts/docs/sync_hugo_content.py
 ./.venv/bin/python scripts/docs/sync_hugo_content.py --check
@@ -72,8 +69,8 @@ uv run dagzoo generate --config configs/preset_missingness_mar.yaml --num-datase
 uv run dagzoo benchmark --suite smoke --preset cpu --out-dir benchmarks/results/smoke_cpu
 uv run dagzoo benchmark --suite standard --preset all --out-dir benchmarks/results/latest
 uv run dagzoo benchmark --suite smoke --preset cpu --diagnostics --diagnostics-out-dir benchmarks/results/smoke_cpu_diag --out-dir benchmarks/results/smoke_cpu_diag
-./.venv/bin/python -m dagzoo.bench.h100_validation
-./.venv/bin/python -m dagzoo.bench.h100_validation --out-root benchmarks/results/gpu_h100_manual
+./.venv/bin/python scripts/ci/h100_validation.py
+./.venv/bin/python scripts/ci/h100_validation.py --out-root benchmarks/results/gpu_h100_manual
 uv run dagzoo generate --config configs/preset_diagnostics_on.yaml --num-datasets 25 --diagnostics --out data/run_diag
 uv run dagzoo generate --config configs/default.yaml --rows 1024 --num-datasets 25 --out data/run_rows_1024
 uv run dagzoo generate --config configs/default.yaml --rows 400..60000 --num-datasets 50 --no-dataset-write
@@ -98,11 +95,12 @@ Docs workflow note: the built Hugo output lives under `site/`. For the full
 single-source docs/rendered-reference model, see
 `docs/development/design-decisions.md` and `site/README.md`.
 
-When missingness is enabled in benchmark configs, summary JSON includes
-`preset_results[*].missingness_guardrails` and may escalate regression status via runtime or acceptance issues.
+When benchmark scenarios are enabled, summary JSON includes
+`preset_results[*].scenarios` with keys for `baseline`, `throughput`, `filtering`,
+`missingness`, `shift`, and `noise`.
 
-When non-gaussian noise is enabled in benchmark configs, summary JSON includes
-`preset_results[*].noise_guardrails` and may escalate regression status via runtime or metadata validity issues.
+Scenario entries may include `control_metrics` and `issues`; missingness, shift,
+and noise can escalate suite regression status through those scenario issues.
 
 The H100 validation runner writes a root manifest at
 `<out_dir>/validation_manifest.json`. Primary H100 performance phases also write:

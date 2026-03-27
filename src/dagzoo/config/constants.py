@@ -96,4 +96,4 @@ MAX_SUPPORTED_CLASS_COUNT = 32
 DATASET_ROWS_MIN_TOTAL = 400
 DATASET_ROWS_MAX_TOTAL = 60_000
 _SectionT = TypeVar("_SectionT")
-RowsMode = Literal["fixed", "range", "choices"]
+RowsMode = Literal["fixed", "range"]

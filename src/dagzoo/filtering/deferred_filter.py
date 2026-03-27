@@ -329,13 +329,7 @@ def run_deferred_filter(
     in_dir: str | Path,
     out_dir: str | Path,
     curated_out_dir: str | Path | None = None,
-    ease_k_small_override: int | None = None,
-    easy_skill_threshold_override: float | None = None,
-    easy_gain_threshold_override: float | None = None,
-    hard_skill_threshold_override: float | None = None,
-    stump_skill_threshold_override: float | None = None,
-    use_lineage_veto_override: bool | None = None,
-    n_jobs_override: int | None = None,
+    path_overrides: tuple[tuple[str, Any], ...] = (),
 ) -> DeferredFilterRunResult:
     """Replay ExtraTrees filter over persisted shard outputs."""
 
@@ -438,13 +432,7 @@ def run_deferred_filter(
 
                         task, filter_cfg = _resolve_task_and_filter_config(
                             metadata_payload=metadata_payload,
-                            ease_k_small_override=ease_k_small_override,
-                            easy_skill_threshold_override=easy_skill_threshold_override,
-                            easy_gain_threshold_override=easy_gain_threshold_override,
-                            hard_skill_threshold_override=hard_skill_threshold_override,
-                            stump_skill_threshold_override=stump_skill_threshold_override,
-                            use_lineage_veto_override=use_lineage_veto_override,
-                            n_jobs_override=n_jobs_override,
+                            path_overrides=path_overrides,
                         )
                         seed = _resolve_filter_seed(metadata_payload, dataset_index=dataset_index)
 
@@ -561,22 +549,10 @@ def run_deferred_filter(
             "curated_out_dir": str(curated_path.resolve()) if curated_path is not None else None,
             "curated_accepted_datasets": int(curated_accepted_total),
         }
-        if ease_k_small_override is not None:
-            summary_payload["ease_k_small_override"] = int(ease_k_small_override)
-        if easy_skill_threshold_override is not None:
-            summary_payload["easy_skill_threshold_override"] = float(easy_skill_threshold_override)
-        if easy_gain_threshold_override is not None:
-            summary_payload["easy_gain_threshold_override"] = float(easy_gain_threshold_override)
-        if hard_skill_threshold_override is not None:
-            summary_payload["hard_skill_threshold_override"] = float(hard_skill_threshold_override)
-        if stump_skill_threshold_override is not None:
-            summary_payload["stump_skill_threshold_override"] = float(
-                stump_skill_threshold_override
-            )
-        if use_lineage_veto_override is not None:
-            summary_payload["use_lineage_veto_override"] = bool(use_lineage_veto_override)
-        if n_jobs_override is not None:
-            summary_payload["n_jobs_override"] = int(n_jobs_override)
+        if path_overrides:
+            summary_payload["path_overrides"] = [
+                {"path": path, "value": value} for path, value in path_overrides
+            ]
         staged_summary_path.write_text(
             json.dumps(_sanitize_json(summary_payload), indent=2, sort_keys=True, allow_nan=False)
             + "\n",

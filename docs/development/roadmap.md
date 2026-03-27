@@ -240,7 +240,7 @@ Use the canonical docs instead:
   - Every generated dataset emits lineage metadata with adjacency + assignment lineage and deterministic seed behavior.
   - Persisted shard outputs rewrite dense adjacency into compact bit-packed artifacts with per-shard index files.
   - Validator enforces versioned dense/compact lineage schemas and compatibility rules.
-  - Benchmark profiles report `lineage_guardrails` for export-overhead checks using warn/fail thresholds.
+  - Benchmark profiles report per-scenario benchmark summaries; lineage overhead is validated through normal IO and contract tests instead of runtime benchmarks.
 - Completion evidence:
   - Docs and config presets include lineage workflow and benchmark examples.
   - Integration tests cover classification and regression generation + artifact persistence.
@@ -276,7 +276,7 @@ Use the canonical docs instead:
   - `DatasetConfig` supports missingness controls (`missing_rate`, mechanism, MAR/MNAR scales). See [docs/how-it-works.md](../how-it-works.md) for MCAR/MAR/MNAR mechanism definitions.
   - `dagzoo generate` supports missingness CLI overrides.
   - Generation path injects deterministic missingness masks and emits per-bundle metadata.
-  - Benchmark profiles emit `missingness_guardrails` including metadata coverage, realized-rate accuracy, and runtime degradation checks.
+  - Benchmark profiles emit `scenarios.missingness` including metadata coverage, realized-rate accuracy, and runtime degradation checks.
 - Repo touchpoints: `src/dagzoo/config/`, `src/dagzoo/sampling/missingness.py`, `src/dagzoo/postprocess/postprocess.py`, `src/dagzoo/core/dataset.py`, `src/dagzoo/cli/`, `src/dagzoo/bench/suite.py`
 - Completion evidence:
   - Config and CLI support opt-in mechanism selection and missing rate controls.
@@ -296,11 +296,11 @@ Use the canonical docs instead:
   - Shift controls are integrated into graph/mechanism/noise sampling with deterministic seeded behavior.
   - Per-bundle metadata and diagnostics expose resolved shift settings and observability signals.
   - Discoverable shift presets are available for generation and benchmark smoke workflows.
-  - Benchmark profiles emit `shift_guardrails` with runtime, metadata-coverage, and directional checks against shift-disabled controls.
+  - Benchmark profiles emit `scenarios.shift` with runtime, metadata-coverage, and directional checks against shift-disabled controls.
 - Completion evidence:
   - Shift workflows are runnable directly from preset configs and documented in user-facing guides.
   - Integration tests cover shift metadata/diagnostics propagation and preset/CLI execution paths.
-  - Benchmark summaries include `shift_guardrails` alongside existing guardrail families.
+  - Benchmark summaries include scenario-level status and issues for shift, noise, missingness, filtering, and throughput.
 
 ### RD-005: Robustness Stress Profiles (Hard-Task/Adversarial Regimes)
 

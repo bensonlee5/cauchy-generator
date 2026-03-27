@@ -90,8 +90,8 @@ dagzoo benchmark \
   --out-dir benchmarks/results/smoke_many_class
 ```
 
-Benchmark summaries include throughput/latency plus standard guardrail payloads
-such as `lineage_guardrails`.
+Benchmark summaries include throughput/latency plus per-scenario benchmark
+status under `preset_results[*].scenarios`.
 
 ______________________________________________________________________
 

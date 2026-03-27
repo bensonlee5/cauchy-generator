@@ -114,21 +114,24 @@ def _build_generate_invocation_overrides(
         if args.diagnostics_out_dir is not None
         else None
     )
-    return {
+    overrides: dict[str, Any] = {
         "num_datasets": int(args.num_datasets),
         "seed": int(args.seed) if args.seed is not None else None,
         "rows": args.rows,
         "device": args.device,
         "hardware_policy": str(args.hardware_policy),
-        "missing_rate": args.missing_rate,
-        "missing_mechanism": args.missing_mechanism,
-        "missing_mar_observed_fraction": args.missing_mar_observed_fraction,
-        "missing_mar_logit_scale": args.missing_mar_logit_scale,
-        "missing_mnar_logit_scale": args.missing_mnar_logit_scale,
+        "missing_rate": None,
+        "missing_mechanism": None,
+        "missing_mar_observed_fraction": None,
+        "missing_mar_logit_scale": None,
+        "missing_mnar_logit_scale": None,
         "diagnostics": bool(args.diagnostics),
         "diagnostics_out_dir": diagnostics_out_dir,
         "handoff_root": str(handoff_root.resolve()),
     }
+    if args.set_overrides:
+        overrides["set_overrides"] = list(args.set_overrides)
+    return overrides
 
 
 def run_generate_command(args: argparse.Namespace) -> int:
@@ -154,31 +157,28 @@ def run_generate_command(args: argparse.Namespace) -> int:
             device_override=args.device,
             rows=args.rows,
             hardware_policy=str(args.hardware_policy),
-            missing_rate=args.missing_rate,
-            missing_mechanism=args.missing_mechanism,
-            missing_mar_observed_fraction=args.missing_mar_observed_fraction,
-            missing_mar_logit_scale=args.missing_mar_logit_scale,
-            missing_mnar_logit_scale=args.missing_mnar_logit_scale,
             diagnostics_enabled=bool(args.diagnostics),
+            path_overrides=list(args.set_overrides or ()),
         )
     except ValueError as exc:
         raise_usage_error(str(exc))
 
-    seed = args.seed if args.seed is not None else resolved.config.seed
+    resolved_config = resolved["config"]
+    seed = args.seed if args.seed is not None else resolved_config.seed
     config, run_seed, requested_device, resolved_device = realize_generation_config_for_run(
-        resolved.config,
+        resolved_config,
         seed=seed,
-        device=resolved.requested_device,
+        device=str(resolved["requested_device"]),
     )
     if bool(config.filter.enabled):
         raise_usage_error(
             "Inline filtering has been removed from generate. Set filter.enabled=false and run "
             "`dagzoo filter --in <shard_dir> --out <out_dir>` after generation."
         )
-    hw = resolved.hardware
-    trace_events = list(resolved.trace_events)
+    hw = resolved["hardware"]
+    trace_events = list(resolved["trace_events"])
     append_config_diff_events(
-        resolved.config,
+        resolved_config,
         config,
         source="generate.run_realization",
         events=trace_events,

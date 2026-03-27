@@ -21,17 +21,12 @@ ______________________________________________________________________
    (`runtime.fixed_layout_target_cells`) based on detected GPU memory, applied
    only when the config leaves that field unset
 1. CLI rows override (`--rows`) -> `dataset.rows`
-1. Missingness CLI overrides:
-   - `--missing-rate`
-   - `--missing-mechanism`
-   - `--missing-mar-observed-fraction`
-   - `--missing-mar-logit-scale`
-   - `--missing-mnar-logit-scale`
+1. Repeatable advanced path overrides (`--set path=value`)
 1. Diagnostics CLI switch (`--diagnostics`) -> `diagnostics.enabled=true`
 
 After overrides are applied, staged generation validation runs. Invalid combinations fail fast.
 
-`dataset.rows` accepts fixed total rows (`1024`), ranges (`400..60000`), and CSV choices (`1024,2048,4096`).
+`dataset.rows` accepts fixed total rows (`1024`) and ranges (`400..60000`).
 
 ______________________________________________________________________
 
