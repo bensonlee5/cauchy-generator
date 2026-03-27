@@ -10,7 +10,7 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
-## [0.14.6] - 2026-03-27
+## [0.14.5] - 2026-03-27
 
 ### Added
 
