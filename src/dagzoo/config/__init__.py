@@ -47,6 +47,7 @@ from .models import (
     SteeringStageNoiseConfig,
     SteeringStageShiftConfig,
     StressConfig,
+    effective_config_payload,
     materialize_stress_profile,
     stress_profile_definition,
 )
@@ -112,6 +113,7 @@ __all__ = [
     "clone_generator_config",
     "dataset_rows_bounds",
     "dataset_rows_is_variable",
+    "effective_config_payload",
     "load_packaged_generator_config",
     "materialize_stress_profile",
     "normalize_dataset_rows",

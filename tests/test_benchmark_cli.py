@@ -140,6 +140,50 @@ def test_benchmark_cli_writes_effective_config_trace_artifacts(tmp_path) -> None
     )
 
 
+def test_benchmark_cli_stress_profile_effective_config_is_concrete(tmp_path) -> None:
+    cfg = load_repo_config()
+    cfg.stress.profile = "anti_memorization_piecewise_classification_slice_v1"
+    config_path = write_config(tmp_path, cfg, "stress_profile.yaml")
+    out_dir = tmp_path / "stress_bench_results"
+
+    code = main(
+        [
+            "benchmark",
+            "--config",
+            str(config_path),
+            "--preset",
+            "custom",
+            "--suite",
+            "smoke",
+            "--num-datasets",
+            "1",
+            "--warmup",
+            "0",
+            "--hardware-policy",
+            "none",
+            "--no-memory",
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    result = payload["preset_results"][0]
+    assert result["dataset_n_train"] == SMOKE_N_TRAIN_CAP
+    assert result["dataset_n_test"] == SMOKE_N_TEST_CAP
+    assert "stress" not in result["effective_config"]
+    assert result["effective_config"]["steering"]["preset"] == "anti_memorization_piecewise_v1"
+    assert any(
+        isinstance(item, dict) and item.get("source") == "stress.profile_materialization"
+        for item in result["effective_config_trace"]
+    )
+    assert any(
+        isinstance(item, dict) and item.get("source") == "benchmark.suite_smoke_caps"
+        for item in result["effective_config_trace"]
+    )
+
+
 def test_benchmark_cli_builtin_cpu_reports_fixed_batched_generation_mode(tmp_path) -> None:
     out = tmp_path / "summary.json"
     code = main(
