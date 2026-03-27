@@ -496,10 +496,6 @@ def _normalize_target_bands(
     return normalized
 
 
-def _increment_count(counts: dict[str, int], key: str) -> None:
-    counts[str(key)] = counts.get(str(key), 0) + 1
-
-
 def _coerce_optional_int(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -507,18 +503,6 @@ def _coerce_optional_int(value: object) -> int | None:
     if not math.isfinite(as_float):
         return None
     return int(as_float)
-
-
-def _min_optional_int(current: int | None, candidate: int) -> int:
-    if current is None:
-        return int(candidate)
-    return min(int(current), int(candidate))
-
-
-def _max_optional_int(current: int | None, candidate: int) -> int:
-    if current is None:
-        return int(candidate)
-    return max(int(current), int(candidate))
 
 
 def _bundle_config_missing_rate(bundle: DatasetBundle) -> float | None:
@@ -538,92 +522,6 @@ def _coerce_optional_float(value: object) -> float | None:
     if not math.isfinite(as_float):
         return None
     return as_float
-
-
-def _normalized_noise_weights(raw: object) -> dict[str, float]:
-    if not isinstance(raw, dict):
-        return {}
-    normalized: dict[str, float] = {}
-    for component in _STEERING_MIXTURE_COMPONENTS:
-        value = raw.get(component)
-        as_float = _coerce_optional_float(value)
-        if as_float is not None:
-            normalized[component] = as_float
-    return normalized
-
-
-def _finalize_value_accumulator_map(
-    accumulators: dict[str, _ValueAccumulator],
-) -> dict[str, dict[str, Any]]:
-    return {
-        component: accumulator.finalize() for component, accumulator in sorted(accumulators.items())
-    }
-
-
-def _build_resolution_checks_payload(
-    *,
-    datasets_checked: int,
-    datasets_matching: int,
-    mismatch_counts: dict[str, int],
-    mismatched_dataset_indices: list[int],
-) -> dict[str, Any]:
-    mismatched = max(0, int(datasets_checked) - int(datasets_matching))
-    return {
-        "datasets_checked": int(datasets_checked),
-        "datasets_matching": int(datasets_matching),
-        "datasets_mismatched": int(mismatched),
-        "match_rate": (
-            float(datasets_matching / datasets_checked) if datasets_checked > 0 else None
-        ),
-        "mismatch_counts": dict(sorted(mismatch_counts.items())),
-        "mismatched_dataset_indices": [int(index) for index in mismatched_dataset_indices],
-    }
-
-
-def _steering_resolution_mismatches(
-    bundle: DatasetBundle,
-    expected_config: GeneratorConfig,
-    expected_shift,
-) -> list[str]:
-    mismatches: list[str] = []
-    config_payload = bundle.metadata.get("config")
-    config_payload = config_payload if isinstance(config_payload, dict) else {}
-    dataset_payload = config_payload.get("dataset")
-    dataset_payload = dataset_payload if isinstance(dataset_payload, dict) else {}
-
-    observed_missing_rate = _coerce_optional_float(dataset_payload.get("missing_rate"))
-    if not _float_matches(observed_missing_rate, float(expected_config.dataset.missing_rate)):
-        mismatches.append("config.dataset.missing_rate")
-    observed_mechanism = dataset_payload.get("missing_mechanism")
-    if str(observed_mechanism) != str(expected_config.dataset.missing_mechanism):
-        mismatches.append("config.dataset.missing_mechanism")
-
-    shift_payload = bundle.metadata.get("shift")
-    shift_payload = shift_payload if isinstance(shift_payload, dict) else {}
-    if str(shift_payload.get("mode")) != str(expected_config.shift.mode):
-        mismatches.append("metadata.shift.mode")
-    if not _float_matches(shift_payload.get("graph_scale"), float(expected_shift.graph_scale)):
-        mismatches.append("metadata.shift.graph_scale")
-    if not _float_matches(
-        shift_payload.get("variance_scale"),
-        float(expected_shift.variance_scale),
-    ):
-        mismatches.append("metadata.shift.variance_scale")
-    if not _float_matches(
-        shift_payload.get("mechanism_logit_tilt"),
-        float(expected_shift.mechanism_logit_tilt),
-    ):
-        mismatches.append("metadata.shift.mechanism_logit_tilt")
-
-    noise_payload = bundle.metadata.get("noise_distribution")
-    noise_payload = noise_payload if isinstance(noise_payload, dict) else {}
-    if str(noise_payload.get("family_requested")) != str(expected_config.noise.family):
-        mismatches.append("metadata.noise_distribution.family_requested")
-    if _normalized_noise_weights(noise_payload.get("mixture_weights")) != _normalized_noise_weights(
-        expected_config.noise.mixture_weights
-    ):
-        mismatches.append("metadata.noise_distribution.mixture_weights")
-    return mismatches
 
 
 def _float_matches(lhs: object, rhs: object, *, atol: float = 1e-9, rtol: float = 1e-9) -> bool:

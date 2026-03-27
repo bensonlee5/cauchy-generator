@@ -16,7 +16,8 @@ def _load_module():
 def test_build_validation_phases_orders_primary_and_feature_runs(tmp_path) -> None:
     module = _load_module()
     repo_root = Path(__file__).resolve().parents[2]
-    module._repo_root = lambda: repo_root
+    assert callable(getattr(module, "_repo_root"))
+    setattr(module, "_repo_root", lambda: repo_root)
 
     phases = module._build_validation_phases(tmp_path, python_executable="/tmp/python")
 
@@ -141,7 +142,8 @@ def test_run_validation_phase_writes_required_artifacts_and_telemetry(tmp_path) 
         (tmp_path / "phase" / "summary.md").write_text("# summary\n", encoding="utf-8")
         return type("CompletedProcess", (), {"returncode": 0})()
 
-    module.NvidiaSmiSampler = _FakeSampler
+    assert hasattr(module, "NvidiaSmiSampler")
+    setattr(module, "NvidiaSmiSampler", _FakeSampler)
     module.subprocess.run = _stub_run
 
     result = module._run_validation_phase(
@@ -166,20 +168,30 @@ def test_run_validation_phase_writes_required_artifacts_and_telemetry(tmp_path) 
 
 def test_run_h100_validation_marks_missing_primary_telemetry_incomplete(tmp_path) -> None:
     module = _load_module()
-    module._torch_cuda_report = lambda: {
-        "torch_version": "2.0",
-        "cuda_available": True,
-        "cuda_count": 1,
-        "device_names": ["NVIDIA H100 NVL"],
-    }
-    module._hardware_report = lambda: {
-        "backend": "cuda",
-        "requested_device": "cuda",
-        "device_name": "NVIDIA H100 NVL",
-        "total_memory_gb": 94.0,
-        "peak_flops": 835e12,
-        "tier": "cuda_h100",
-    }
+    assert callable(getattr(module, "_torch_cuda_report"))
+    setattr(
+        module,
+        "_torch_cuda_report",
+        lambda: {
+            "torch_version": "2.0",
+            "cuda_available": True,
+            "cuda_count": 1,
+            "device_names": ["NVIDIA H100 NVL"],
+        },
+    )
+    assert callable(getattr(module, "_hardware_report"))
+    setattr(
+        module,
+        "_hardware_report",
+        lambda: {
+            "backend": "cuda",
+            "requested_device": "cuda",
+            "device_name": "NVIDIA H100 NVL",
+            "total_memory_gb": 94.0,
+            "peak_flops": 835e12,
+            "tier": "cuda_h100",
+        },
+    )
     module._build_validation_phases = lambda _out_root, *, python_executable: [
         module.ValidationPhase(
             name="cuda_h100_standard",
@@ -195,7 +207,10 @@ def test_run_h100_validation_marks_missing_primary_telemetry_incomplete(tmp_path
         "exit_code": 0,
         "validation_status": "incomplete",
         "datasets_per_minute": 100.0,
-        "artifacts": {"out_dir": str(phase.out_dir)},
+        "artifacts": {
+            "out_dir": str(phase.out_dir),
+            "telemetry_interval_seconds": float(telemetry_interval_seconds),
+        },
     }
 
     manifest = module.run_h100_validation(out_root=tmp_path, telemetry_interval_seconds=1.0)
