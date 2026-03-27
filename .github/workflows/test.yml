@@ -58,7 +58,7 @@ jobs:
           uv run vulture src/dagzoo tests
           --ignore-names __getattr__
       - name: Fast affected verification
-        run: ./scripts/dev verify affected --source base --base origin/main --incremental --parallel
+        run: ./.venv/bin/python scripts/ci/run_affected_verification.py --base origin/main --incremental --parallel
 
   coverage-pr:
     if: github.event_name == 'pull_request'

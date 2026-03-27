@@ -110,6 +110,13 @@ def test_dev_cli_prunes_unsupported_wrapper_commands() -> None:
     assert "ready" not in subparsers_action.choices
 
 
+def test_fast_pr_workflow_uses_ci_runner_not_dev_verify() -> None:
+    workflow = (REPO_ROOT / ".github" / "workflows" / "test.yml").read_text(encoding="utf-8")
+
+    assert "scripts/ci/run_affected_verification.py" in workflow
+    assert "./scripts/dev verify affected" not in workflow
+
+
 def test_dev_cli_impact_command_renders_report(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     module = _load_dev_cli()
     monkeypatch.setattr(module, "detect_changed_files", lambda **_kwargs: ("README.md",))
