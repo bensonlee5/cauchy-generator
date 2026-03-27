@@ -7,37 +7,44 @@
     "mean_total_function_plans": 0.0,
     "metadata_coverage_rate": 0.0
   },
-  "steering": {
-    "authoring_form": "disabled",
-    "enabled": false,
-    "preset": null,
-    "resolution_checks": {
-      "datasets_checked": 0,
-      "datasets_matching": 0,
-      "datasets_mismatched": 0,
-      "match_rate": null,
-      "mismatch_counts": {},
-      "mismatched_dataset_indices": []
-    },
-    "stage_count": 0,
-    "stages": []
-  },
   "metrics": {
-    "linearity_proxy": {
+    "n_rows": {
       "count": 1,
       "histogram": {
         "covered_bins": 1,
         "coverage_ratio": 0.25,
         "num_bins": 4
       },
-      "mean": 0.25,
+      "mean": 64.0,
       "missing_count": 0,
-      "observed_max": 0.25,
-      "observed_min": 0.25,
+      "observed_max": 64.0,
+      "observed_min": 64.0,
       "quantiles": {
-        "p25": 0.25,
-        "p50": 0.25,
-        "p75": 0.25
+        "p25": 64.0,
+        "p50": 64.0,
+        "p75": 64.0
+      },
+      "sampled_count": 1,
+      "sampled_fraction": 1.0,
+      "target_band": null,
+      "std": 0.0,
+      "underrepresented_bins": []
+    },
+    "pearson_abs_mean": {
+      "count": 1,
+      "histogram": {
+        "covered_bins": 1,
+        "coverage_ratio": 0.25,
+        "num_bins": 4
+      },
+      "mean": 0.2,
+      "missing_count": 0,
+      "observed_max": 0.2,
+      "observed_min": 0.2,
+      "quantiles": {
+        "p25": 0.2,
+        "p50": 0.2,
+        "p75": 0.2
       },
       "sampled_count": 1,
       "sampled_fraction": 1.0,
@@ -54,9 +61,9 @@
           "fraction": 0.0,
           "in_target_count": 0,
           "in_target_fraction": 0.0,
-          "index": 0,
-          "lower": 0.0,
-          "upper": 0.25
+          "index": 1,
+          "lower": 0.25,
+          "upper": 0.5
         },
         {
           "count": 0,
@@ -77,28 +84,6 @@
           "upper": 1.0
         }
       ]
-    },
-    "wins_ratio_proxy": {
-      "count": 1,
-      "histogram": {
-        "covered_bins": 1,
-        "coverage_ratio": 0.25,
-        "num_bins": 4
-      },
-      "mean": 0.75,
-      "missing_count": 0,
-      "observed_max": 0.75,
-      "observed_min": 0.75,
-      "quantiles": {
-        "p25": 0.75,
-        "p50": 0.75,
-        "p75": 0.75
-      },
-      "sampled_count": 1,
-      "sampled_fraction": 1.0,
-      "target_band": null,
-      "std": 0.0,
-      "underrepresented_bins": []
     }
   },
   "num_datasets": 1,

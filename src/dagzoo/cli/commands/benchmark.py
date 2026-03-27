@@ -117,6 +117,16 @@ def _write_benchmark_effective_configs(
 def _print_preset_result_line(result: dict[str, Any]) -> None:
     """Print one compact preset benchmark summary line."""
 
+    scenarios = result.get("scenarios")
+    if not isinstance(scenarios, dict):
+        scenarios = {}
+
+    def _scenario_hint(name: str, label: str) -> str:
+        scenario = scenarios.get(name)
+        if not isinstance(scenario, dict) or not bool(scenario.get("enabled")):
+            return ""
+        return f" {label}={scenario.get('status', 'pass')}"
+
     diagnostics_hint = ""
     artifacts = result.get("diagnostics_artifacts")
     if isinstance(artifacts, dict):
@@ -124,25 +134,11 @@ def _print_preset_result_line(result: dict[str, Any]) -> None:
         if isinstance(json_pointer, str) and json_pointer:
             diagnostics_hint = f" diagnostics={json_pointer}"
 
-    missingness_hint = ""
-    guardrails = result.get("missingness_guardrails")
-    if isinstance(guardrails, dict) and bool(guardrails.get("enabled")):
-        missingness_hint = f" missingness={guardrails.get('status', 'pass')}"
-
-    lineage_hint = ""
-    lineage_guardrails = result.get("lineage_guardrails")
-    if isinstance(lineage_guardrails, dict) and bool(lineage_guardrails.get("enabled")):
-        lineage_hint = f" lineage={lineage_guardrails.get('status', 'pass')}"
-
-    shift_hint = ""
-    shift_guardrails = result.get("shift_guardrails")
-    if isinstance(shift_guardrails, dict) and bool(shift_guardrails.get("enabled")):
-        shift_hint = f" shift={shift_guardrails.get('status', 'pass')}"
-
-    noise_hint = ""
-    noise_guardrails = result.get("noise_guardrails")
-    if isinstance(noise_guardrails, dict) and bool(noise_guardrails.get("enabled")):
-        noise_hint = f" noise={noise_guardrails.get('status', 'pass')}"
+    filtering_hint = _scenario_hint("filtering", "filtering")
+    missingness_hint = _scenario_hint("missingness", "missingness")
+    shift_hint = _scenario_hint("shift", "shift")
+    noise_hint = _scenario_hint("noise", "noise")
+    throughput_hint = _scenario_hint("throughput", "throughput")
 
     stage_hint = (
         " "
@@ -201,7 +197,7 @@ def _print_preset_result_line(result: dict[str, Any]) -> None:
         f"{latency_hint}"
         f"{stage_hint}{filter_stage_hint}{filter_accept_stage_hint}{filter_reject_hint}"
         f"{filter_accept_dataset_hint}{filter_reject_dataset_hint}{filter_retry_hint}"
-        f"{diagnostics_hint}{missingness_hint}{lineage_hint}{shift_hint}{noise_hint}"
+        f"{diagnostics_hint}{filtering_hint}{missingness_hint}{shift_hint}{noise_hint}{throughput_hint}"
     )
 
 

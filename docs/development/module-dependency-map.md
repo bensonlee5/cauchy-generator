@@ -1,7 +1,8 @@
 # Module Dependency Map
 
-This file is generated from imports under `src/dagzoo`.
-Run `./scripts/dev deps --write-docs` after changing internal module edges.
+This file is a checked-in snapshot of imports under `src/dagzoo`.
+Use `./scripts/dev impact` for local ripple analysis; there is no longer a public
+dependency-map regeneration flow.
 
 ## Package Dependency DAG
 

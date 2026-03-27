@@ -8,6 +8,7 @@ from conftest import make_keyed_rng as _make_keyed_rng
 
 import dagzoo.converters.categorical as categorical_mod
 import dagzoo.converters.numeric as numeric_mod
+import dagzoo.core.execution_sampling_common as execution_sampling_common_mod
 import dagzoo.core.execution_semantics as execution_semantics_mod
 import dagzoo.core.fixed_layout.batched as fixed_layout_batched_mod
 import dagzoo.core.node_pipeline as node_pipeline_mod
@@ -158,7 +159,7 @@ def test_sample_function_plan_for_family_uses_generator_device_for_log_uniform(
         "_log_uniform",
         lambda *_args: calls.append(_args[3]) or 5.0,
     )
-    monkeypatch.setattr(execution_semantics_mod, "_generator_device", lambda *_args: "cuda")
+    monkeypatch.setattr(execution_sampling_common_mod, "_generator_device", lambda *_args: "cuda")
     monkeypatch.setattr(
         execution_semantics_mod.KeyedRng,
         "torch_rng",

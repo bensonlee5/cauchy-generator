@@ -17,13 +17,7 @@ def run_filter_command(args: argparse.Namespace) -> int:
             in_dir=args.in_dir,
             out_dir=args.out,
             curated_out_dir=args.curated_out,
-            ease_k_small_override=args.ease_k_small,
-            easy_skill_threshold_override=args.easy_skill_threshold,
-            easy_gain_threshold_override=args.easy_gain_threshold,
-            hard_skill_threshold_override=args.hard_skill_threshold,
-            stump_skill_threshold_override=args.stump_skill_threshold,
-            use_lineage_veto_override=args.lineage_veto_override,
-            n_jobs_override=args.n_jobs,
+            path_overrides=tuple(args.set_overrides or ()),
         )
     except NotImplementedError as exc:
         raise_usage_error(str(exc))

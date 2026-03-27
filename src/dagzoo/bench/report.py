@@ -48,31 +48,30 @@ def _format_match(value: Any) -> str:
     return "-"
 
 
+def _scenario_status(result: dict[str, Any], name: str) -> str:
+    scenarios = result.get("scenarios")
+    if not isinstance(scenarios, dict):
+        return "off"
+    scenario = scenarios.get(name)
+    if not isinstance(scenario, dict) or not bool(scenario.get("enabled")):
+        return "off"
+    return str(scenario.get("status", "pass"))
+
+
 def _build_preset_table(preset_results: list[dict[str, Any]]) -> list[str]:
     """Create a markdown table summarizing per-preset performance metrics."""
 
     lines = [
-        "| Preset | Rows | Mode | Device | Backend | Datasets/min | Gen/min | Write/min | Filter/min | Filter Accepted/min | Repro | Workload | Filter Reject % (attempt) | Filter Accept % (dataset) | Filter Reject % (dataset) | Filter Retry % (dataset) | Elapsed (s) | Latency p95 (ms) | Peak RSS (MB) | Diagnostics | Missingness | Lineage | Shift | Noise |",
-        "|---|---:|---|---|---:|---:|---:|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|---|",
+        "| Preset | Rows | Mode | Device | Backend | Datasets/min | Gen/min | Write/min | Filter/min | Filter Accepted/min | Repro | Workload | Filter Reject % (attempt) | Filter Accept % (dataset) | Filter Reject % (dataset) | Filter Retry % (dataset) | Elapsed (s) | Latency p95 (ms) | Peak RSS (MB) | Diagnostics | Filtering | Missingness | Shift | Noise | Throughput |",
+        "|---|---:|---|---|---:|---:|---:|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|---|---|",
     ]
     for result in preset_results:
         diagnostics_state = "on" if bool(result.get("diagnostics_enabled")) else "off"
-        missingness_state = "off"
-        guardrails = result.get("missingness_guardrails")
-        if isinstance(guardrails, dict) and bool(guardrails.get("enabled")):
-            missingness_state = str(guardrails.get("status", "pass"))
-        lineage_state = "off"
-        lineage_guardrails = result.get("lineage_guardrails")
-        if isinstance(lineage_guardrails, dict) and bool(lineage_guardrails.get("enabled")):
-            lineage_state = str(lineage_guardrails.get("status", "pass"))
-        shift_state = "off"
-        shift_guardrails = result.get("shift_guardrails")
-        if isinstance(shift_guardrails, dict) and bool(shift_guardrails.get("enabled")):
-            shift_state = str(shift_guardrails.get("status", "pass"))
-        noise_state = "off"
-        noise_guardrails = result.get("noise_guardrails")
-        if isinstance(noise_guardrails, dict) and bool(noise_guardrails.get("enabled")):
-            noise_state = str(noise_guardrails.get("status", "pass"))
+        filtering_state = _scenario_status(result, "filtering")
+        missingness_state = _scenario_status(result, "missingness")
+        shift_state = _scenario_status(result, "shift")
+        noise_state = _scenario_status(result, "noise")
+        throughput_state = _scenario_status(result, "throughput")
         lines.append(
             "| "
             f"{result.get('preset_key', '-')} | "
@@ -95,10 +94,11 @@ def _build_preset_table(preset_results: list[dict[str, Any]]) -> list[str]:
             f"{_format_float(result.get('latency_p95_ms'), 2)} | "
             f"{_format_float(result.get('peak_rss_mb'), 2)} | "
             f"{diagnostics_state} |"
+            f" {filtering_state} |"
             f" {missingness_state} |"
-            f" {lineage_state} |"
             f" {shift_state} |"
             f" {noise_state} |"
+            f" {throughput_state} |"
         )
     return lines
 

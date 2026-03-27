@@ -23,6 +23,45 @@ from dagzoo.io.lineage_schema import validate_metadata_lineage
 _STRESS_PROFILE = "anti_memorization_piecewise_classification_slice_v1"
 
 
+def _stage(
+    *,
+    name: object,
+    fraction: object,
+    dataset: dict[str, object] | None = None,
+    shift: dict[str, object] | None = None,
+    noise: dict[str, object] | None = None,
+    **overrides: object,
+) -> dict[str, object]:
+    stage: dict[str, object] = {"name": name, "fraction": fraction, **overrides}
+    if dataset is not None:
+        stage.update(
+            {
+                "missing_rate": dataset.get("missing_rate"),
+                "missing_mechanism": dataset.get("missing_mechanism"),
+                "missing_mar_observed_fraction": dataset.get("missing_mar_observed_fraction"),
+                "missing_mar_logit_scale": dataset.get("missing_mar_logit_scale"),
+                "missing_mnar_logit_scale": dataset.get("missing_mnar_logit_scale"),
+            }
+        )
+    if shift is not None:
+        stage.update(
+            {
+                "shift_mode": shift.get("mode"),
+                "shift_graph_scale": shift.get("graph_scale"),
+                "shift_variance_scale": shift.get("variance_scale"),
+            }
+        )
+    if noise is not None:
+        stage.update(
+            {
+                "noise_family": noise.get("family"),
+                "noise_student_t_df": noise.get("student_t_df"),
+                "noise_mixture_weights": noise.get("mixture_weights"),
+            }
+        )
+    return stage
+
+
 def test_load_default_config() -> None:
     cfg = GeneratorConfig.from_yaml("configs/default.yaml")
     assert cfg.dataset.n_train > 0
@@ -139,7 +178,7 @@ def test_classification_rejects_partial_class_range_when_upper_bound_is_infeasib
         )
 
 
-def test_dataset_rows_accepts_fixed_and_range_and_choices() -> None:
+def test_dataset_rows_accepts_fixed_and_range() -> None:
     cfg_fixed = GeneratorConfig.from_dict({"dataset": {"rows": 1024}})
     assert cfg_fixed.dataset.rows is not None
     assert cfg_fixed.dataset.rows.mode == "fixed"
@@ -150,11 +189,6 @@ def test_dataset_rows_accepts_fixed_and_range_and_choices() -> None:
     assert cfg_range.dataset.rows.mode == "range"
     assert cfg_range.dataset.rows.start == 400
     assert cfg_range.dataset.rows.stop == 60000
-
-    cfg_choices = GeneratorConfig.from_dict({"dataset": {"rows": [400, 1024, 60000]}})
-    assert cfg_choices.dataset.rows is not None
-    assert cfg_choices.dataset.rows.mode == "choices"
-    assert cfg_choices.dataset.rows.choices == [400, 1024, 60000]
 
 
 @pytest.mark.parametrize("rows_value", [399, 60001, "399", "60001", "300..600"])
@@ -168,9 +202,10 @@ def test_dataset_rows_rejects_inverted_range() -> None:
         GeneratorConfig.from_dict({"dataset": {"rows": "2000..400"}})
 
 
-def test_dataset_rows_rejects_duplicate_choices() -> None:
-    with pytest.raises(ValueError, match=r"dataset\.rows must not include duplicate row values"):
-        GeneratorConfig.from_dict({"dataset": {"rows": "1024,1024"}})
+@pytest.mark.parametrize("rows_value", [[400, 1024, 60000], "1024,1024"])
+def test_dataset_rows_rejects_removed_legacy_shapes(rows_value: object) -> None:
+    with pytest.raises(ValueError, match=r"dataset\.rows"):
+        GeneratorConfig.from_dict({"dataset": {"rows": rows_value}})
 
 
 def test_dataset_rows_classification_checks_min_realizable_train_rows() -> None:
@@ -390,10 +425,10 @@ def test_stress_profile_accepts_matching_explicit_steering_authoring() -> None:
         ),
         (
             {
-                "noise": {"family": "laplace"},
+                "dataset": {"n_train": 1024},
                 "stress": {"profile": _STRESS_PROFILE},
             },
-            r"stress\.profile 'anti_memorization_piecewise_classification_slice_v1' locks noise\.family to 'gaussian'",
+            r"stress\.profile 'anti_memorization_piecewise_classification_slice_v1' locks dataset\.n_train to 768",
         ),
         (
             {
@@ -408,14 +443,14 @@ def test_stress_profile_accepts_matching_explicit_steering_authoring() -> None:
                     "enabled": True,
                     "preset": "anti_memorization_piecewise_v1",
                     "stages": [
-                        {
-                            "name": "extra",
-                            "fraction": 1.0,
-                            "dataset": {
+                        _stage(
+                            name="extra",
+                            fraction=1.0,
+                            dataset={
                                 "missing_rate": [0.0, 0.1],
                                 "missing_mechanism": "mcar",
                             },
-                        }
+                        ),
                     ],
                 },
                 "stress": {"profile": _STRESS_PROFILE},
@@ -454,23 +489,23 @@ def test_steering_explicit_stage_round_trips_via_yaml() -> None:
             "steering": {
                 "enabled": True,
                 "stages": [
-                    {
-                        "name": "missingness_ramp",
-                        "fraction": 0.5,
-                        "dataset": {
+                    _stage(
+                        name="missingness_ramp",
+                        fraction=0.5,
+                        dataset={
                             "missing_rate": [0.0, 0.25],
                             "missing_mechanism": "mcar",
                         },
-                    },
-                    {
-                        "name": "graph_to_noise_handoff",
-                        "fraction": 0.5,
-                        "shift": {
+                    ),
+                    _stage(
+                        name="graph_to_noise_handoff",
+                        fraction=0.5,
+                        shift={
                             "mode": "mixed",
                             "graph_scale": [0.5, 0.0],
                             "variance_scale": [0.0, 0.5],
                         },
-                    },
+                    ),
                 ],
             }
         }
@@ -489,9 +524,9 @@ def test_steering_explicit_stage_round_trips_via_yaml() -> None:
         pytest.approx(0.5),
         pytest.approx(0.5),
     ]
-    assert round_tripped.steering.stages[1].shift is not None
-    assert round_tripped.steering.stages[1].shift.graph_scale == [0.5, 0.0]
-    assert round_tripped.steering.stages[1].shift.variance_scale == [0.0, 0.5]
+    assert round_tripped.steering.stages[1].shift_mode == "mixed"
+    assert round_tripped.steering.stages[1].shift_graph_scale == [0.5, 0.0]
+    assert round_tripped.steering.stages[1].shift_variance_scale == [0.0, 0.5]
 
 
 def test_steering_rejects_preset_and_explicit_form_together() -> None:
@@ -505,14 +540,14 @@ def test_steering_rejects_preset_and_explicit_form_together() -> None:
                     "enabled": True,
                     "preset": "anti_memorization_piecewise_v1",
                     "stages": [
-                        {
-                            "name": "missingness_ramp",
-                            "fraction": 1.0,
-                            "dataset": {
+                        _stage(
+                            name="missingness_ramp",
+                            fraction=1.0,
+                            dataset={
                                 "missing_rate": [0.0, 0.25],
                                 "missing_mechanism": "mcar",
                             },
-                        }
+                        ),
                     ],
                 }
             }
@@ -526,18 +561,18 @@ def test_steering_rejects_stage_fractions_not_summing_to_one() -> None:
                 "steering": {
                     "enabled": True,
                     "stages": [
-                        {
-                            "name": "missingness_ramp",
-                            "fraction": 0.3,
-                            "dataset": {
+                        _stage(
+                            name="missingness_ramp",
+                            fraction=0.3,
+                            dataset={
                                 "missing_rate": [0.0, 0.25],
                                 "missing_mechanism": "mcar",
                             },
-                        },
-                        {
-                            "name": "mixture_noise_ramp",
-                            "fraction": 0.5,
-                            "noise": {
+                        ),
+                        _stage(
+                            name="mixture_noise_ramp",
+                            fraction=0.5,
+                            noise={
                                 "family": "mixture",
                                 "mixture_weights": {
                                     "gaussian": [1.0, 0.5],
@@ -545,7 +580,7 @@ def test_steering_rejects_stage_fractions_not_summing_to_one() -> None:
                                     "student_t": [0.0, 0.2],
                                 },
                             },
-                        },
+                        ),
                     ],
                 }
             }
@@ -559,22 +594,22 @@ def test_steering_rejects_duplicate_stage_names() -> None:
                 "steering": {
                     "enabled": True,
                     "stages": [
-                        {
-                            "name": "reused",
-                            "fraction": 0.5,
-                            "dataset": {
+                        _stage(
+                            name="reused",
+                            fraction=0.5,
+                            dataset={
                                 "missing_rate": [0.0, 0.25],
                                 "missing_mechanism": "mcar",
                             },
-                        },
-                        {
-                            "name": "reused",
-                            "fraction": 0.5,
-                            "shift": {
+                        ),
+                        _stage(
+                            name="reused",
+                            fraction=0.5,
+                            shift={
                                 "mode": "graph_drift",
                                 "graph_scale": [0.0, 0.5],
                             },
-                        },
+                        ),
                     ],
                 }
             }
@@ -603,21 +638,21 @@ def test_steering_rejects_stage_fields_outside_allowed_sections() -> None:
 
 def test_steering_rejects_invalid_directional_band_payload() -> None:
     with pytest.raises(
-        ValueError, match=r"steering\.stages\[\*\]\.shift\.graph_scale must be a two-value"
+        ValueError, match=r"steering\.stages\[\*\]\.shift_graph_scale must be a two-value"
     ):
         GeneratorConfig.from_dict(
             {
                 "steering": {
                     "enabled": True,
                     "stages": [
-                        {
-                            "name": "bad_band",
-                            "fraction": 1.0,
-                            "shift": {
+                        _stage(
+                            name="bad_band",
+                            fraction=1.0,
+                            shift={
                                 "mode": "graph_drift",
                                 "graph_scale": [0.0, 0.25, 0.5],
                             },
-                        }
+                        ),
                     ],
                 }
             }
@@ -630,21 +665,21 @@ def test_steering_accepts_descending_directional_bands() -> None:
             "steering": {
                 "enabled": True,
                 "stages": [
-                    {
-                        "name": "descending_graph",
-                        "fraction": 1.0,
-                        "shift": {
+                    _stage(
+                        name="descending_graph",
+                        fraction=1.0,
+                        shift={
                             "mode": "graph_drift",
                             "graph_scale": [0.5, 0.0],
                         },
-                    }
+                    ),
                 ],
             }
         }
     )
 
-    assert cfg.steering.stages[0].shift is not None
-    assert cfg.steering.stages[0].shift.graph_scale == [0.5, 0.0]
+    assert cfg.steering.stages[0].shift_mode == "graph_drift"
+    assert cfg.steering.stages[0].shift_graph_scale == [0.5, 0.0]
 
 
 def test_steering_rejects_extra_payload_when_disabled() -> None:
@@ -689,9 +724,9 @@ def test_steering_stage_definitions_rejects_non_list_preset_stages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setitem(
-        config_models._STEERING_PRESET_DEFINITIONS,
+        config_models._STEERING_PRESET_BUILDERS,
         "broken_preset",
-        {"stages": "not-a-list"},
+        lambda: {"stages": "not-a-list"},
     )
     steering = config_models.SteeringConfig(enabled=True, preset="broken_preset")
 
@@ -742,12 +777,14 @@ def test_steering_allows_null_stages_with_preset() -> None:
                 "enabled": True,
                 "stages": [
                     {
-                        "name": True,
-                        "fraction": 1.0,
-                        "shift": {
-                            "mode": "graph_drift",
-                            "graph_scale": [0.0, 0.5],
-                        },
+                        **_stage(
+                            name=True,
+                            fraction=1.0,
+                            shift={
+                                "mode": "graph_drift",
+                                "graph_scale": [0.0, 0.5],
+                            },
+                        ),
                     }
                 ],
             },
@@ -758,12 +795,14 @@ def test_steering_allows_null_stages_with_preset() -> None:
                 "enabled": True,
                 "stages": [
                     {
-                        "name": " ",
-                        "fraction": 1.0,
-                        "shift": {
-                            "mode": "graph_drift",
-                            "graph_scale": [0.0, 0.5],
-                        },
+                        **_stage(
+                            name=" ",
+                            fraction=1.0,
+                            shift={
+                                "mode": "graph_drift",
+                                "graph_scale": [0.0, 0.5],
+                            },
+                        ),
                     }
                 ],
             },
@@ -818,12 +857,14 @@ def test_steering_rejects_invalid_noise_mixture_weight_bands(
                     "enabled": True,
                     "stages": [
                         {
-                            "name": "noise_stage",
-                            "fraction": 1.0,
-                            "noise": {
-                                "family": "mixture",
-                                "mixture_weights": mixture_weights,
-                            },
+                            **_stage(
+                                name="noise_stage",
+                                fraction=1.0,
+                                noise={
+                                    "family": "mixture",
+                                    "mixture_weights": mixture_weights,
+                                },
+                            ),
                         }
                     ],
                 }
@@ -844,129 +885,129 @@ def test_steering_enabled_requires_preset_or_stages() -> None:
     [
         (
             {"name": "empty", "fraction": 1.0},
-            r"steering\.stages\[\*\] must set at least one of dataset, shift, or noise",
+            r"steering\.stages\[\*\] must set at least one dataset, shift, or noise control",
         ),
         (
-            {
-                "name": "dataset_missing_rate",
-                "fraction": 1.0,
-                "dataset": {"missing_mechanism": "mcar"},
-            },
-            r"steering\.stages\[\*\]\.dataset must set both missing_rate and missing_mechanism",
+            _stage(
+                name="dataset_missing_rate",
+                fraction=1.0,
+                dataset={"missing_mechanism": "mcar"},
+            ),
+            r"steering\.stages\[\*\] must set both missing_rate and missing_mechanism together",
         ),
         (
-            {
-                "name": "dataset_missing_mechanism",
-                "fraction": 1.0,
-                "dataset": {"missing_rate": [0.0, 0.25]},
-            },
-            r"steering\.stages\[\*\]\.dataset must set both missing_rate and missing_mechanism",
+            _stage(
+                name="dataset_missing_mechanism",
+                fraction=1.0,
+                dataset={"missing_rate": [0.0, 0.25]},
+            ),
+            r"steering\.stages\[\*\] must set both missing_rate and missing_mechanism together",
         ),
         (
-            {
-                "name": "dataset_none_with_rate",
-                "fraction": 1.0,
-                "dataset": {
+            _stage(
+                name="dataset_none_with_rate",
+                fraction=1.0,
+                dataset={
                     "missing_rate": [0.1, 0.2],
                     "missing_mechanism": "none",
                 },
-            },
-            r"steering\.stages\[\*\]\.dataset\.missing_mechanism must be mcar, mar, or mnar",
+            ),
+            r"steering\.stages\[\*\]\.missing_mechanism must be mcar, mar, or mnar",
         ),
         (
-            {
-                "name": "shift_missing_mode",
-                "fraction": 1.0,
-                "shift": {"graph_scale": [0.0, 0.5]},
-            },
-            r"steering\.stages\[\*\]\.shift\.mode must be set when a shift block is present",
+            _stage(
+                name="shift_missing_mode",
+                fraction=1.0,
+                shift={"graph_scale": [0.0, 0.5]},
+            ),
+            r"steering\.stages\[\*\]\.shift_mode must be set when shift controls exist",
         ),
         (
-            {
-                "name": "shift_missing_scales",
-                "fraction": 1.0,
-                "shift": {"mode": "custom"},
-            },
-            r"steering\.stages\[\*\]\.shift must set at least one of graph_scale or variance_scale",
+            _stage(
+                name="shift_missing_scales",
+                fraction=1.0,
+                shift={"mode": "custom"},
+            ),
+            r"steering\.stages\[\*\] must set at least one of shift_graph_scale or shift_variance_scale",
         ),
         (
-            {
-                "name": "graph_with_variance",
-                "fraction": 1.0,
-                "shift": {
+            _stage(
+                name="graph_with_variance",
+                fraction=1.0,
+                shift={
                     "mode": "graph_drift",
                     "graph_scale": [0.0, 0.5],
                     "variance_scale": [0.0, 0.5],
                 },
-            },
-            r"steering\.stages\[\*\]\.shift\.mode 'graph_drift' only allows graph_scale",
+            ),
+            r"steering\.stages\[\*\]\.shift_mode 'graph_drift' only allows shift_graph_scale",
         ),
         (
-            {
-                "name": "noise_with_graph",
-                "fraction": 1.0,
-                "shift": {
+            _stage(
+                name="noise_with_graph",
+                fraction=1.0,
+                shift={
                     "mode": "noise_drift",
                     "graph_scale": [0.0, 0.5],
                     "variance_scale": [0.0, 0.5],
                 },
-            },
-            r"steering\.stages\[\*\]\.shift\.mode 'noise_drift' only allows variance_scale",
+            ),
+            r"steering\.stages\[\*\]\.shift_mode 'noise_drift' only allows shift_variance_scale",
         ),
         (
-            {
-                "name": "mechanism_drift",
-                "fraction": 1.0,
-                "shift": {
+            _stage(
+                name="mechanism_drift",
+                fraction=1.0,
+                shift={
                     "mode": "mechanism_drift",
                     "variance_scale": [0.0, 0.5],
                 },
-            },
-            r"steering\.stages\[\*\]\.shift\.mode 'mechanism_drift' is out of scope",
+            ),
+            r"steering\.stages\[\*\]\.shift_mode 'mechanism_drift' is out of scope",
         ),
         (
-            {
-                "name": "shift_off",
-                "fraction": 1.0,
-                "shift": {
+            _stage(
+                name="shift_off",
+                fraction=1.0,
+                shift={
                     "mode": "off",
                     "graph_scale": [0.0, 0.5],
                 },
-            },
-            r"steering\.stages\[\*\]\.shift\.mode must be graph_drift, noise_drift, mixed, or custom",
+            ),
+            r"steering\.stages\[\*\]\.shift_mode must be graph_drift, noise_drift, mixed, or custom",
         ),
         (
-            {
-                "name": "noise_missing_family",
-                "fraction": 1.0,
-                "noise": {"mixture_weights": {"gaussian": [1.0, 1.0]}},
-            },
-            r"steering\.stages\[\*\]\.noise\.family must be set when a noise block is present",
+            _stage(
+                name="noise_missing_family",
+                fraction=1.0,
+                noise={"mixture_weights": {"gaussian": [1.0, 1.0]}},
+            ),
+            r"steering\.stages\[\*\]\.noise_family must be set when noise controls exist",
         ),
         (
-            {
-                "name": "noise_wrong_family",
-                "fraction": 1.0,
-                "noise": {
+            _stage(
+                name="noise_wrong_family",
+                fraction=1.0,
+                noise={
                     "family": "gaussian",
                     "mixture_weights": {"gaussian": [1.0, 1.0]},
                 },
-            },
-            r"steering\.stages\[\*\]\.noise currently only supports family='mixture'",
+            ),
+            r"steering\.stages\[\*\] currently only supports noise_family='mixture'",
         ),
         (
-            {
-                "name": "noise_missing_weights",
-                "fraction": 1.0,
-                "noise": {"family": "mixture"},
-            },
-            r"steering\.stages\[\*\]\.noise\.mixture_weights is required when a noise block is present",
+            _stage(
+                name="noise_missing_weights",
+                fraction=1.0,
+                noise={"family": "mixture"},
+            ),
+            r"steering\.stages\[\*\]\.noise_mixture_weights is required when noise controls exist",
         ),
         (
-            {
-                "name": "noise_bad_start_total",
-                "fraction": 1.0,
-                "noise": {
+            _stage(
+                name="noise_bad_start_total",
+                fraction=1.0,
+                noise={
                     "family": "mixture",
                     "mixture_weights": {
                         "gaussian": [0.9, 0.5],
@@ -974,14 +1015,14 @@ def test_steering_enabled_requires_preset_or_stages() -> None:
                         "student_t": [0.0, 0.2],
                     },
                 },
-            },
-            r"steering\.stages\[\*\]\.noise\.mixture_weights start weights must sum to 1\.0",
+            ),
+            r"steering\.stages\[\*\]\.noise_mixture_weights start weights must sum to 1\.0",
         ),
         (
-            {
-                "name": "noise_bad_end_total",
-                "fraction": 1.0,
-                "noise": {
+            _stage(
+                name="noise_bad_end_total",
+                fraction=1.0,
+                noise={
                     "family": "mixture",
                     "mixture_weights": {
                         "gaussian": [1.0, 0.4],
@@ -989,8 +1030,8 @@ def test_steering_enabled_requires_preset_or_stages() -> None:
                         "student_t": [0.0, 0.2],
                     },
                 },
-            },
-            r"steering\.stages\[\*\]\.noise\.mixture_weights end weights must sum to 1\.0",
+            ),
+            r"steering\.stages\[\*\]\.noise_mixture_weights end weights must sum to 1\.0",
         ),
     ],
 )

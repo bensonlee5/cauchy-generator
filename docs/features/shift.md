@@ -163,7 +163,7 @@ ______________________________________________________________________
   `shift_graph_scale`, `shift_edge_odds_multiplier`,
   `shift_mechanism_nonlinear_mass`, and `shift_noise_variance_multiplier`.
 
-Benchmark runs can surface `shift_guardrails` in summaries.
+Benchmark runs can surface `preset_results[*].scenarios.shift` in summaries.
 
 ______________________________________________________________________
 

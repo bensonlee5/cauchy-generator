@@ -33,19 +33,7 @@
       "generation_mode": "fixed_batched",
       "hardware_backend": "cpu",
       "latency_p95_ms": "<MS>",
-      "lineage_guardrails": {
-        "enabled": true,
-        "status": "pass"
-      },
-      "missingness_guardrails": {
-        "enabled": false,
-        "status": "off"
-      },
       "node_apply_elapsed_seconds": "<SECONDS>",
-      "noise_guardrails": {
-        "enabled": false,
-        "status": "off"
-      },
       "peak_cuda_headroom_mb": "<MB>",
       "peak_cuda_reserved_mb": "<MB>",
       "peak_cuda_reserved_pct_of_total_memory": "<PERCENT>",
@@ -58,9 +46,43 @@
       "raw_batch_elapsed_seconds": "<SECONDS>",
       "reproducibility_match": true,
       "reproducibility_workload_match": false,
-      "shift_guardrails": {
-        "enabled": false,
-        "status": "off"
+      "scenarios": {
+        "baseline": {
+          "enabled": true,
+          "metrics": {},
+          "issues": [],
+          "status": "pass"
+        },
+        "filtering": {
+          "enabled": false,
+          "metrics": {},
+          "issues": [],
+          "status": "off"
+        },
+        "missingness": {
+          "enabled": false,
+          "metrics": {},
+          "issues": [],
+          "status": "off"
+        },
+        "noise": {
+          "enabled": false,
+          "metrics": {},
+          "issues": [],
+          "status": "off"
+        },
+        "shift": {
+          "enabled": false,
+          "metrics": {},
+          "issues": [],
+          "status": "off"
+        },
+        "throughput": {
+          "enabled": true,
+          "metrics": {},
+          "issues": [],
+          "status": "pass"
+        }
       },
       "stage_sample_datasets": 2,
       "write_datasets_per_minute": "<RATE>",

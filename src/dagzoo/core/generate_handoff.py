@@ -39,6 +39,7 @@ _GENERATE_OVERRIDE_KEYS = (
     "diagnostics_out_dir",
     "handoff_root",
 )
+_OPTIONAL_GENERATE_OVERRIDE_KEYS = ("set_overrides",)
 
 
 def _raise(path: str, message: str) -> NoReturn:
@@ -115,6 +116,24 @@ def _require_rows_override(value: object, *, path: str) -> str | int | None:
     _raise(path, "must be a string, integer, or null")
 
 
+def _require_set_overrides(value: object, *, path: str) -> list[tuple[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        _raise(path, "must be a list of [path, value] pairs")
+
+    normalized: list[tuple[str, Any]] = []
+    for index, item in enumerate(value):
+        item_path = f"{path}[{index}]"
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            _raise(item_path, "must be a [path, value] pair")
+        override_path = item[0]
+        if not isinstance(override_path, str) or not override_path.strip():
+            _raise(f"{item_path}[0]", "must be a non-empty string")
+        normalized.append((override_path, item[1]))
+    return normalized
+
+
 def _resolve_path_str(path: str | Path) -> str:
     return str(Path(path).resolve())
 
@@ -141,8 +160,9 @@ def _datasets_per_minute(*, datasets: int, elapsed_seconds: float) -> float:
 
 def _validate_generate_overrides(overrides: Mapping[str, Any], *, path: str) -> None:
     expected_keys = set(_GENERATE_OVERRIDE_KEYS)
+    optional_keys = set(_OPTIONAL_GENERATE_OVERRIDE_KEYS)
     actual_keys = set(overrides)
-    unexpected_keys = sorted(actual_keys - expected_keys)
+    unexpected_keys = sorted(actual_keys - expected_keys - optional_keys)
     if unexpected_keys:
         _raise(path, f"contains unknown keys: {', '.join(unexpected_keys)}")
     missing_keys = sorted(expected_keys - actual_keys)
@@ -177,6 +197,7 @@ def _validate_generate_overrides(overrides: Mapping[str, Any], *, path: str) -> 
         path=f"{path}.diagnostics_out_dir",
     )
     _require_non_empty_string(overrides.get("handoff_root"), path=f"{path}.handoff_root")
+    _require_set_overrides(overrides.get("set_overrides"), path=f"{path}.set_overrides")
 
 
 def _load_generated_identity(

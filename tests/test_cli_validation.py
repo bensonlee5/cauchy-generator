@@ -171,7 +171,7 @@ def test_generate_cli_rejects_rows_override_for_stress_profile(
     assert "locks dataset.rows to unset" in capsys.readouterr().err
 
 
-def test_generate_cli_rejects_missingness_override_for_stress_profile(
+def test_generate_cli_rejects_locked_path_override_for_stress_profile(
     tmp_path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     cfg = load_repo_config()
@@ -186,16 +186,14 @@ def test_generate_cli_rejects_missingness_override_for_stress_profile(
                 str(config_path),
                 "--num-datasets",
                 "1",
-                "--missing-rate",
-                "0.2",
-                "--missing-mechanism",
-                "mnar",
+                "--set",
+                "dataset.n_train=2048",
                 "--no-dataset-write",
             ]
         )
 
     assert int(exc.value.code) == 2
-    assert "locks dataset.missing_rate to 0.0" in capsys.readouterr().err
+    assert "locks dataset.n_train to 768" in capsys.readouterr().err
 
 
 def test_generate_cli_stress_profile_effective_config_is_concrete(
@@ -405,7 +403,7 @@ def test_filter_cli_rejects_invalid_n_jobs() -> None:
     assert int(exc.value.code) == 2
 
 
-def test_filter_cli_rejects_invalid_easy_skill_threshold() -> None:
+def test_filter_cli_rejects_removed_easy_skill_threshold_flag() -> None:
     with pytest.raises(SystemExit) as exc:
         main(
             [
@@ -415,7 +413,7 @@ def test_filter_cli_rejects_invalid_easy_skill_threshold() -> None:
                 "--out",
                 "out",
                 "--easy-skill-threshold",
-                "1.1",
+                "0.7",
             ]
         )
     assert int(exc.value.code) == 2
@@ -470,19 +468,20 @@ def test_filter_cli_passes_ease_overrides_to_runner(
             "input_shards",
             "--out",
             str(tmp_path / "filter_out"),
-            "--n-jobs",
-            "4",
-            "--ease-k-small",
-            "8",
-            "--easy-skill-threshold",
-            "0.7",
-            "--easy-gain-threshold",
-            "0.15",
-            "--hard-skill-threshold",
-            "0.05",
-            "--stump-skill-threshold",
-            "0.6",
-            "--no-lineage-veto",
+            "--set",
+            "filter.n_jobs=4",
+            "--set",
+            "filter.ease_k_small=8",
+            "--set",
+            "filter.easy_skill_threshold=0.7",
+            "--set",
+            "filter.easy_gain_threshold=0.15",
+            "--set",
+            "filter.hard_skill_threshold=0.05",
+            "--set",
+            "filter.stump_skill_threshold=0.6",
+            "--set",
+            "filter.use_lineage_veto=false",
         ]
     )
 
@@ -491,13 +490,15 @@ def test_filter_cli_passes_ease_overrides_to_runner(
     assert kwargs["in_dir"] == "input_shards"
     assert kwargs["out_dir"] == str(tmp_path / "filter_out")
     assert kwargs["curated_out_dir"] is None
-    assert kwargs["ease_k_small_override"] == 8
-    assert kwargs["easy_skill_threshold_override"] == pytest.approx(0.7)
-    assert kwargs["easy_gain_threshold_override"] == pytest.approx(0.15)
-    assert kwargs["hard_skill_threshold_override"] == pytest.approx(0.05)
-    assert kwargs["stump_skill_threshold_override"] == pytest.approx(0.6)
-    assert kwargs["use_lineage_veto_override"] is False
-    assert kwargs["n_jobs_override"] == 4
+    assert kwargs["path_overrides"] == (
+        ("filter.n_jobs", 4),
+        ("filter.ease_k_small", 8),
+        ("filter.easy_skill_threshold", 0.7),
+        ("filter.easy_gain_threshold", 0.15),
+        ("filter.hard_skill_threshold", 0.05),
+        ("filter.stump_skill_threshold", 0.6),
+        ("filter.use_lineage_veto", False),
+    )
 
 
 def test_filter_cli_passes_lineage_veto_enable_override_to_runner(
@@ -533,12 +534,13 @@ def test_filter_cli_passes_lineage_veto_enable_override_to_runner(
             "input_shards",
             "--out",
             str(tmp_path / "filter_out"),
-            "--lineage-veto",
+            "--set",
+            "filter.use_lineage_veto=true",
         ]
     )
 
     assert code == 0
-    assert captured["kwargs"]["use_lineage_veto_override"] is True
+    assert captured["kwargs"]["path_overrides"] == (("filter.use_lineage_veto", True),)
 
 
 def test_filter_cli_leaves_lineage_veto_override_unset_by_default(
@@ -578,7 +580,7 @@ def test_filter_cli_leaves_lineage_veto_override_unset_by_default(
     )
 
     assert code == 0
-    assert captured["kwargs"]["use_lineage_veto_override"] is None
+    assert captured["kwargs"]["path_overrides"] == ()
 
 
 def test_filter_cli_rejects_removed_config_flag() -> None:
@@ -1398,16 +1400,16 @@ def test_generate_cli_applies_missingness_overrides_no_write(
             "1",
             "--device",
             "cpu",
-            "--missing-rate",
-            "0.3",
-            "--missing-mechanism",
-            "mar",
-            "--missing-mar-observed-fraction",
-            "0.7",
-            "--missing-mar-logit-scale",
-            "1.8",
-            "--missing-mnar-logit-scale",
-            "2.2",
+            "--set",
+            "dataset.missing_rate=0.3",
+            "--set",
+            "dataset.missing_mechanism=mar",
+            "--set",
+            "dataset.missing_mar_observed_fraction=0.7",
+            "--set",
+            "dataset.missing_mar_logit_scale=1.8",
+            "--set",
+            "dataset.missing_mnar_logit_scale=2.2",
             "--hardware-policy",
             "none",
             "--no-dataset-write",
@@ -1432,10 +1434,10 @@ def test_generate_cli_rejects_invalid_missingness_combination() -> None:
                 "1",
                 "--device",
                 "cpu",
-                "--missing-rate",
-                "0.2",
-                "--missing-mechanism",
-                "none",
+                "--set",
+                "dataset.missing_rate=0.2",
+                "--set",
+                "dataset.missing_mechanism=none",
                 "--hardware-policy",
                 "none",
                 "--no-dataset-write",
@@ -1467,17 +1469,17 @@ def test_generate_cli_rejects_invalid_rows_spec(rows_value: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("flag", "value"),
+    ("path", "value"),
     [
-        ("--missing-rate", "1.1"),
-        ("--missing-rate", "-0.1"),
-        ("--missing-mar-observed-fraction", "0"),
-        ("--missing-mar-observed-fraction", "1.1"),
-        ("--missing-mar-logit-scale", "0"),
-        ("--missing-mnar-logit-scale", "-1"),
+        ("dataset.missing_rate", "1.1"),
+        ("dataset.missing_rate", "-0.1"),
+        ("dataset.missing_mar_observed_fraction", "0"),
+        ("dataset.missing_mar_observed_fraction", "1.1"),
+        ("dataset.missing_mar_logit_scale", "0"),
+        ("dataset.missing_mnar_logit_scale", "-1"),
     ],
 )
-def test_generate_cli_rejects_invalid_missingness_scalar(flag: str, value: str) -> None:
+def test_generate_cli_rejects_invalid_missingness_scalar(path: str, value: str) -> None:
     with pytest.raises(SystemExit) as exc:
         main(
             [
@@ -1486,8 +1488,8 @@ def test_generate_cli_rejects_invalid_missingness_scalar(flag: str, value: str) 
                 "configs/default.yaml",
                 "--num-datasets",
                 "1",
-                flag,
-                value,
+                "--set",
+                f"{path}={value}",
                 "--no-dataset-write",
             ]
         )
@@ -1538,12 +1540,12 @@ def test_generate_cli_missingness_no_write_end_to_end(tmp_path) -> None:
             "1",
             "--device",
             "cpu",
-            "--missing-rate",
-            "0.2",
-            "--missing-mechanism",
-            "mnar",
-            "--missing-mnar-logit-scale",
-            "1.5",
+            "--set",
+            "dataset.missing_rate=0.2",
+            "--set",
+            "dataset.missing_mechanism=mnar",
+            "--set",
+            "dataset.missing_mnar_logit_scale=1.5",
             "--hardware-policy",
             "none",
             "--no-dataset-write",

@@ -80,10 +80,10 @@ dagzoo generate \
   --config configs/default.yaml \
   --num-datasets 25 \
   --device cpu \
-  --missing-rate 0.25 \
-  --missing-mechanism mar \
-  --missing-mar-observed-fraction 0.6 \
-  --missing-mar-logit-scale 1.4 \
+  --set dataset.missing_rate=0.25 \
+  --set dataset.missing_mechanism=mar \
+  --set dataset.missing_mar_observed_fraction=0.6 \
+  --set dataset.missing_mar_logit_scale=1.4 \
   --out data/run_missing_cli_mar
 ```
 
@@ -91,33 +91,33 @@ ______________________________________________________________________
 
 ## Key options
 
-- `--missing-rate`: overall missingness probability (fraction of cells that are
+- `--set dataset.missing_rate=...`: overall missingness probability (fraction of cells that are
   `NaN` in the output). Concrete examples:
 
   ```
-  --missing-rate 0.05  →  5% of cells missing  (light; common in clean survey data)
-  --missing-rate 0.15  →  15% of cells missing (moderate; typical clinical datasets)
-  --missing-rate 0.30  →  30% of cells missing (heavy; EHR or sensor-network data)
+  --set dataset.missing_rate=0.05  →  5% of cells missing  (light; common in clean survey data)
+  --set dataset.missing_rate=0.15  →  15% of cells missing (moderate; typical clinical datasets)
+  --set dataset.missing_rate=0.30  →  30% of cells missing (heavy; EHR or sensor-network data)
   ```
 
-- `--missing-mechanism`: which statistical mechanism drives the missingness.
+- `--set dataset.missing_mechanism=...`: which statistical mechanism drives the missingness.
   `mcar` = independent coin flip per cell; `mar` = missingness depends on
   observed features; `mnar` = missingness depends on the missing value itself.
 
-- `--missing-mar-observed-fraction`: fraction of features used to compute MAR
+- `--set dataset.missing_mar_observed_fraction=...`: fraction of features used to compute MAR
   logits (higher = more features influence which values go missing).
 
   ```
-  --missing-mar-observed-fraction 0.3  →  30% of features drive missingness
-  --missing-mar-observed-fraction 0.8  →  80% of features drive missingness (strong MAR)
+  --set dataset.missing_mar_observed_fraction=0.3  →  30% of features drive missingness
+  --set dataset.missing_mar_observed_fraction=0.8  →  80% of features drive missingness (strong MAR)
   ```
 
-- `--missing-mar-logit-scale`: MAR logit sensitivity multiplier. Higher values
+- `--set dataset.missing_mar_logit_scale=...`: MAR logit sensitivity multiplier. Higher values
   make missingness more sharply dependent on the observed features.
 
   ```
-  --missing-mar-logit-scale 0.5  →  weak MAR signal (missingness is nearly random)
-  --missing-mar-logit-scale 1.5  →  strong MAR signal (missingness is highly structured)
+  --set dataset.missing_mar_logit_scale=0.5  →  weak MAR signal (missingness is nearly random)
+  --set dataset.missing_mar_logit_scale=1.5  →  strong MAR signal (missingness is highly structured)
   ```
 
 ______________________________________________________________________
@@ -125,7 +125,7 @@ ______________________________________________________________________
 ## What to inspect
 
 - `metadata.ndjson` dataset records for resolved missingness configuration.
-- Benchmark summaries for `missingness_guardrails` (when present).
+- Benchmark summaries for `preset_results[*].scenarios.missingness` (when enabled).
 
 For output details, see
 [output-format.md](../output-format.md).

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dagzoo"
-version = "0.14.5"
+version = "0.15.0"
 description = "Synthetic tabular data generator for causal modeling"
 readme = { file = "README.md", content-type = "text/markdown" }
 authors = [
@@ -62,9 +62,11 @@ dev = [
   "mdformat>=0.7",
   "mdformat-gfm>=0.4",
   "mypy>=1.11",
+  "nox>=2025.5.1",
   "diff-cover>=9.0",
   "pre-commit>=3.8",
   "pytest>=8.0",
+  "pytest-benchmark>=5.1",
   "pytest-cov>=6.0",
   "pytest-testmon>=2.1",
   "pytest-xdist>=3.6",
@@ -118,5 +120,6 @@ extend_exclude = [
   "^tests/",
   "^scripts/",
   "^docs/",
+  "^noxfile.py$",
   "^site/",
 ]

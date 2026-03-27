@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from dagzoo.config import (
@@ -23,15 +23,8 @@ from dagzoo.hardware_policy import (
 _MISSING_VALUE = "<missing>"
 _DEFAULT_CUDA_FIXED_LAYOUT_TARGET_SOURCE = "hardware.default_cuda_fixed_layout_target_cells"
 
-
-@dataclass(slots=True, frozen=True)
-class ResolutionEvent:
-    """One field-level config override event."""
-
-    path: str
-    source: str
-    old_value: Any
-    new_value: Any
+type ResolutionEvent = dict[str, Any]
+type ResolvedConfigBundle = dict[str, Any]
 
 
 @dataclass(slots=True, frozen=True)
@@ -42,27 +35,6 @@ class BenchmarkSmokeCaps:
     n_test: int
     n_features: int
     n_nodes: int
-
-
-@dataclass(slots=True)
-class ResolvedGenerateConfig:
-    """Fully resolved generate config with hardware info and override trace."""
-
-    config: GeneratorConfig
-    hardware: HardwareInfo
-    requested_device: str
-    trace_events: list[ResolutionEvent]
-
-
-@dataclass(slots=True)
-class ResolvedBenchmarkPresetConfig:
-    """Fully resolved benchmark preset config with hardware info and override trace."""
-
-    preset_key: str
-    config: GeneratorConfig
-    hardware: HardwareInfo
-    requested_device: str
-    trace_events: list[ResolutionEvent]
 
 
 def _clone_config(config: GeneratorConfig) -> GeneratorConfig:
@@ -84,12 +56,12 @@ def _append_event(
     if old_value == new_value:
         return
     events.append(
-        ResolutionEvent(
-            path=path,
-            source=source,
-            old_value=old_value,
-            new_value=new_value,
-        )
+        {
+            "path": path,
+            "source": source,
+            "old_value": old_value,
+            "new_value": new_value,
+        }
     )
 
 
@@ -135,11 +107,9 @@ def _append_diff_events(
         keys = sorted(set(before) | set(after))
         for key in keys:
             child_path = key if not path else f"{path}.{key}"
-            old_value = before.get(key, _MISSING_VALUE)
-            new_value = after.get(key, _MISSING_VALUE)
             _append_diff_events(
-                old_value,
-                new_value,
+                before.get(key, _MISSING_VALUE),
+                after.get(key, _MISSING_VALUE),
                 source=source,
                 events=events,
                 path=child_path,
@@ -166,41 +136,6 @@ def _normalize_requested_device(device: str | None, fallback: str | None) -> str
     return candidate or "auto"
 
 
-def _apply_missingness_overrides(
-    config: GeneratorConfig,
-    *,
-    missing_rate: float | None,
-    missing_mechanism: str | None,
-    missing_mar_observed_fraction: float | None,
-    missing_mar_logit_scale: float | None,
-    missing_mnar_logit_scale: float | None,
-    events: list[ResolutionEvent],
-) -> None:
-    """Apply generate missingness overrides."""
-
-    overrides = (
-        ("dataset.missing_rate", missing_rate),
-        ("dataset.missing_mechanism", missing_mechanism),
-        ("dataset.missing_mar_observed_fraction", missing_mar_observed_fraction),
-        ("dataset.missing_mar_logit_scale", missing_mar_logit_scale),
-        ("dataset.missing_mnar_logit_scale", missing_mnar_logit_scale),
-    )
-    has_override = any(value is not None for _, value in overrides)
-    if not has_override:
-        return
-
-    for path, value in overrides:
-        if value is None:
-            continue
-        _set_config_path(
-            config,
-            path=path,
-            value=value,
-            source="cli.missingness_override",
-            events=events,
-        )
-
-
 def _apply_default_cuda_fixed_layout_target_floor(
     config: GeneratorConfig,
     *,
@@ -210,10 +145,7 @@ def _apply_default_cuda_fixed_layout_target_floor(
     """Fill the fixed-layout target from the default CUDA floor when the config leaves it unset."""
 
     target_floor, _ = resolve_cuda_fixed_layout_target_cells_limits(hw)
-    if target_floor is None:
-        return
-    current_target = config.runtime.fixed_layout_target_cells
-    if current_target is not None:
+    if target_floor is None or config.runtime.fixed_layout_target_cells is not None:
         return
     _set_config_path(
         config,
@@ -231,8 +163,6 @@ def _apply_rows_override(
     source: str,
     events: list[ResolutionEvent],
 ) -> None:
-    """Apply generate rows override."""
-
     if rows is None:
         return
     _set_config_path(
@@ -242,6 +172,23 @@ def _apply_rows_override(
         source=source,
         events=events,
     )
+
+
+def _apply_path_overrides(
+    config: GeneratorConfig,
+    *,
+    overrides: Sequence[tuple[str, Any]],
+    source: str,
+    events: list[ResolutionEvent],
+) -> None:
+    for path, value in overrides:
+        _set_config_path(
+            config,
+            path=path,
+            value=value,
+            source=source,
+            events=events,
+        )
 
 
 def _apply_smoke_caps(
@@ -281,7 +228,7 @@ def _apply_smoke_caps(
 
 
 def cap_rows_spec_to_total(config: GeneratorConfig, *, total_rows_cap: int) -> None:
-    """Cap ``dataset.rows`` to ``total_rows_cap`` while preserving public row modes."""
+    """Cap ``dataset.rows`` to ``total_rows_cap`` while preserving fixed/range row modes."""
 
     if int(total_rows_cap) < int(DATASET_ROWS_MIN_TOTAL):
         config.dataset.rows = None
@@ -298,23 +245,14 @@ def cap_rows_spec_to_total(config: GeneratorConfig, *, total_rows_cap: int) -> N
             value=min(int(normalized_rows.value), int(total_rows_cap)),
         )
         return
-    if normalized_rows.mode == "range":
-        assert normalized_rows.start is not None and normalized_rows.stop is not None
-        capped_start = min(int(normalized_rows.start), int(total_rows_cap))
-        capped_stop = min(int(normalized_rows.stop), int(total_rows_cap))
-        if capped_start >= capped_stop:
-            config.dataset.rows = DatasetRowsSpec(mode="fixed", value=capped_stop)
-            return
-        config.dataset.rows = DatasetRowsSpec(mode="range", start=capped_start, stop=capped_stop)
-        return
 
-    capped_choices = sorted(
-        {min(int(choice), int(total_rows_cap)) for choice in normalized_rows.choices}
-    )
-    if len(capped_choices) == 1:
-        config.dataset.rows = DatasetRowsSpec(mode="fixed", value=capped_choices[0])
+    assert normalized_rows.start is not None and normalized_rows.stop is not None
+    capped_start = min(int(normalized_rows.start), int(total_rows_cap))
+    capped_stop = min(int(normalized_rows.stop), int(total_rows_cap))
+    if capped_start >= capped_stop:
+        config.dataset.rows = DatasetRowsSpec(mode="fixed", value=capped_stop)
         return
-    config.dataset.rows = DatasetRowsSpec(mode="choices", choices=capped_choices)
+    config.dataset.rows = DatasetRowsSpec(mode="range", start=capped_start, stop=capped_stop)
 
 
 def resolve_generate_config(
@@ -324,14 +262,10 @@ def resolve_generate_config(
     rows: object | None,
     rows_source: str = "cli.rows",
     hardware_policy: str,
-    missing_rate: float | None,
-    missing_mechanism: str | None,
-    missing_mar_observed_fraction: float | None,
-    missing_mar_logit_scale: float | None,
-    missing_mnar_logit_scale: float | None,
     diagnostics_enabled: bool,
+    path_overrides: Sequence[tuple[str, Any]] | None = None,
     post_policy_hook: Callable[[GeneratorConfig, list[ResolutionEvent]], None] | None = None,
-) -> ResolvedGenerateConfig:
+) -> ResolvedConfigBundle:
     """Resolve effective config for one generate command invocation."""
 
     resolved = _clone_config(config)
@@ -345,24 +279,14 @@ def resolve_generate_config(
         source="cli.device",
         events=trace_events,
     )
-
-    _apply_rows_override(
-        resolved,
-        rows=rows,
-        source=rows_source,
-        events=trace_events,
-    )
-
-    _apply_missingness_overrides(
-        resolved,
-        missing_rate=missing_rate,
-        missing_mechanism=missing_mechanism,
-        missing_mar_observed_fraction=missing_mar_observed_fraction,
-        missing_mar_logit_scale=missing_mar_logit_scale,
-        missing_mnar_logit_scale=missing_mnar_logit_scale,
-        events=trace_events,
-    )
-
+    _apply_rows_override(resolved, rows=rows, source=rows_source, events=trace_events)
+    if path_overrides:
+        _apply_path_overrides(
+            resolved,
+            overrides=path_overrides,
+            source="cli.set",
+            events=trace_events,
+        )
     if diagnostics_enabled:
         _set_config_path(
             resolved,
@@ -385,6 +309,7 @@ def resolve_generate_config(
         events=trace_events,
     )
     resolved = materialized
+
     hw = detect_hardware(requested_device)
     before_policy = resolved.to_dict()
     resolved = apply_hardware_policy(
@@ -400,20 +325,16 @@ def resolve_generate_config(
         source=f"hardware_policy.{str(hardware_policy).strip().lower()}",
         events=trace_events,
     )
-    _apply_default_cuda_fixed_layout_target_floor(
-        resolved,
-        hw=hw,
-        events=trace_events,
-    )
+    _apply_default_cuda_fixed_layout_target_floor(resolved, hw=hw, events=trace_events)
     if post_policy_hook is not None:
         post_policy_hook(resolved, trace_events)
     resolved.validate_generation_constraints()
-    return ResolvedGenerateConfig(
-        config=resolved,
-        hardware=hw,
-        requested_device=requested_device,
-        trace_events=trace_events,
-    )
+    return {
+        "config": resolved,
+        "hardware": hw,
+        "requested_device": requested_device,
+        "trace_events": trace_events,
+    }
 
 
 def resolve_benchmark_preset_config(
@@ -424,7 +345,7 @@ def resolve_benchmark_preset_config(
     suite: str,
     hardware_policy: str,
     smoke_caps: BenchmarkSmokeCaps | None,
-) -> ResolvedBenchmarkPresetConfig:
+) -> ResolvedConfigBundle:
     """Resolve effective config for one benchmark preset run."""
 
     resolved = _clone_config(config)
@@ -452,6 +373,7 @@ def resolve_benchmark_preset_config(
         events=trace_events,
     )
     resolved = materialized
+
     hw = detect_hardware(requested_device)
     before_policy = resolved.to_dict()
     resolved = apply_hardware_policy(
@@ -467,32 +389,27 @@ def resolve_benchmark_preset_config(
         source=f"hardware_policy.{str(hardware_policy).strip().lower()}",
         events=trace_events,
     )
-    _apply_default_cuda_fixed_layout_target_floor(
-        resolved,
-        hw=hw,
-        events=trace_events,
-    )
+    _apply_default_cuda_fixed_layout_target_floor(resolved, hw=hw, events=trace_events)
 
-    normalized_suite = str(suite).strip().lower()
-    if normalized_suite == "smoke":
+    if str(suite).strip().lower() == "smoke":
         if smoke_caps is None:
             raise ValueError("Benchmark smoke suite config resolution requires smoke cap values.")
         _apply_smoke_caps(resolved, smoke_caps=smoke_caps, events=trace_events)
 
     resolved.validate_generation_constraints()
-    return ResolvedBenchmarkPresetConfig(
-        preset_key=preset_key,
-        config=resolved,
-        hardware=hw,
-        requested_device=requested_device,
-        trace_events=trace_events,
-    )
+    return {
+        "preset_key": preset_key,
+        "config": resolved,
+        "hardware": hw,
+        "requested_device": requested_device,
+        "trace_events": trace_events,
+    }
 
 
 def serialize_resolution_events(events: list[ResolutionEvent]) -> list[dict[str, Any]]:
-    """Convert trace dataclasses into JSON/YAML-safe dictionaries."""
+    """Convert trace payloads into JSON/YAML-safe dictionaries."""
 
-    return [asdict(event) for event in events]
+    return [dict(event) for event in events]
 
 
 def append_config_diff_events(
@@ -514,9 +431,6 @@ def append_config_diff_events(
 
 __all__ = [
     "BenchmarkSmokeCaps",
-    "ResolutionEvent",
-    "ResolvedBenchmarkPresetConfig",
-    "ResolvedGenerateConfig",
     "append_config_diff_events",
     "cap_rows_spec_to_total",
     "resolve_benchmark_preset_config",

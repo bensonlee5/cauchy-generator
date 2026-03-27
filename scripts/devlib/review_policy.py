@@ -48,7 +48,7 @@ PYTEST_TARGETS_BY_PREFIX = (
             "tests/test_benchmark_stage_metrics.py",
             "tests/test_benchmark_throughput.py",
             "tests/test_benchmark_regression.py",
-            "tests/test_h100_validation.py",
+            "tests/scripts/test_h100_validation.py",
         ),
     ),
     (
@@ -124,7 +124,6 @@ PYTEST_TARGETS_BY_PREFIX = (
     (
         "src/dagzoo/filtering/",
         (
-            "tests/test_filtering_availability.py",
             "tests/test_extra_trees_filter.py",
             "tests/test_deferred_filter.py",
         ),

@@ -10,12 +10,24 @@ def bootstrap_environment() -> str:
         raise DevToolError(
             "`uv` is required for `./scripts/dev bootstrap`; install `uv` and retry."
         )
+    if not tool_exists("npm"):
+        raise DevToolError(
+            "`npm` is required for `./scripts/dev bootstrap`; install Node/npm and retry."
+        )
 
     sync_command = ("uv", "sync", "--group", "dev")
     sync_result = subprocess.run(sync_command, cwd=REPO_ROOT, check=False)
     if sync_result.returncode != 0:
         raise DevToolError(
             f"`{format_command(sync_command)}` failed with exit code {sync_result.returncode}."
+        )
+
+    site_install_command = ("npm", "ci", "--prefix", "site")
+    site_install_result = subprocess.run(site_install_command, cwd=REPO_ROOT, check=False)
+    if site_install_result.returncode != 0:
+        raise DevToolError(
+            f"`{format_command(site_install_command)}` failed with exit code "
+            f"{site_install_result.returncode}."
         )
 
     python_path = venv_python()
@@ -34,5 +46,6 @@ def bootstrap_environment() -> str:
     return (
         "bootstrap complete\n"
         f"ran: {format_command(sync_command)}\n"
+        f"ran: {format_command(site_install_command)}\n"
         f"ran: {repo_relative(python_path)} -m pre_commit install\n"
     )

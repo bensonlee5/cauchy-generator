@@ -82,7 +82,7 @@ the codebase:
 ```bash
 ./scripts/dev bootstrap
 source .venv/bin/activate
-./scripts/dev verify quick
+./.venv/bin/nox -s quick
 ```
 
 For in-process training loops, use the same recipe references through the

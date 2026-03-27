@@ -248,7 +248,7 @@ def test_run_corpus_probe_uses_injected_coverage_config_over_local_diagnostics(
     assert result.coverage_summary["max_values_per_metric"] == 2
 
 
-def test_run_corpus_probe_preserves_steering_with_injected_coverage_config(
+def test_run_corpus_probe_omits_steering_from_coverage_summary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -290,7 +290,4 @@ def test_run_corpus_probe_preserves_steering_with_injected_coverage_config(
 
     assert coverage_config.steering_config is None
     assert result.coverage_summary["histogram_bins"] == 7
-    steering = result.coverage_summary["steering"]
-    assert steering["enabled"] is True
-    assert steering["preset"] == "anti_memorization_piecewise_v1"
-    assert steering["resolution_checks"]["datasets_checked"] == 5
+    assert "steering" not in result.coverage_summary

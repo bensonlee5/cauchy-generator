@@ -100,7 +100,7 @@ ______________________________________________________________________
   - `noise_distribution.base_scale`
   - `noise_distribution.student_t_df`
   - `noise_distribution.mixture_weights` (when requested family is `mixture`)
-- Benchmark summary `noise_guardrails`:
+- Benchmark summary `preset_results[*].scenarios.noise`:
   - metadata coverage/validity
   - sampled-family counts
   - runtime delta vs gaussian-noise control

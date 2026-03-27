@@ -16,19 +16,9 @@ from .commands.recipe import run_recipe_list_command
 from .parsing import (
     DEVICE_CHOICES,
     HARDWARE_POLICY_CHOICES,
-    MISSINGNESS_MECHANISM_CLI_CHOICES,
-    filter_n_jobs,
     non_negative_int,
-    parse_easy_gain_threshold_arg,
-    parse_easy_skill_threshold_arg,
     parse_fail_threshold_pct_arg,
-    parse_hard_skill_threshold_arg,
-    parse_missing_mar_logit_scale_arg,
-    parse_missing_mar_observed_fraction_arg,
-    parse_missing_mechanism_arg,
-    parse_missing_mnar_logit_scale_arg,
-    parse_missing_rate_arg,
-    parse_stump_skill_threshold_arg,
+    parse_set_override,
     parse_warn_threshold_pct_arg,
     positive_int,
     seed_32bit_int,
@@ -75,8 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Optional total-row spec override for generation. "
-            "Supports fixed int (e.g. 1024), range (e.g. 400..60000), "
-            "or CSV choices (e.g. 1024,2048,4096)."
+            "Supports fixed int (e.g. 1024) or range (e.g. 400..60000)."
         ),
     )
     g.add_argument(
@@ -107,35 +96,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional directory for diagnostics artifacts (defaults to output directory).",
     )
     g.add_argument(
-        "--missing-rate",
-        type=parse_missing_rate_arg,
+        "--set",
+        dest="set_overrides",
+        type=parse_set_override,
+        action="append",
         default=None,
-        help="Override dataset missing rate in [0, 1].",
-    )
-    g.add_argument(
-        "--missing-mechanism",
-        type=parse_missing_mechanism_arg,
-        choices=MISSINGNESS_MECHANISM_CLI_CHOICES,
-        default=None,
-        help="Override missingness mechanism (none/mcar/mar/mnar).",
-    )
-    g.add_argument(
-        "--missing-mar-observed-fraction",
-        type=parse_missing_mar_observed_fraction_arg,
-        default=None,
-        help="Override MAR observed-feature fraction in (0, 1].",
-    )
-    g.add_argument(
-        "--missing-mar-logit-scale",
-        type=parse_missing_mar_logit_scale_arg,
-        default=None,
-        help="Override MAR logit scale (> 0).",
-    )
-    g.add_argument(
-        "--missing-mnar-logit-scale",
-        type=parse_missing_mnar_logit_scale_arg,
-        default=None,
-        help="Override MNAR logit scale (> 0).",
+        help="Repeatable advanced override in dotted.path=value form.",
     )
     g.add_argument(
         "--print-effective-config",
@@ -170,55 +136,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional output directory for accepted-only curated shards.",
     )
     f.add_argument(
-        "--ease-k-small",
-        type=positive_int,
+        "--set",
+        dest="set_overrides",
+        type=parse_set_override,
+        action="append",
         default=None,
-        help="Optional override for the small-shot probe train-set size.",
-    )
-    f.add_argument(
-        "--easy-skill-threshold",
-        type=parse_easy_skill_threshold_arg,
-        default=None,
-        help="Optional override for the small-shot ease threshold in [0, 1].",
-    )
-    f.add_argument(
-        "--easy-gain-threshold",
-        type=parse_easy_gain_threshold_arg,
-        default=None,
-        help="Optional override for the full-vs-small gain threshold in [0, 1].",
-    )
-    f.add_argument(
-        "--hard-skill-threshold",
-        type=parse_hard_skill_threshold_arg,
-        default=None,
-        help="Optional override for the loose hard-side garbage threshold in [0, 1].",
-    )
-    f.add_argument(
-        "--stump-skill-threshold",
-        type=parse_stump_skill_threshold_arg,
-        default=None,
-        help="Optional override for the best-single-feature stump veto threshold in [0, 1].",
-    )
-    f.add_argument(
-        "--lineage-veto",
-        dest="lineage_veto_override",
-        action="store_const",
-        const=True,
-        default=None,
-        help="Force-enable the lineage feature-to-target path veto during deferred replay.",
-    )
-    f.add_argument(
-        "--no-lineage-veto",
-        dest="lineage_veto_override",
-        action="store_const",
-        const=False,
-        help="Force-disable the lineage feature-to-target path veto during deferred replay.",
-    )
-    f.add_argument(
-        "--n-jobs",
-        type=filter_n_jobs,
-        default=None,
-        help="Optional override for ExtraTrees worker count (-1 or >= 1).",
+        help="Repeatable advanced override in filter.<field>=value form.",
     )
 
     b = sub.add_parser("benchmark", help="Run benchmark suite across one or more presets.")

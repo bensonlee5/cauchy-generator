@@ -63,14 +63,14 @@ dagzoo benchmark \
   --preset custom \
   --suite smoke \
   --no-memory \
-  --out-dir benchmarks/results/smoke_shift_guardrails
+  --out-dir benchmarks/results/smoke_shift
 
 dagzoo benchmark \
   --config configs/preset_noise_benchmark_smoke.yaml \
   --preset custom \
   --suite smoke \
   --no-memory \
-  --out-dir benchmarks/results/smoke_noise_guardrails
+  --out-dir benchmarks/results/smoke_noise
 
 dagzoo benchmark \
   --config configs/preset_steering_anti_memorization_benchmark_smoke.yaml \
@@ -171,14 +171,15 @@ ______________________________________________________________________
 
 When present in a run summary, inspect:
 
-- `missingness_guardrails`
-- `lineage_guardrails`
-- `shift_guardrails`
-- `noise_guardrails`
+- `preset_results[*].scenarios.filtering`
+- `preset_results[*].scenarios.missingness`
+- `preset_results[*].scenarios.shift`
+- `preset_results[*].scenarios.noise`
+- `preset_results[*].scenarios.throughput`
 
 Also review throughput/latency aggregates for preset/suite trends.
 
-For steering-enabled runs, inspect `preset_results[*].diagnostics_artifacts`
+For diagnostics-enabled runs, inspect `preset_results[*].diagnostics_artifacts`
 first and then open the pointed `coverage_summary.json` / `coverage_summary.md`
 files. Steering stays on the diagnostics artifact contract; benchmark summaries
 do not emit a separate `steering_guardrails` field.

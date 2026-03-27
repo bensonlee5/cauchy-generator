@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .deps import module_to_package
+from .import_graph import module_to_package
 from .review_policy import pytest_targets_for_path, requires_full_pytest
 
 DOCS_ONLY_PATH_PREFIXES = ("docs/", "site/", "scripts/docs/")
@@ -20,7 +20,7 @@ PACKAGE_PYTEST_TARGETS: dict[str, tuple[str, ...]] = {
         "tests/test_benchmark_stage_metrics.py",
         "tests/test_benchmark_throughput.py",
         "tests/test_benchmark_regression.py",
-        "tests/test_h100_validation.py",
+        "tests/scripts/test_h100_validation.py",
     ),
     "dagzoo.config": (
         "tests/test_config.py",
@@ -67,7 +67,6 @@ PACKAGE_PYTEST_TARGETS: dict[str, tuple[str, ...]] = {
         "tests/test_generate_handoff.py",
     ),
     "dagzoo.filtering": (
-        "tests/test_filtering_availability.py",
         "tests/test_extra_trees_filter.py",
         "tests/test_deferred_filter.py",
     ),

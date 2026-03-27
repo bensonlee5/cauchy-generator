@@ -460,13 +460,8 @@ def test_run_effective_diversity_audit_uses_run_specific_steering_analysis(
         report["baseline"]["coverage_summary"]["histogram_bins"]
         == report["variants"][0]["coverage_summary"]["histogram_bins"]
     )
-    baseline_steering = report["baseline"]["coverage_summary"]["steering"]
-    variant_steering = report["variants"][0]["coverage_summary"]["steering"]
-    assert baseline_steering["enabled"] is True
-    assert baseline_steering["resolution_checks"]["datasets_checked"] == 5
-    assert variant_steering["enabled"] is False
-    assert variant_steering["stage_count"] == 0
-    assert variant_steering["resolution_checks"]["datasets_checked"] == 0
+    assert "steering" not in report["baseline"]["coverage_summary"]
+    assert "steering" not in report["variants"][0]["coverage_summary"]
 
 
 def test_run_effective_diversity_audit_ignores_diagnostics_only_drift_in_comparisons(

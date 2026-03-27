@@ -42,21 +42,11 @@ def _range_rows_spec_strategy(draw: st.DrawFn) -> DatasetRowsSpec:
     return DatasetRowsSpec(mode="range", start=start, stop=stop)
 
 
-@st.composite
-def _choices_rows_spec_strategy(draw: st.DrawFn) -> DatasetRowsSpec:
-    choices = draw(st.lists(_ROW_TOTAL_STRATEGY, min_size=2, max_size=5, unique=True))
-    return DatasetRowsSpec(mode="choices", choices=choices)
-
-
 _CANONICAL_ROWS_SPEC_STRATEGY = st.one_of(
     _fixed_rows_spec_strategy(),
     _range_rows_spec_strategy(),
-    _choices_rows_spec_strategy(),
 )
-_VARIABLE_ROWS_SPEC_STRATEGY = st.one_of(
-    _range_rows_spec_strategy(),
-    _choices_rows_spec_strategy(),
-)
+_VARIABLE_ROWS_SPEC_STRATEGY = _range_rows_spec_strategy()
 
 
 def _representations(spec: DatasetRowsSpec) -> list[object]:
@@ -65,28 +55,15 @@ def _representations(spec: DatasetRowsSpec) -> list[object]:
         value = int(spec.value)
         return [
             value,
-            str(value),
-            {"mode": "fixed", "value": value},
             DatasetRowsSpec(mode="fixed", value=value),
         ]
-    if spec.mode == "range":
-        assert spec.start is not None and spec.stop is not None
-        start = int(spec.start)
-        stop = int(spec.stop)
-        return [
-            f"{start}..{stop}",
-            {"mode": "range", "start": start, "stop": stop},
-            DatasetRowsSpec(mode="range", start=start, stop=stop),
-        ]
-
-    assert spec.mode == "choices"
-    choices = [int(choice) for choice in spec.choices]
+    assert spec.mode == "range"
+    assert spec.start is not None and spec.stop is not None
+    start = int(spec.start)
+    stop = int(spec.stop)
     return [
-        list(choices),
-        ",".join(str(choice) for choice in choices),
-        {"mode": "choices", "choices": list(choices)},
-        {"mode": "choices", "values": list(choices)},
-        DatasetRowsSpec(mode="choices", choices=list(choices)),
+        f"{start}..{stop}",
+        DatasetRowsSpec(mode="range", start=start, stop=stop),
     ]
 
 
@@ -112,15 +89,13 @@ def test_dataset_rows_bounds_match_canonical_envelope_hypothesis(spec: DatasetRo
         assert spec.start is not None and spec.stop is not None
         assert bounds == (int(spec.start), int(spec.stop))
         return
-
-    assert spec.mode == "choices"
-    assert bounds == (min(spec.choices), max(spec.choices))
+    raise AssertionError(f"Unexpected rows mode {spec.mode!r}")
 
 
 @settings(max_examples=100, deadline=None)
 @given(spec=_CANONICAL_ROWS_SPEC_STRATEGY)
 def test_dataset_rows_is_variable_matches_mode_hypothesis(spec: DatasetRowsSpec) -> None:
-    assert dataset_rows_is_variable(spec) is (spec.mode in {"range", "choices"})
+    assert dataset_rows_is_variable(spec) is (spec.mode == "range")
 
 
 @settings(max_examples=100, deadline=None)
@@ -155,9 +130,7 @@ def test_resolve_dataset_total_rows_stays_within_valid_support_hypothesis(
         assert resolved is not None
         assert int(spec.start) <= resolved <= int(spec.stop)
         return
-
-    assert spec.mode == "choices"
-    assert resolved in spec.choices
+    raise AssertionError(f"Unexpected rows mode {spec.mode!r}")
 
 
 @settings(max_examples=100, deadline=None)

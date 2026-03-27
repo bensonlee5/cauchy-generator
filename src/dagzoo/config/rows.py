@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from dagzoo.rng import derive_seed
 
@@ -23,7 +23,6 @@ class DatasetRowsSpec:
     value: int | None = None
     start: int | None = None
     stop: int | None = None
-    choices: list[int] = field(default_factory=list)
 
 
 def _validate_rows_total(
@@ -41,87 +40,24 @@ def _validate_rows_total(
     )
 
 
-def _normalize_rows_choices(
-    *,
-    field_name: str,
-    value: object,
-) -> list[int]:
-    """Normalize choice-based rows specs from list/csv input."""
-
-    raw_items: list[object]
-    if isinstance(value, str):
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError(
-                f"{field_name} must be a non-empty CSV list, range, or integer row count."
-            )
-        raw_items = [item.strip() for item in normalized.split(",")]
-    elif isinstance(value, list):
-        raw_items = list(value)
-    else:
-        raise ValueError(
-            f"{field_name} choices must be provided as a CSV string or list of integers."
-        )
-
-    if not raw_items:
-        raise ValueError(f"{field_name} must include at least one row count.")
-
-    choices: list[int] = []
-    for idx, item in enumerate(raw_items):
-        if isinstance(item, str) and not item.strip():
-            raise ValueError(f"{field_name} contains an empty row token at position {idx}.")
-        choices.append(_validate_rows_total(field_name=f"{field_name}[{idx}]", value=item))
-    if len(set(choices)) != len(choices):
-        raise ValueError(f"{field_name} must not include duplicate row values.")
-    return choices
-
-
-def _normalize_dataset_rows_from_mapping(value: dict[object, object]) -> DatasetRowsSpec:
-    """Normalize canonical mapping rows spec shape."""
-
-    mode_raw = value.get("mode")
-    if isinstance(mode_raw, bool) or not isinstance(mode_raw, str):
-        raise ValueError(
-            "dataset.rows mapping must include string key 'mode' "
-            "with one of: fixed, range, choices."
-        )
-    mode = mode_raw.strip().lower()
-    if mode == "fixed":
-        if "value" not in value:
-            raise ValueError("dataset.rows fixed mapping must include key 'value'.")
-        fixed = _validate_rows_total(field_name="dataset.rows.value", value=value["value"])
-        return DatasetRowsSpec(mode="fixed", value=fixed)
-
-    if mode == "range":
-        if "start" not in value or "stop" not in value:
-            raise ValueError("dataset.rows range mapping must include 'start' and 'stop'.")
-        start = _validate_rows_total(field_name="dataset.rows.start", value=value["start"])
-        stop = _validate_rows_total(field_name="dataset.rows.stop", value=value["stop"])
-        if start > stop:
-            raise ValueError(
-                f"dataset.rows range start must be <= stop, got start={start} stop={stop}."
-            )
-        if start == stop:
-            return DatasetRowsSpec(mode="fixed", value=start)
-        return DatasetRowsSpec(mode="range", start=start, stop=stop)
-
-    if mode == "choices":
-        raw_choices = value.get("choices", value.get("values"))
-        choices = _normalize_rows_choices(field_name="dataset.rows.choices", value=raw_choices)
-        if len(choices) == 1:
-            return DatasetRowsSpec(mode="fixed", value=choices[0])
-        return DatasetRowsSpec(mode="choices", choices=choices)
-
-    raise ValueError(
-        f"dataset.rows mapping mode must be one of: fixed, range, choices (got {mode_raw!r})."
-    )
-
-
 def normalize_dataset_rows(value: object | None) -> DatasetRowsSpec | None:
     """Normalize dataset.rows into a validated internal row-spec representation."""
 
     if value is None:
         return None
+    if isinstance(value, dict):
+        mode = value.get("mode")
+        if mode == "fixed":
+            return normalize_dataset_rows(DatasetRowsSpec(mode="fixed", value=value.get("value")))
+        if mode == "range":
+            return normalize_dataset_rows(
+                DatasetRowsSpec(
+                    mode="range",
+                    start=value.get("start"),
+                    stop=value.get("stop"),
+                )
+            )
+        raise ValueError("dataset.rows mapping mode must be 'fixed' or 'range'.")
     if isinstance(value, DatasetRowsSpec):
         if value.mode == "fixed":
             if value.value is None:
@@ -142,36 +78,18 @@ def normalize_dataset_rows(value: object | None) -> DatasetRowsSpec | None:
             if start == stop:
                 return DatasetRowsSpec(mode="fixed", value=start)
             return DatasetRowsSpec(mode="range", start=start, stop=stop)
-        if value.mode == "choices":
-            choices = _normalize_rows_choices(
-                field_name="dataset.rows.choices", value=value.choices
-            )
-            if len(choices) == 1:
-                return DatasetRowsSpec(mode="fixed", value=choices[0])
-            return DatasetRowsSpec(mode="choices", choices=choices)
-        raise ValueError(
-            f"dataset.rows mode must be fixed, range, or choices (got {value.mode!r})."
-        )
+        raise ValueError(f"dataset.rows mode must be fixed or range (got {value.mode!r}).")
 
     if isinstance(value, bool):
-        raise ValueError(
-            "dataset.rows must be an integer, range string, CSV string, list, or null."
-        )
+        raise ValueError("dataset.rows must be an integer, range string, or null.")
     if isinstance(value, int):
         return DatasetRowsSpec(
             mode="fixed", value=_validate_rows_total(field_name="dataset.rows", value=value)
         )
-    if isinstance(value, dict):
-        return _normalize_dataset_rows_from_mapping(value)
-    if isinstance(value, list):
-        choices = _normalize_rows_choices(field_name="dataset.rows", value=value)
-        if len(choices) == 1:
-            return DatasetRowsSpec(mode="fixed", value=choices[0])
-        return DatasetRowsSpec(mode="choices", choices=choices)
     if isinstance(value, str):
         normalized = value.strip()
         if not normalized:
-            raise ValueError("dataset.rows must be a non-empty integer, range string, or CSV list.")
+            raise ValueError("dataset.rows must be a non-empty integer or range string.")
         if ".." in normalized:
             parts = normalized.split("..")
             if len(parts) != 2:
@@ -187,18 +105,11 @@ def normalize_dataset_rows(value: object | None) -> DatasetRowsSpec | None:
             if start == stop:
                 return DatasetRowsSpec(mode="fixed", value=start)
             return DatasetRowsSpec(mode="range", start=start, stop=stop)
-        if "," in normalized:
-            choices = _normalize_rows_choices(field_name="dataset.rows", value=normalized)
-            if len(choices) == 1:
-                return DatasetRowsSpec(mode="fixed", value=choices[0])
-            return DatasetRowsSpec(mode="choices", choices=choices)
         return DatasetRowsSpec(
             mode="fixed",
             value=_validate_rows_total(field_name="dataset.rows", value=normalized),
         )
-    raise ValueError(
-        "dataset.rows must be an integer, range string, CSV string, list, mapping, or null."
-    )
+    raise ValueError("dataset.rows must be an integer, range string, or null.")
 
 
 def dataset_rows_bounds(rows: object | None) -> tuple[int, int] | None:
@@ -213,12 +124,6 @@ def dataset_rows_bounds(rows: object | None) -> tuple[int, int] | None:
     if normalized_rows.mode == "range":
         assert normalized_rows.start is not None and normalized_rows.stop is not None
         return int(normalized_rows.start), int(normalized_rows.stop)
-    if normalized_rows.mode == "choices":
-        if not normalized_rows.choices:
-            raise ValueError("dataset.rows choices mode requires at least one choice.")
-        return min(int(v) for v in normalized_rows.choices), max(
-            int(v) for v in normalized_rows.choices
-        )
     raise ValueError(f"Unsupported dataset.rows mode {normalized_rows.mode!r}.")
 
 
@@ -226,7 +131,7 @@ def dataset_rows_is_variable(rows: object | None) -> bool:
     """Return whether rows spec varies per dataset."""
 
     normalized_rows = normalize_dataset_rows(rows)
-    return normalized_rows is not None and normalized_rows.mode in {"range", "choices"}
+    return normalized_rows is not None and normalized_rows.mode == "range"
 
 
 def resolve_dataset_total_rows(
@@ -251,11 +156,6 @@ def resolve_dataset_total_rows(
     if normalized_rows.mode == "range":
         assert normalized_rows.start is not None and normalized_rows.stop is not None
         return int(rng.randint(int(normalized_rows.start), int(normalized_rows.stop)))
-    if normalized_rows.mode == "choices":
-        if not normalized_rows.choices:
-            raise ValueError("dataset.rows choices mode requires at least one choice.")
-        idx = int(rng.randrange(0, len(normalized_rows.choices)))
-        return int(normalized_rows.choices[idx])
     raise ValueError(f"Unsupported dataset.rows mode {normalized_rows.mode!r}.")
 
 

@@ -14,32 +14,31 @@ dagzoo is a high-throughput synthetic tabular data generator built around causal
 
 # Pre-review flow
 ./scripts/dev review-base
-./scripts/dev ready
+./scripts/dev impact
 
 # Canonical verification (run before any PR)
-./scripts/dev verify quick
+.venv/bin/nox -s quick
 
 # Tests
-uv run pytest -q                                          # all tests
-uv run pytest tests/test_generate.py -q                   # single file
-uv run pytest tests/test_generate.py::test_name -q        # single test
-uv run pytest --testmon -q                                # incremental (changed only)
-uv run pytest -n auto -q                                  # parallel
-uv run pytest --cov=dagzoo --cov-report=term-missing -q   # with coverage (85% minimum)
+.venv/bin/python -m pytest -q                             # all tests
+.venv/bin/python -m pytest tests/test_generate.py -q      # single file
+.venv/bin/python -m pytest tests/test_generate.py::test_name -q
+.venv/bin/python -m pytest -n auto -q                     # parallel
+.venv/bin/nox -s full                                     # repo-wide checks + tests
 
 # Lint & format
-uv run ruff check src tests scripts
-uv run ruff format src tests scripts
+.venv/bin/python -m ruff check src tests scripts
+.venv/bin/python -m ruff format src tests scripts
 
 # Type check
-uv run mypy src
+.venv/bin/python -m mypy src
 
 # Dead code detection
-uv run vulture src/dagzoo tests --ignore-names __getattr__
+.venv/bin/python -m vulture src/dagzoo tests --ignore-names __getattr__
 
 # Dependency & architecture checks
-uv run deptry .
-uv run lint-imports
+.venv/bin/python -m deptry .
+.venv/bin/lint-imports
 
 # Change impact analysis (before broad refactors)
 ./scripts/dev impact
@@ -86,28 +85,28 @@ The canonical entry is `core/dataset.py` → `core/fixed_layout_runtime.py`. One
 
 - **KeyedRng** (`rng.py`): Deterministic reproducibility via blake2s-hashed semantic RNG namespaces. Each component derives its own keyed seed path — no ambient generator state leakage. See `docs/development/keyed-rng.md`.
 - **Execution plans**: Plans encode node specs without executing, enabling pre-validation (e.g., classification split feasibility) and batched optimization.
-- **Typed config** (`config.py`): Deeply nested dataclasses. Resolution precedence: YAML → CLI overrides → hardware policy → defaults. All resolution events traced in `effective_config_trace.yaml`.
+- **Typed config** (`config.py`): Deeply nested dataclasses. Resolution precedence: YAML → focused CLI overrides / `--set` path overrides → hardware policy → defaults. Effective resolution traces are serialized as `{path, source, old_value, new_value}` events.
 
 ### Key Directories
 
-| Path                      | Role                                                   |
-| ------------------------- | ------------------------------------------------------ |
-| `src/dagzoo/core/`        | Generation pipeline orchestration (20 modules)         |
-| `src/dagzoo/functions/`   | Mechanism families (linear, nn, tree, gp, etc.)        |
-| `src/dagzoo/converters/`  | Latent-to-observable converters (numeric, categorical) |
-| `src/dagzoo/sampling/`    | Noise families, missingness, correlated sampling       |
-| `src/dagzoo/filtering/`   | Deferred ExtraTrees filtering                          |
-| `src/dagzoo/io/`          | Parquet writer, lineage artifacts, schema              |
-| `src/dagzoo/bench/`       | Benchmark suite, guardrails, regression detection      |
-| `src/dagzoo/diagnostics/` | Coverage aggregation, effective diversity audit        |
-| `scripts/dev.py`          | Dev tooling: doctor, deps, impact, contract, verify    |
+| Path                      | Role                                                       |
+| ------------------------- | ---------------------------------------------------------- |
+| `src/dagzoo/core/`        | Generation pipeline orchestration (20 modules)             |
+| `src/dagzoo/functions/`   | Mechanism families (linear, nn, tree, gp, etc.)            |
+| `src/dagzoo/converters/`  | Latent-to-observable converters (numeric, categorical)     |
+| `src/dagzoo/sampling/`    | Noise families, missingness, correlated sampling           |
+| `src/dagzoo/filtering/`   | Deferred ExtraTrees filtering                              |
+| `src/dagzoo/io/`          | Parquet writer, lineage artifacts, schema                  |
+| `src/dagzoo/bench/`       | Benchmark suite, scenario evaluation, regression detection |
+| `src/dagzoo/diagnostics/` | Coverage aggregation, effective diversity audit            |
+| `scripts/dev.py`          | Dev tooling: bootstrap, impact, contract, review-base      |
 
 ## Development Rules
 
 - No legacy pathways, duplicate pathways, or shims. No parallel implementations of the same logic.
 - Internal Python APIs may change freely. CLI flags, metadata schema, or artifact contract changes are user-facing breaks — call them out explicitly.
 - Version bump in `pyproject.toml` (patch default, minor for broad breaks) + `CHANGELOG.md` update in the same PR for behavior/schema changes. Docs/tests-only changes skip bumps.
-- Run `./scripts/dev ready` before declaring a branch ready.
+- Run `.venv/bin/nox -s quick` before declaring a branch ready.
 - Use `./scripts/dev impact` for dependency-aware ripple checks before broad refactors.
 
 ## Test Fixtures

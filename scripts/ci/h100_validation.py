@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """H100 benchmark validation runner with host-level GPU telemetry."""
 
 from __future__ import annotations
@@ -11,12 +12,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import torch
-import yaml
+ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
-from dagzoo.hardware import detect_hardware
+import torch  # noqa: E402
+import yaml  # noqa: E402
 
-from .gpu_telemetry import NvidiaSmiSampler, summarize_gpu_telemetry, write_gpu_telemetry_csv
+from dagzoo.bench.gpu_telemetry import (  # noqa: E402
+    NvidiaSmiSampler,
+    summarize_gpu_telemetry,
+    write_gpu_telemetry_csv,
+)
+from dagzoo.hardware import detect_hardware  # noqa: E402
 
 SATURATION_TARGET_CELLS = (160_000_000, 240_000_000, 256_000_000)
 FEATURE_RUNS: tuple[tuple[str, str], ...] = (
@@ -44,7 +53,7 @@ class ValidationPhase:
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return ROOT
 
 
 def _write_json(payload: dict[str, Any], path: str | Path) -> Path:
@@ -442,7 +451,7 @@ def run_h100_validation(
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m dagzoo.bench.h100_validation",
+        prog="./.venv/bin/python scripts/ci/h100_validation.py",
         description="Run the bounded H100 benchmark validation workflow.",
     )
     parser.add_argument(

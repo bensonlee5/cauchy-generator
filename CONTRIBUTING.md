@@ -9,7 +9,7 @@ add more knobs.
 ```bash
 ./scripts/dev bootstrap
 source .venv/bin/activate
-./scripts/dev doctor all
+.venv/bin/nox -s quick
 ```
 
 Use `.venv/` for commands and tests in this repo.
@@ -29,14 +29,16 @@ Use `.venv/` for commands and tests in this repo.
 Canonical local verification:
 
 ```bash
-./scripts/dev verify quick
+.venv/bin/nox -s quick
 ```
 
 Useful follow-ons:
 
 ```bash
 ./scripts/dev impact
-./scripts/dev verify affected --source working-tree --incremental --parallel
+.venv/bin/nox -s docs
+.venv/bin/nox -s bench_smoke
+.venv/bin/nox -s full
 ```
 
 Before review, compare your branch with `main` and confirm that intended
