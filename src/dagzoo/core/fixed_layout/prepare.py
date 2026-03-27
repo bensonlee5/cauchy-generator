@@ -7,6 +7,7 @@ from dagzoo.config import (
     GeneratorConfig,
     clone_generator_config,
     dataset_rows_is_variable,
+    materialize_stress_profile,
     resolve_dataset_total_rows,
 )
 from dagzoo.core.generation_context import _resolve_device, _resolve_run_seed
@@ -67,7 +68,11 @@ def realize_generation_config_for_run(
     requested_device = (device or config.runtime.device or "auto").lower()
     resolved_device = _resolve_device(config, device)
 
-    realized = clone_generator_config(config, revalidate=False)
+    if config.stress.profile is not None:
+        config.validate_generation_constraints()
+        realized = materialize_stress_profile(config, revalidate=False)
+    else:
+        realized = clone_generator_config(config, revalidate=False)
     rows_seed = KeyedRng(run_seed).child_seed("rows")
     total_rows = resolve_dataset_total_rows(realized.dataset.rows, dataset_seed=rows_seed)
     if total_rows is not None:

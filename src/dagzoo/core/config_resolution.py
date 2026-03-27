@@ -11,6 +11,7 @@ from dagzoo.config import (
     DatasetRowsSpec,
     GeneratorConfig,
     clone_generator_config,
+    materialize_stress_profile,
     normalize_dataset_rows,
 )
 from dagzoo.hardware import HardwareInfo, detect_hardware
@@ -395,6 +396,14 @@ def resolve_generate_config(
         )
 
     resolved.validate_generation_constraints()
+    materialized = materialize_stress_profile(resolved, revalidate=True)
+    append_config_diff_events(
+        resolved,
+        materialized,
+        source="stress.profile_materialization",
+        events=trace_events,
+    )
+    resolved = materialized
     return ResolvedGenerateConfig(
         config=resolved,
         hardware=hw,
@@ -449,6 +458,14 @@ def resolve_benchmark_preset_config(
         _apply_smoke_caps(resolved, smoke_caps=smoke_caps, events=trace_events)
 
     resolved.validate_generation_constraints()
+    materialized = materialize_stress_profile(resolved, revalidate=True)
+    append_config_diff_events(
+        resolved,
+        materialized,
+        source="stress.profile_materialization",
+        events=trace_events,
+    )
+    resolved = materialized
     return ResolvedBenchmarkPresetConfig(
         preset_key=preset_key,
         config=resolved,

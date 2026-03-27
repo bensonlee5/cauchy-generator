@@ -34,6 +34,7 @@ _TOTAL_ROWS_CAP_STRATEGY = st.integers(
     min_value=DATASET_ROWS_MIN_TOTAL,
     max_value=DATASET_ROWS_MAX_TOTAL,
 )
+_STRESS_PROFILE = "anti_memorization_piecewise_classification_slice_v1"
 
 
 @st.composite
@@ -126,6 +127,75 @@ def test_resolve_generate_config_applies_rows_override() -> None:
 
     trace = serialize_resolution_events(resolved.trace_events)
     assert any(event["path"] == "dataset.rows" and event["source"] == "cli.rows" for event in trace)
+
+
+def test_resolve_generate_config_materializes_stress_profile() -> None:
+    cfg = GeneratorConfig.from_dict({"stress": {"profile": _STRESS_PROFILE}})
+
+    resolved = resolve_generate_config(
+        cfg,
+        device_override="cpu",
+        rows=None,
+        hardware_policy="none",
+        missing_rate=None,
+        missing_mechanism=None,
+        missing_mar_observed_fraction=None,
+        missing_mar_logit_scale=None,
+        missing_mnar_logit_scale=None,
+        diagnostics_enabled=False,
+    )
+
+    assert resolved.config.stress.profile == _STRESS_PROFILE
+    assert resolved.config.dataset.task == "classification"
+    assert resolved.config.dataset.n_train == 768
+    assert resolved.config.dataset.n_test == 256
+    assert resolved.config.graph.n_nodes_min == 2
+    assert resolved.config.graph.n_nodes_max == 32
+    assert resolved.config.steering.enabled is True
+    assert resolved.config.steering.preset == "anti_memorization_piecewise_v1"
+    trace = serialize_resolution_events(resolved.trace_events)
+    assert any(
+        event["path"] == "steering.enabled"
+        and event["source"] == "stress.profile_materialization"
+        and event["new_value"] is True
+        for event in trace
+    )
+
+
+def test_resolve_generate_config_rejects_rows_override_for_stress_profile() -> None:
+    cfg = GeneratorConfig.from_dict({"stress": {"profile": _STRESS_PROFILE}})
+
+    with pytest.raises(ValueError, match=r"locks dataset\.rows to unset"):
+        resolve_generate_config(
+            cfg,
+            device_override="cpu",
+            rows="400..60000",
+            hardware_policy="none",
+            missing_rate=None,
+            missing_mechanism=None,
+            missing_mar_observed_fraction=None,
+            missing_mar_logit_scale=None,
+            missing_mnar_logit_scale=None,
+            diagnostics_enabled=False,
+        )
+
+
+def test_resolve_generate_config_rejects_missingness_override_for_stress_profile() -> None:
+    cfg = GeneratorConfig.from_dict({"stress": {"profile": _STRESS_PROFILE}})
+
+    with pytest.raises(ValueError, match=r"locks dataset\.missing_rate to 0\.0"):
+        resolve_generate_config(
+            cfg,
+            device_override="cpu",
+            rows=None,
+            hardware_policy="none",
+            missing_rate=0.2,
+            missing_mechanism="mnar",
+            missing_mar_observed_fraction=None,
+            missing_mar_logit_scale=None,
+            missing_mnar_logit_scale=None,
+            diagnostics_enabled=False,
+        )
 
 
 def test_cap_rows_spec_to_total_clears_rows_when_cap_is_below_min_total() -> None:
@@ -467,6 +537,25 @@ def test_resolve_benchmark_preset_config_preserves_dataset_rows_for_standard_sui
     assert resolved.config.dataset.rows.mode == "range"
     assert resolved.config.dataset.rows.start == 2000
     assert resolved.config.dataset.rows.stop == 60000
+
+
+def test_resolve_benchmark_preset_config_materializes_stress_profile_for_standard_suite() -> None:
+    cfg = GeneratorConfig.from_dict({"stress": {"profile": _STRESS_PROFILE}})
+
+    resolved = resolve_benchmark_preset_config(
+        preset_key="stress_profile",
+        config=cfg,
+        preset_device="cpu",
+        suite="standard",
+        hardware_policy="none",
+        smoke_caps=None,
+    )
+
+    assert resolved.config.stress.profile == _STRESS_PROFILE
+    assert resolved.config.dataset.n_train == 768
+    assert resolved.config.dataset.n_test == 256
+    assert resolved.config.steering.enabled is True
+    assert resolved.config.steering.preset == "anti_memorization_piecewise_v1"
 
 
 def test_resolve_benchmark_preset_config_preserves_dataset_rows_after_policy_transform(

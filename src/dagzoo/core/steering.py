@@ -14,6 +14,7 @@ from dagzoo.config import (
     SHIFT_MODE_NOISE_DRIFT,
     GeneratorConfig,
     SteeringConfig,
+    StressConfig,
     clone_generator_config,
 )
 from dagzoo.config.models import SteeringStageConfig, steering_stage_definitions
@@ -171,6 +172,7 @@ def resolve_steering(
         break
 
     effective.steering = SteeringConfig()
+    effective.stress = StressConfig()
     effective.validate_generation_constraints()
     return SteeringResolution(
         config=effective,

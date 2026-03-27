@@ -314,7 +314,7 @@ Use the canonical docs instead:
   one-off configs, and downstream repos can hold the data regime fixed while
   comparing model scales.
 - GitHub tracking: `#247 -> #252 -> #257 -> #262 -> #267`
-- Repo touchpoints: `src/dagzoo/config/`, `src/dagzoo/functions/random_functions.py`, `src/dagzoo/postprocess/postprocess.py`, `src/dagzoo/bench/`, `src/dagzoo/sampling/missingness.py`, `src/dagzoo/core/shift.py`, `src/dagzoo/core/noise_runtime.py`
+- Repo touchpoints: `src/dagzoo/config/`, `src/dagzoo/core/config_resolution.py`, `src/dagzoo/functions/random_functions.py`, `src/dagzoo/postprocess/postprocess.py`, `src/dagzoo/bench/`, `src/dagzoo/sampling/missingness.py`, `src/dagzoo/core/shift.py`, `src/dagzoo/core/noise_runtime.py`
 - Exit criteria:
   - Reproducible named stress presets are selectable via config/CLI and remain opt-in.
   - Stress profiles are composed from the lever families surfaced by RD-008, RD-003, RD-004, and RD-012 rather than bespoke parallel plumbing.
@@ -329,6 +329,13 @@ Use the canonical docs instead:
   - `#257` `feat(stress): integrate named stress profiles into generate and filter workflows`
   - `#262` `analysis(stress): add regime characterization and baseline-comparison diagnostics`
   - `#267` `docs(stress): add presets, tests, and benchmark guardrails for robustness profiles`
+- Current repo baseline:
+  - Curated recipe entries labeled `stress profile` remain adoption-layer
+    examples rather than the carried-slice contract for downstream scaling.
+  - `#252` introduces the first carried classification slice as
+    `stress.profile=anti_memorization_piecewise_classification_slice_v1`,
+    resolving onto the default classification envelope plus
+    `steering.preset=anti_memorization_piecewise_v1`.
 
 ### RD-006: Staged Complexity Scaling (Features + Graph)
 
@@ -597,6 +604,10 @@ Use the canonical docs instead:
   stress regimes and carried scaling slices with stable identifiers and
   comparable regime metadata; it depends primarily on RD-003, RD-004, RD-008,
   and RD-012 plus the existing filter and diagnostics observability.
+- The first RD-005 carried-slice spec is
+  `stress.profile=anti_memorization_piecewise_classification_slice_v1`; the
+  older curated recipe `stress profile` labels remain examples rather than the
+  fixed-slice retrieval contract.
 - RD-013 fans out after `#253` into the temporal runtime lane `#258` and the metadata-contract lane `#263`, which rejoin at docs and guardrails `#268`.
 - RD-013 remains later because the near-term downstream contract is one-way tabular corpus handoff, not temporal generation.
 - RD-002 builds on completed RD-001 lineage artifacts for intervention metadata extensions.

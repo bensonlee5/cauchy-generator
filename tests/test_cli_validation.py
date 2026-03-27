@@ -146,6 +146,58 @@ def test_generate_cli_rejects_unknown_recipe(capsys: pytest.CaptureFixture[str])
     assert "dagzoo recipe list" in captured.err
 
 
+def test_generate_cli_rejects_rows_override_for_stress_profile(
+    tmp_path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = load_repo_config()
+    cfg.stress.profile = "anti_memorization_piecewise_classification_slice_v1"
+    config_path = write_config(tmp_path, cfg, "stress_profile.yaml")
+
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "generate",
+                "--config",
+                str(config_path),
+                "--num-datasets",
+                "1",
+                "--rows",
+                "400..60000",
+                "--no-dataset-write",
+            ]
+        )
+
+    assert int(exc.value.code) == 2
+    assert "locks dataset.rows to unset" in capsys.readouterr().err
+
+
+def test_generate_cli_rejects_missingness_override_for_stress_profile(
+    tmp_path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = load_repo_config()
+    cfg.stress.profile = "anti_memorization_piecewise_classification_slice_v1"
+    config_path = write_config(tmp_path, cfg, "stress_profile.yaml")
+
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "generate",
+                "--config",
+                str(config_path),
+                "--num-datasets",
+                "1",
+                "--missing-rate",
+                "0.2",
+                "--missing-mechanism",
+                "mnar",
+                "--no-dataset-write",
+            ]
+        )
+
+    assert int(exc.value.code) == 2
+    assert "locks dataset.missing_rate to 0.0" in capsys.readouterr().err
+
+
 def test_fixed_layout_subcommand_is_removed() -> None:
     with pytest.raises(SystemExit) as exc:
         main(["fixed-layout", "sample", "--config", "configs/default.yaml"])

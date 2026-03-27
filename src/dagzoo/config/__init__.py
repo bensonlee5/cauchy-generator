@@ -46,6 +46,9 @@ from .models import (
     SteeringStageDatasetConfig,
     SteeringStageNoiseConfig,
     SteeringStageShiftConfig,
+    StressConfig,
+    materialize_stress_profile,
+    stress_profile_definition,
 )
 from .normalization import (
     normalize_missing_mechanism,
@@ -105,14 +108,17 @@ __all__ = [
     "SteeringStageDatasetConfig",
     "SteeringStageNoiseConfig",
     "SteeringStageShiftConfig",
+    "StressConfig",
     "clone_generator_config",
     "dataset_rows_bounds",
     "dataset_rows_is_variable",
     "load_packaged_generator_config",
+    "materialize_stress_profile",
     "normalize_dataset_rows",
     "normalize_missing_mechanism",
     "normalize_noise_family",
     "normalize_shift_mode",
     "resolve_dataset_total_rows",
+    "stress_profile_definition",
     "validate_class_split_feasibility",
 ]

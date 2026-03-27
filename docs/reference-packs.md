@@ -22,6 +22,9 @@ ______________________________________________________________________
   - `baseline`: maintained default starting point
   - `paper-backed approximation`: intended to approximate a published prior without overclaiming exact equivalence
   - `stress profile`: reproducible stress regime rather than a paper-prior claim
+- Developer note: these curated recipe labels are not the RD-005 carried-slice
+  selector contract; the first fixed-slice selector lives under
+  `stress.profile=anti_memorization_piecewise_classification_slice_v1`.
 
 ______________________________________________________________________
 

@@ -54,6 +54,9 @@ from .scalars import (
 
 _STEERING_PRESET_ANTI_MEMORIZATION_PIECEWISE_V1 = "anti_memorization_piecewise_v1"
 _STEERING_FRACTION_TOLERANCE = 1e-6
+_STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_SLICE_V1 = (
+    "anti_memorization_piecewise_classification_slice_v1"
+)
 _STEERING_PRESET_DEFINITIONS: dict[str, dict[str, Any]] = {
     _STEERING_PRESET_ANTI_MEMORIZATION_PIECEWISE_V1: {
         "stages": [
@@ -98,6 +101,68 @@ _STEERING_PRESET_DEFINITIONS: dict[str, dict[str, Any]] = {
         ],
     }
 }
+_STRESS_PROFILE_DEFINITIONS: dict[str, dict[str, Any]] = {
+    _STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_SLICE_V1: {
+        "dataset": {
+            "task": "classification",
+            "n_train": 768,
+            "n_test": 256,
+            "rows": None,
+            "n_features_min": 16,
+            "n_features_max": 64,
+            "n_classes_min": 2,
+            "n_classes_max": 10,
+            "categorical_ratio_min": 0.0,
+            "categorical_ratio_max": 1.0,
+            "max_categorical_cardinality": 9,
+        },
+        "graph": {
+            "n_nodes_min": 2,
+            "n_nodes_max": 32,
+        },
+        "mechanism": {
+            "function_family_mix": None,
+        },
+        "steering": {
+            "enabled": True,
+            "preset": _STEERING_PRESET_ANTI_MEMORIZATION_PIECEWISE_V1,
+            "stages": [],
+        },
+    }
+}
+_STRESS_LOCKED_PATHS: tuple[str, ...] = (
+    "dataset.task",
+    "dataset.n_train",
+    "dataset.n_test",
+    "dataset.rows",
+    "dataset.n_features_min",
+    "dataset.n_features_max",
+    "dataset.n_classes_min",
+    "dataset.n_classes_max",
+    "dataset.categorical_ratio_min",
+    "dataset.categorical_ratio_max",
+    "dataset.max_categorical_cardinality",
+    "dataset.missing_rate",
+    "dataset.missing_mechanism",
+    "dataset.missing_mar_observed_fraction",
+    "dataset.missing_mar_logit_scale",
+    "dataset.missing_mnar_logit_scale",
+    "graph.n_nodes_min",
+    "graph.n_nodes_max",
+    "mechanism.function_family_mix",
+    "shift.enabled",
+    "shift.mode",
+    "shift.graph_scale",
+    "shift.mechanism_scale",
+    "shift.variance_scale",
+    "noise.family",
+    "noise.base_scale",
+    "noise.student_t_df",
+    "noise.mixture_weights",
+    "steering.enabled",
+    "steering.preset",
+    "steering.stages",
+)
 
 
 def steering_preset_definition(name: str) -> dict[str, Any]:
@@ -110,6 +175,127 @@ def steering_preset_definition(name: str) -> dict[str, Any]:
         raise ValueError(
             f"Unsupported steering.preset {name!r}. Expected one of: {supported}."
         ) from exc
+
+
+def stress_profile_definition(name: str) -> dict[str, Any]:
+    """Return a deep copy of one built-in stress-profile definition."""
+
+    try:
+        return copy.deepcopy(_STRESS_PROFILE_DEFINITIONS[str(name)])
+    except KeyError as exc:
+        supported = ", ".join(sorted(_STRESS_PROFILE_DEFINITIONS))
+        raise ValueError(
+            f"Unsupported stress.profile {name!r}. Expected one of: {supported}."
+        ) from exc
+
+
+def _normalize_stress_profile(value: object) -> str | None:
+    """Normalize an optional stress profile name."""
+
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        supported = ", ".join(sorted(_STRESS_PROFILE_DEFINITIONS))
+        raise ValueError(f"Unsupported stress.profile {value!r}. Expected one of: {supported}.")
+    normalized = value.strip().lower()
+    if not normalized:
+        raise ValueError("stress.profile must be a non-empty string when provided.")
+    if normalized not in _STRESS_PROFILE_DEFINITIONS:
+        supported = ", ".join(sorted(_STRESS_PROFILE_DEFINITIONS))
+        raise ValueError(f"Unsupported stress.profile {value!r}. Expected one of: {supported}.")
+    return normalized
+
+
+def _normalize_stress_fields(stress: "StressConfig") -> None:
+    """Stage 1: normalize the stress section."""
+
+    stress.profile = _normalize_stress_profile(stress.profile)
+
+
+def _get_config_path_value(config: object, path: str) -> object:
+    current = config
+    for component in path.split("."):
+        current = getattr(current, component)
+    return current
+
+
+def _set_config_path_value(config: object, path: str, value: object) -> None:
+    components = path.split(".")
+    current = config
+    for component in components[:-1]:
+        current = getattr(current, component)
+    setattr(current, components[-1], copy.deepcopy(value))
+
+
+def _apply_stress_profile_patch(config: "GeneratorConfig", *, profile: str) -> None:
+    """Apply one built-in stress profile onto an existing config."""
+
+    patch = stress_profile_definition(profile)
+    for section_name, section_patch in patch.items():
+        if not isinstance(section_patch, dict):
+            raise TypeError(
+                f"stress profile {profile!r} section {section_name!r} must be a mapping."
+            )
+        section = getattr(config, section_name)
+        for field_name, field_value in section_patch.items():
+            setattr(section, field_name, copy.deepcopy(field_value))
+
+
+def _expected_stress_profile_config(profile: str) -> "GeneratorConfig":
+    """Return the canonical resolved config envelope for one stress profile."""
+
+    expected = GeneratorConfig()
+    _apply_stress_profile_patch(expected, profile=profile)
+    expected.validate_generation_constraints()
+    return expected
+
+
+def _format_stress_locked_value(value: object) -> str:
+    if value is None:
+        return "unset"
+    if isinstance(value, str):
+        return repr(value)
+    return repr(value)
+
+
+def _stage2_validate_stress_constraints(config: "GeneratorConfig") -> None:
+    """Stage 2: validate stress-profile identity locking before materialization."""
+
+    profile = config.stress.profile
+    if profile is None:
+        return
+
+    baseline = GeneratorConfig()
+    expected = _expected_stress_profile_config(profile)
+    for path in _STRESS_LOCKED_PATHS:
+        actual_value = _get_config_path_value(config, path)
+        baseline_value = _get_config_path_value(baseline, path)
+        expected_value = _get_config_path_value(expected, path)
+        if actual_value != expected_value and actual_value != baseline_value:
+            raise ValueError(
+                f"stress.profile {profile!r} locks {path} to "
+                f"{_format_stress_locked_value(expected_value)}, got "
+                f"{_format_stress_locked_value(actual_value)}."
+            )
+
+
+def materialize_stress_profile(
+    config: "GeneratorConfig",
+    *,
+    revalidate: bool,
+) -> "GeneratorConfig":
+    """Return a config clone with the selected stress profile applied."""
+
+    effective = copy.deepcopy(config)
+    profile = effective.stress.profile
+    if profile is None:
+        if revalidate:
+            effective.validate_generation_constraints()
+        return effective
+    _apply_stress_profile_patch(effective, profile=profile)
+    if revalidate:
+        effective.validate_generation_constraints()
+    return effective
 
 
 def _normalize_dataset_fields(dataset: DatasetConfig) -> None:
@@ -701,6 +887,11 @@ def _stage1_normalize_generation_sections(config: GeneratorConfig) -> None:
         value=config.steering,
         section_type=SteeringConfig,
     )
+    config.stress = _coerce_section(
+        section_name="stress",
+        value=config.stress,
+        section_type=StressConfig,
+    )
     config.runtime = _coerce_section(
         section_name="runtime",
         value=config.runtime,
@@ -733,6 +924,7 @@ def _stage1_normalize_generation_sections(config: GeneratorConfig) -> None:
     _normalize_shift_fields(config.shift)
     _normalize_noise_fields(config.noise)
     _normalize_steering_fields(config.steering)
+    _normalize_stress_fields(config.stress)
     _normalize_runtime_fields(config.runtime)
     _normalize_output_fields(config.output)
     _normalize_diagnostics_fields(config.diagnostics)
@@ -1024,6 +1216,7 @@ def _stage2_validate_generation_constraints(config: GeneratorConfig) -> None:
     _stage2_validate_shift_constraints(config.shift)
     _stage2_validate_noise_constraints(config.noise)
     _stage2_validate_steering_constraints(config.steering)
+    _stage2_validate_stress_constraints(config)
 
 
 def _run_generation_validation_stages(config: GeneratorConfig) -> None:
@@ -1151,6 +1344,14 @@ class SteeringConfig:
 
 
 @dataclass(slots=True)
+class StressConfig:
+    profile: str | None = None
+
+    def __post_init__(self) -> None:
+        _normalize_stress_fields(self)
+
+
+@dataclass(slots=True)
 class RuntimeConfig:
     device: str = "auto"
     torch_dtype: str = "float32"
@@ -1236,6 +1437,7 @@ class GeneratorConfig:
     shift: ShiftConfig = field(default_factory=ShiftConfig)
     noise: NoiseConfig = field(default_factory=NoiseConfig)
     steering: SteeringConfig = field(default_factory=SteeringConfig)
+    stress: StressConfig = field(default_factory=StressConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     diagnostics: DiagnosticsConfig = field(default_factory=DiagnosticsConfig)
@@ -1282,6 +1484,7 @@ class GeneratorConfig:
         shift = ShiftConfig(**(data.get("shift") or {}))
         noise = NoiseConfig(**(data.get("noise") or {}))
         steering = SteeringConfig(**steering_payload)
+        stress = StressConfig(**(data.get("stress") or {}))
         runtime = RuntimeConfig(**runtime_payload)
         output = OutputConfig(**(data.get("output") or {}))
         diagnostics = DiagnosticsConfig(**(data.get("diagnostics") or {}))
@@ -1302,6 +1505,7 @@ class GeneratorConfig:
             shift=shift,
             noise=noise,
             steering=steering,
+            stress=stress,
             runtime=runtime,
             output=output,
             diagnostics=diagnostics,
