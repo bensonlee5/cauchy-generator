@@ -166,6 +166,7 @@ def run_corpus_probe(
         num_datasets=num_datasets,
         warmup_datasets=warmup,
         device=requested_device,
+        benchmark_fast_prepare=False,
     )
 
     coverage_aggregator = CoverageAggregator(
@@ -185,6 +186,7 @@ def run_corpus_probe(
         generation_config,
         num_datasets=num_datasets,
         device=requested_device,
+        benchmark_fast_prepare=False,
     )
 
     if bool(realized_config.filter.enabled):
