@@ -11,6 +11,7 @@ from dagzoo.cli.entrypoint import main
 from dagzoo.core.generate_handoff import (
     GENERATE_HANDOFF_SCHEMA_NAME,
     GENERATE_HANDOFF_SCHEMA_VERSION,
+    _load_generated_provenance,
     build_generate_handoff_manifest,
     validate_generate_handoff_manifest,
     write_generate_handoff_manifest,
@@ -156,6 +157,74 @@ def _load_ndjson(path: Path) -> list[dict[str, object]]:
     return payload
 
 
+def _unit_generated_metadata_record(
+    *,
+    dataset_index: int = 0,
+    dataset_id: str | None = None,
+    target_parent_prior: str = "near_max_mixture",
+    target_parent_near_max_band_min_fraction: float = 0.75,
+    target_parent_below_sqrt_prob: float = 0.05,
+    target_parent_midrange_prob: float = 0.20,
+    target_parent_count: int | None = None,
+    target_parent_fraction: float | None = None,
+    target_parent_regime: str = "near_max",
+) -> dict[str, object]:
+    resolved_dataset_id = dataset_id or stable_blake2s_hex(
+        {
+            "request_run": _UNIT_REQUEST_RUN_ID,
+            "dataset_index": dataset_index,
+        }
+    )
+    resolved_target_parent_count = target_parent_count if target_parent_count is not None else 6
+    resolved_target_parent_fraction = (
+        target_parent_fraction if target_parent_fraction is not None else 0.75
+    )
+    return {
+        "dataset_index": dataset_index,
+        "metadata": {
+            "dataset_id": resolved_dataset_id,
+            "config": {
+                "dataset": {
+                    "target_parent_prior": target_parent_prior,
+                    "target_parent_near_max_band_min_fraction": (
+                        target_parent_near_max_band_min_fraction
+                    ),
+                    "target_parent_below_sqrt_prob": target_parent_below_sqrt_prob,
+                    "target_parent_midrange_prob": target_parent_midrange_prob,
+                }
+            },
+            "lineage": {
+                "assignments": {
+                    "target_parent_count": resolved_target_parent_count,
+                    "target_parent_fraction": resolved_target_parent_fraction,
+                    "target_parent_regime": target_parent_regime,
+                }
+            },
+            "posterior_predictive": {
+                "factorization": _UNIT_FACTORIZATION,
+                "metric_definition": _UNIT_METRIC_DEFINITION,
+                "teacher_conditional_export_enabled": False,
+                "teacher_conditionals_available": False,
+            },
+            "prior": {
+                "factorization": _UNIT_FACTORIZATION,
+            },
+            "split_groups": {"request_run": _UNIT_REQUEST_RUN_ID},
+        },
+    }
+
+
+def _write_generated_metadata_records(
+    generated_dir: Path, records: list[dict[str, object]]
+) -> None:
+    shard_dir = generated_dir / "shard_00000"
+    shard_dir.mkdir(parents=True, exist_ok=True)
+    (shard_dir / "metadata.ndjson").write_text(
+        "\n".join(json.dumps(record, sort_keys=True) for record in records) + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_build_generate_handoff_manifest_is_versioned_and_valid(tmp_path) -> None:
     run_root = tmp_path / "run"
     _write_generate_run_artifacts(run_root)
@@ -286,6 +355,80 @@ def test_build_generate_handoff_manifest_identity_ignores_root_specific_paths(tm
     assert payload_a["identity"] == payload_b["identity"]
 
 
+def test_load_generated_provenance_requires_metadata_files(tmp_path) -> None:
+    generated_dir = tmp_path / "generated"
+    generated_dir.mkdir(parents=True, exist_ok=True)
+
+    with pytest.raises(
+        ValueError,
+        match=r"generated_dir: must contain shard metadata under shard_\*/metadata\.ndjson",
+    ):
+        _load_generated_provenance(generated_dir=generated_dir)
+
+
+def test_load_generated_provenance_rejects_blank_metadata_stream(tmp_path) -> None:
+    generated_dir = tmp_path / "generated"
+    shard_dir = generated_dir / "shard_00000"
+    shard_dir.mkdir(parents=True, exist_ok=True)
+    (shard_dir / "metadata.ndjson").write_text("\n\n", encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match=r"generated_dir: must contain posterior predictive provenance metadata",
+    ):
+        _load_generated_provenance(generated_dir=generated_dir)
+
+
+def test_load_generated_provenance_rejects_invalid_json_after_blank_line(tmp_path) -> None:
+    generated_dir = tmp_path / "generated"
+    shard_dir = generated_dir / "shard_00000"
+    shard_dir.mkdir(parents=True, exist_ok=True)
+    (shard_dir / "metadata.ndjson").write_text("\n{not-json}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"contains invalid JSON"):
+        _load_generated_provenance(generated_dir=generated_dir)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "bad_value", "pattern"),
+    [
+        ("target_parent_prior", "all_features", r"contains mixed target-parent priors"),
+        (
+            "target_parent_near_max_band_min_fraction",
+            0.8,
+            r"contains mixed target-parent near-max band minimum fractions",
+        ),
+        (
+            "target_parent_below_sqrt_prob",
+            0.15,
+            r"contains mixed target-parent below-sqrt probabilities",
+        ),
+        (
+            "target_parent_midrange_prob",
+            0.3,
+            r"contains mixed target-parent midrange probabilities",
+        ),
+    ],
+)
+def test_load_generated_provenance_rejects_mixed_target_parent_values(
+    tmp_path,
+    field_name: str,
+    bad_value: object,
+    pattern: str,
+) -> None:
+    generated_dir = tmp_path / "generated"
+    records = [
+        _unit_generated_metadata_record(dataset_index=0),
+        _unit_generated_metadata_record(dataset_index=1, target_parent_regime="midrange"),
+    ]
+    dataset_config = records[1]["metadata"]["config"]["dataset"]
+    dataset_config[field_name] = bad_value
+    _write_generated_metadata_records(generated_dir, records)
+
+    with pytest.raises(ValueError, match=pattern):
+        _load_generated_provenance(generated_dir=generated_dir)
+
+
 def test_write_generate_handoff_manifest_writes_json_and_rejects_invalid_payload(
     tmp_path,
 ) -> None:
@@ -346,6 +489,39 @@ def test_build_generate_handoff_manifest_preserves_recipe_reference(tmp_path) ->
 
     validate_generate_handoff_manifest(payload)
     assert payload["generate_invocation"]["config_path"] == "recipe:default-baseline"
+
+
+def test_validate_generate_handoff_manifest_rejects_non_list_target_parent_regimes_present(
+    tmp_path,
+) -> None:
+    run_root = tmp_path / "run"
+    _write_generate_run_artifacts(run_root)
+    payload = build_generate_handoff_manifest(
+        config_path="configs/default.yaml",
+        generate_invocation_overrides=_generate_overrides(str(run_root)),
+        run_root=run_root,
+        generated_dir=run_root / "generated",
+        effective_config_path=run_root / "generated" / "effective_config.yaml",
+        effective_config_trace_path=run_root / "generated" / "effective_config_trace.yaml",
+        generated_datasets=2,
+        generation_elapsed_seconds=12.0,
+        requested_device="cpu",
+        resolved_device="cpu",
+        hardware_backend="cpu",
+        hardware_device_name="CPU",
+        hardware_tier="cpu",
+        hardware_policy="none",
+    )
+    payload["provenance"]["target_parent_regimes_present"] = "near_max"
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"handoff_manifest\.provenance\.target_parent_regimes_present: "
+            r"must be a list of strings"
+        ),
+    ):
+        validate_generate_handoff_manifest(payload)
 
 
 def test_write_generate_handoff_manifest_does_not_overwrite_existing_file(tmp_path) -> None:

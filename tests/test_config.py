@@ -1260,6 +1260,42 @@ def test_target_parent_probability_mass_must_fit_within_one() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("field_name", "bad_value", "pattern"),
+    [
+        ("enabled", "yes", r"diagnostics\.enabled must be a boolean"),
+        ("include_spearman", 1, r"diagnostics\.include_spearman must be a boolean"),
+        (
+            "teacher_conditional_export",
+            "true",
+            r"diagnostics\.teacher_conditional_export must be a boolean",
+        ),
+    ],
+)
+def test_diagnostics_boolean_toggles_reject_non_bool_values(
+    field_name: str,
+    bad_value: object,
+    pattern: str,
+) -> None:
+    with pytest.raises(ValueError, match=pattern):
+        GeneratorConfig.from_dict({"diagnostics": {field_name: bad_value}})
+
+
+def test_target_parent_count_max_must_not_be_less_than_min() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"dataset\.target_parent_count_min must be <= target_parent_count_max",
+    ):
+        GeneratorConfig.from_dict(
+            {
+                "dataset": {
+                    "target_parent_count_min": 4,
+                    "target_parent_count_max": 3,
+                }
+            }
+        )
+
+
 def test_shift_defaults_are_backward_compatible_when_shift_block_is_absent() -> None:
     cfg = GeneratorConfig.from_yaml("configs/default.yaml")
     assert cfg.shift.enabled is False

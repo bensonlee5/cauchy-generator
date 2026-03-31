@@ -42,6 +42,7 @@ from dagzoo.core.generation_runtime import (
     _finalize_generated_chunk_preserve_schema,
     _finalize_generated_tensors,
     _resolve_split_indices,
+    _teacher_conditionals_metadata,
 )
 from dagzoo.core.layout import _sample_layout
 from dagzoo.core.layout_types import LayoutPlan
@@ -2093,6 +2094,35 @@ def test_generate_one_can_export_teacher_conditionals() -> None:
     chosen = probs[np.arange(len(bundle.y_test)), np.asarray(bundle.y_test, dtype=np.int64)]
     expected = float((-np.log(np.clip(chosen, 1e-12, 1.0))).mean())
     assert teacher_conditionals["optimal_log_loss_per_test_cell"] == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    "aux_meta",
+    [
+        {
+            "teacher_conditional_test_probs": [[0.7, 0.3], [0.2, 0.8]],
+            "teacher_conditional_class_labels": [],
+        },
+        {
+            "teacher_conditional_test_probs": [0.7, 0.3],
+            "teacher_conditional_class_labels": [0, 1],
+        },
+        {
+            "teacher_conditional_test_probs": [[0.7, 0.3]],
+            "teacher_conditional_class_labels": [0, 1],
+        },
+        {
+            "teacher_conditional_test_probs": [[0.7], [0.3]],
+            "teacher_conditional_class_labels": [0, 1],
+        },
+    ],
+)
+def test_teacher_conditionals_metadata_rejects_malformed_aux_metadata(
+    aux_meta: dict[str, object],
+) -> None:
+    y_test = torch.tensor([0, 1], dtype=torch.int64)
+
+    assert _teacher_conditionals_metadata(y_test=y_test, aux_meta=aux_meta) is None
 
 
 def test_sample_layout_near_dense_target_parent_prior_has_mode_at_max() -> None:

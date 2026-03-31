@@ -159,6 +159,21 @@ def _valid_compact_lineage_payload() -> dict[str, Any]:
     }
 
 
+def _lineage_payload_with_target_parent_metadata() -> dict[str, Any]:
+    payload = _valid_lineage_payload()
+    payload["assignments"].update(
+        {
+            "target_parent_features": [1, 2, 4],
+            "target_parent_count": 3,
+            "target_parent_fraction": 3 / 5,
+            "target_parent_prior": "near_max_mixture",
+            "target_parent_regime": "near_max",
+            "target_parent_sqrt_threshold": 2,
+        }
+    )
+    return payload
+
+
 def test_validate_lineage_payload_accepts_valid_payload() -> None:
     validate_lineage_payload(_valid_lineage_payload())
 
@@ -182,33 +197,103 @@ def test_validate_lineage_payload_accepts_conditional_target_modes(target_mode: 
 
 
 def test_validate_lineage_payload_accepts_target_parent_metadata() -> None:
-    payload = _valid_lineage_payload()
-    payload["assignments"].update(
-        {
-            "target_parent_features": [1, 2, 4],
-            "target_parent_count": 3,
-            "target_parent_fraction": 3 / 5,
-            "target_parent_prior": "near_max_mixture",
-            "target_parent_regime": "near_max",
-            "target_parent_sqrt_threshold": 2,
-        }
-    )
+    payload = _lineage_payload_with_target_parent_metadata()
 
     validate_lineage_payload(payload)
 
 
-def test_validate_lineage_payload_rejects_inconsistent_target_parent_fraction() -> None:
+def test_validate_lineage_payload_rejects_partial_target_parent_metadata() -> None:
     payload = _valid_lineage_payload()
-    payload["assignments"].update(
-        {
-            "target_parent_features": [1, 2, 4],
-            "target_parent_count": 3,
-            "target_parent_fraction": 0.2,
-            "target_parent_prior": "near_max_mixture",
-            "target_parent_regime": "near_max",
-            "target_parent_sqrt_threshold": 2,
-        }
-    )
+    payload["assignments"]["target_parent_count"] = 1
+
+    with pytest.raises(
+        LineageValidationError,
+        match=r"lineage\.assignments: missing required target-parent field\(s\):",
+    ):
+        validate_lineage_payload(payload)
+
+
+@pytest.mark.parametrize(
+    ("field_updates", "pattern"),
+    [
+        (
+            {"target_parent_features": "bad"},
+            r"lineage\.assignments\.target_parent_features: must be a list of feature indices",
+        ),
+        (
+            {"target_parent_features": [1, "two", 4]},
+            (
+                r"lineage\.assignments\.target_parent_features\[1\]: "
+                r"must be an integer feature index"
+            ),
+        ),
+        (
+            {"target_parent_features": [1, 5]},
+            r"lineage\.assignments\.target_parent_features\[1\]: must be in range \[0, 4\]",
+        ),
+        (
+            {"target_parent_features": [1, 1, 4]},
+            (
+                r"lineage\.assignments\.target_parent_features\[1\]: "
+                r"must be strictly increasing and unique"
+            ),
+        ),
+        (
+            {"target_parent_count": "3"},
+            r"lineage\.assignments\.target_parent_count: must be an integer",
+        ),
+        (
+            {"target_parent_count": 2},
+            r"lineage\.assignments\.target_parent_count: must equal len\(target_parent_features\)",
+        ),
+        (
+            {"target_parent_fraction": "0.6"},
+            r"lineage\.assignments\.target_parent_fraction: must be a finite ratio in \[0, 1\]",
+        ),
+        (
+            {"target_parent_fraction": 1.1},
+            r"lineage\.assignments\.target_parent_fraction: must be a finite ratio in \[0, 1\]",
+        ),
+        (
+            {"target_parent_prior": 7},
+            r"lineage\.assignments\.target_parent_prior: must be a string",
+        ),
+        (
+            {"target_parent_prior": "sparse"},
+            r"lineage\.assignments\.target_parent_prior: must be one of:",
+        ),
+        (
+            {"target_parent_regime": 7},
+            r"lineage\.assignments\.target_parent_regime: must be a string",
+        ),
+        (
+            {"target_parent_regime": "dense"},
+            r"lineage\.assignments\.target_parent_regime: must be one of:",
+        ),
+        (
+            {"target_parent_sqrt_threshold": "2"},
+            r"lineage\.assignments\.target_parent_sqrt_threshold: must be an integer",
+        ),
+        (
+            {"target_parent_sqrt_threshold": 0},
+            r"lineage\.assignments\.target_parent_sqrt_threshold: must be in range \[1, 5\]",
+        ),
+    ],
+)
+def test_validate_lineage_payload_rejects_invalid_target_parent_metadata(
+    field_updates: dict[str, object],
+    pattern: str,
+) -> None:
+    payload = _lineage_payload_with_target_parent_metadata()
+    payload["assignments"].update(field_updates)
+
+    with pytest.raises(LineageValidationError, match=pattern):
+        validate_lineage_payload(payload)
+
+
+def test_validate_lineage_payload_rejects_inconsistent_target_parent_fraction() -> None:
+    payload = _lineage_payload_with_target_parent_metadata()
+    payload["assignments"]["target_parent_fraction"] = 0.2
 
     with pytest.raises(
         LineageValidationError,
