@@ -1969,9 +1969,25 @@ def test_generate_one_lineage_assignment_lengths_and_bounds() -> None:
 
     feature_to_node = assignments["feature_to_node"]
     assert len(feature_to_node) == int(bundle.metadata["n_features"])
-    assert assignments["target_mode"] == "observed_x_conditional"
+    assert assignments["target_mode"] == "latent_complete_x_conditional"
     for node_index in feature_to_node:
         assert 0 <= int(node_index) < n_nodes
+
+
+def test_generate_one_emits_latent_complete_prior_metadata() -> None:
+    cfg = _tiny_config()
+    bundle = generate_one(cfg, seed=1313, device="cpu")
+    prior = bundle.metadata["prior"]
+
+    assert prior == {
+        "factorization": "independent_p_x_complete_and_p_y_given_x_complete",
+        "target_head": "latent_complete_x_conditional",
+        "feature_generator": "latent_dag",
+        "missingness_stage": "post_target_observation",
+        "classification_validity_policy": "retry_only",
+        "localization_mode": "none",
+        "n_adaptation": "none",
+    }
 
 
 def test_generate_one_emits_graph_complexity_metadata() -> None:
@@ -4281,7 +4297,7 @@ def test_generate_retries_when_stratified_split_is_infeasible(
         generate_one(cfg, seed=99, device="cpu")
 
 
-def test_prepare_canonical_fixed_layout_run_skips_run_wide_classification_attempt_planning(
+def test_prepare_canonical_fixed_layout_run_precomputes_run_wide_classification_attempt_plan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cfg = _tiny_config()
@@ -4290,6 +4306,7 @@ def test_prepare_canonical_fixed_layout_run_skips_run_wide_classification_attemp
 
     plan = _sample_fixed_layout(_tiny_regression_config(), seed=701, device="cpu")
     sample_calls: list[tuple[tuple[str | int, ...], int]] = []
+    attempt_plan_calls: list[tuple[int, int]] = []
 
     def _stub_sample_fixed_layout_candidate(
         _config: GeneratorConfig,
@@ -4310,31 +4327,35 @@ def test_prepare_canonical_fixed_layout_run_skips_run_wide_classification_attemp
     )
     monkeypatch.setattr(
         "dagzoo.core.fixed_layout.runtime._fixed_layout_plan_classification_attempt_plan",
-        lambda *_args, **_kwargs: pytest.fail(
-            "classification preparation should not precompute a full-run attempt plan"
+        lambda _config, **kwargs: (
+            attempt_plan_calls.append((int(kwargs["num_datasets"]), int(kwargs["batch_size"])))
+            or tuple(0 for _ in range(int(kwargs["num_datasets"])))
         ),
     )
 
     prepared = prepare_canonical_fixed_layout_run(cfg, num_datasets=10, seed=16, device="cpu")
     expected_rows_seed = KeyedRng(16).child_seed("rows")
-
-    assert sample_calls == [(("plan_candidate", 0), expected_rows_seed)]
-    assert int(prepared.plan.plan_seed) == int(plan.plan_seed)
-    assert int(prepared.batch_size) == _resolve_fixed_layout_batch_size(
+    expected_batch_size = _resolve_fixed_layout_batch_size(
         plan,
         num_datasets=10,
         batch_size=None,
     )
-    assert not hasattr(prepared, "classification_attempt_plan")
+
+    assert sample_calls == [(("plan_candidate", 0), expected_rows_seed)]
+    assert attempt_plan_calls == [(10, expected_batch_size)]
+    assert int(prepared.plan.plan_seed) == int(plan.plan_seed)
+    assert int(prepared.batch_size) == expected_batch_size
+    assert prepared.classification_attempt_plan == tuple(0 for _ in range(10))
 
 
-def test_prepare_canonical_fixed_layout_run_skips_classification_label_validation_work(
+def test_prepare_canonical_fixed_layout_run_routes_classification_validation_through_attempt_plan_helper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cfg = _tiny_config()
     cfg.dataset.task = "classification"
     cfg.filter.max_attempts = 2
     plan = _sample_fixed_layout(_tiny_regression_config(), seed=801, device="cpu")
+    attempt_plan_calls: list[tuple[int, int, int]] = []
 
     def _stub_sample_fixed_layout_candidate(
         _config: GeneratorConfig,
@@ -4361,15 +4382,30 @@ def test_prepare_canonical_fixed_layout_run_skips_classification_label_validatio
         ),
     )
     monkeypatch.setattr(
-        "dagzoo.core.fixed_layout.runtime.generate_fixed_layout_label_batch",
-        lambda *_args, **_kwargs: pytest.fail(
-            "classification prep should not generate labels during run preparation"
+        "dagzoo.core.fixed_layout.runtime._fixed_layout_plan_classification_attempt_plan",
+        lambda _config, **kwargs: (
+            attempt_plan_calls.append(
+                (
+                    int(kwargs["num_datasets"]),
+                    int(kwargs["batch_size"]),
+                    int(kwargs["run_root"].child_seed()),
+                )
+            )
+            or (1, 0, 1, 0)
         ),
     )
 
     prepared = prepare_canonical_fixed_layout_run(cfg, num_datasets=4, seed=17, device="cpu")
 
     assert int(prepared.plan.plan_seed) == int(plan.plan_seed)
+    assert attempt_plan_calls == [
+        (
+            4,
+            int(_resolve_fixed_layout_batch_size(plan, num_datasets=4, batch_size=None)),
+            int(KeyedRng(17).child_seed()),
+        )
+    ]
+    assert prepared.classification_attempt_plan == (1, 0, 1, 0)
 
 
 def test_resolve_fixed_layout_batch_size_uses_configured_target_cells() -> None:
@@ -5149,7 +5185,8 @@ def test_generate_batch_graph_steering_preserves_base_replay_roots_and_replays_p
         "steering",
         "execution_plan",
     ]
-    assert int(steered_bundle.metadata["layout_plan_schema_version"]) == 8
+    assert int(steered_bundle.metadata["layout_plan_schema_version"]) == 9
+    assert str(steered_bundle.metadata["layout_execution_contract"]) == "chunk_batched_v3"
     assert str(replayed_plan.layout_signature) == str(steered_bundle.metadata["layout_signature"])
     assert str(replayed_plan.plan_signature) == str(
         steered_bundle.metadata["layout_plan_signature"]
@@ -5246,3 +5283,15 @@ def test_generate_one_missingness_mask_is_reproducible_for_fixed_seed() -> None:
     assert torch.equal(torch.isnan(a.X_train), torch.isnan(b.X_train))
     assert torch.equal(torch.isnan(a.X_test), torch.isnan(b.X_test))
     assert a.metadata["missingness"] == b.metadata["missingness"]
+
+
+def test_generate_one_missingness_does_not_change_targets_for_same_seed() -> None:
+    base_cfg = _tiny_missingness_config(task="regression", mechanism="none", missing_rate=0.0)
+    masked_cfg = _tiny_missingness_config(task="regression", mechanism="mnar", missing_rate=0.3)
+
+    base = generate_one(base_cfg, seed=24680, device="cpu")
+    masked = generate_one(masked_cfg, seed=24680, device="cpu")
+
+    torch.testing.assert_close(base.y_train, masked.y_train)
+    torch.testing.assert_close(base.y_test, masked.y_test)
+    assert torch.isnan(masked.X_train).any() or torch.isnan(masked.X_test).any()

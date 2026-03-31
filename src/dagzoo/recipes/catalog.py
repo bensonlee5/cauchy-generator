@@ -47,7 +47,7 @@ _RECIPES: dict[str, RecipeSpec] = {
         title="Default Baseline",
         summary=(
             "Balanced mixed-type baseline with the default factorized "
-            "feature-prior plus observed-X target-head semantics."
+            "complete-data feature prior plus latent-complete-data target-head semantics."
         ),
         confidence_tier="baseline",
         category="reference prior",
@@ -60,7 +60,7 @@ _RECIPES: dict[str, RecipeSpec] = {
         title="TabPFN v1 Prior Approximation",
         summary=(
             "Paper-backed numeric-heavy classification prior with the default "
-            "factorized observed-X target-head semantics."
+            "factorized latent-complete-data target-head semantics."
         ),
         confidence_tier="paper-backed approximation",
         category="reference prior",

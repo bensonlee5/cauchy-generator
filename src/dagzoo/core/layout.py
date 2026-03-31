@@ -271,7 +271,7 @@ def _build_target_specs(
     layout: LayoutPlan,
     task: str,
 ) -> list[FixedLayoutConverterSpec]:
-    """Build converter specs for the observed-`X` target head."""
+    """Build converter specs for the latent-complete-data target head."""
 
     if task == "classification":
         n_classes = int(layout.n_classes)

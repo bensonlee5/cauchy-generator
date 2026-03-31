@@ -295,9 +295,13 @@ def _build_bundle_metadata(
                 "filter_rejection_rate": None,
             },
             "prior": {
-                "factorization": "independent_p_x_and_p_y_given_x",
-                "target_head": "observed_x_conditional",
+                "factorization": "independent_p_x_complete_and_p_y_given_x_complete",
+                "target_head": "latent_complete_x_conditional",
                 "feature_generator": "latent_dag",
+                "missingness_stage": "post_target_observation",
+                "classification_validity_policy": "retry_only",
+                "localization_mode": "none",
+                "n_adaptation": "none",
             },
             "config": copy.deepcopy(context.config_payload),
         }

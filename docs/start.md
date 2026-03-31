@@ -33,20 +33,22 @@ dagzoo recipe list
 ```
 
 That command prints the stable recipe names and the regime each one is meant to
-approximate or stress. All shipped recipes now use the default factorized prior:
-sample observed `X` first, then sample `y | X`.
+approximate or stress. All shipped recipes now use the default factorized
+complete-data prior: sample complete `X`, then sample `y | X_complete`, then
+optionally apply missingness as a separate observation process.
 
 ______________________________________________________________________
 
 ## 3. Generate your first run
 
-Balanced baseline with the default factorized `p(x)` plus `p(y | x)` prior:
+Balanced baseline with the default factorized `p(x_complete)` plus
+`p(y | x_complete)` prior:
 
 ```bash
 dagzoo generate --config recipe:default-baseline --num-datasets 25 --out data/default_baseline
 ```
 
-TabPFN-inspired numeric-heavy factorized prior:
+TabPFN-inspired numeric-heavy factorized complete-data prior:
 
 ```bash
 dagzoo generate --config recipe:tabpfn-v1-prior-approx --num-datasets 25 --out data/tabpfn_prior

@@ -167,6 +167,20 @@ def test_validate_lineage_payload_accepts_valid_compact_payload() -> None:
     validate_lineage_payload(_valid_compact_lineage_payload())
 
 
+@pytest.mark.parametrize(
+    "target_mode",
+    ["observed_x_conditional", "latent_complete_x_conditional"],
+)
+def test_validate_lineage_payload_accepts_conditional_target_modes(target_mode: str) -> None:
+    payload = _valid_lineage_payload()
+    payload["assignments"] = {
+        "feature_to_node": [0, 1, 1, 2, 3],
+        "target_mode": target_mode,
+    }
+
+    validate_lineage_payload(payload)
+
+
 def test_validate_metadata_lineage_accepts_absent_payload_when_optional() -> None:
     validate_metadata_lineage({"seed": 1}, required=False)
 

@@ -87,7 +87,7 @@ def postprocess_feature_matrix(
     keyed_rng: KeyedRng | None,
     preserve_feature_schema: bool,
 ) -> tuple[torch.Tensor, list[str], list[int]]:
-    """Postprocess one full observed feature matrix before any target generation."""
+    """Postprocess one full complete-data feature matrix before target generation."""
 
     if preserve_feature_schema:
         feature_types_out = list(feature_types)
@@ -252,7 +252,7 @@ def postprocess_targets(
     *,
     keyed_rng: KeyedRng,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Postprocess targets after feature-conditioned target generation and splitting."""
+    """Postprocess targets after complete-data target generation and splitting."""
 
     if task == "regression":
         return _postprocess_regression_targets(y_train, y_test)
@@ -400,7 +400,7 @@ def inject_missingness(
     device: str,
 ) -> tuple[torch.Tensor, torch.Tensor, dict[str, Any] | None]:
     """
-    Inject configured missingness into train/test feature tensors.
+    Inject one full-matrix missingness process into train/test feature tensors.
 
     Missing values are encoded as NaN and summary stats are returned for metadata.
     """
@@ -411,21 +411,21 @@ def inject_missingness(
     if not enabled:
         return x_train, x_test, None
 
-    train_mask = sample_missingness_mask(
-        x_train,
+    row_dim = x_train.ndim - 2
+    x_all = torch.cat([x_train, x_test], dim=row_dim)
+    full_mask = sample_missingness_mask(
+        x_all,
         dataset_cfg=dataset_cfg,
-        keyed_rng=keyed_rng.keyed("train"),
+        keyed_rng=keyed_rng.keyed("full_matrix"),
         device=device,
     )
-    test_mask = sample_missingness_mask(
-        x_test,
-        dataset_cfg=dataset_cfg,
-        keyed_rng=keyed_rng.keyed("test"),
-        device=device,
-    )
-
-    x_train_missing = x_train.masked_fill(train_mask, float("nan"))
-    x_test_missing = x_test.masked_fill(test_mask, float("nan"))
+    x_all_missing = x_all.masked_fill(full_mask, float("nan"))
+    n_train = int(x_train.shape[row_dim])
+    n_test = int(x_test.shape[row_dim])
+    x_train_missing = x_all_missing.narrow(row_dim, 0, n_train)
+    x_test_missing = x_all_missing.narrow(row_dim, n_train, n_test)
+    train_mask = full_mask.narrow(row_dim, 0, n_train)
+    test_mask = full_mask.narrow(row_dim, n_train, n_test)
 
     missing_count_train = int(train_mask.sum().item())
     missing_count_test = int(test_mask.sum().item())

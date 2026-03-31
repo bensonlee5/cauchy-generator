@@ -10,7 +10,7 @@ from typing import Any, Literal, TypeAlias
 
 from dagzoo.core.layout_types import AggregationKind, ConverterKind, MechanismFamily
 
-FixedLayoutExecutionContract = Literal["chunk_batched_v2"]
+FixedLayoutExecutionContract = Literal["chunk_batched_v3"]
 FixedLayoutRootBaseKind = Literal["normal", "uniform", "unit_ball", "normal_cov"]
 FixedLayoutMatrixBaseKind = Literal["gaussian", "weights", "singular_values", "kernel"]
 FixedLayoutActivationKind = Literal[
@@ -31,7 +31,7 @@ FixedLayoutConverterVariant = Literal[
     "softmax_points",
 ]
 
-DEFAULT_FIXED_LAYOUT_EXECUTION_CONTRACT: FixedLayoutExecutionContract = "chunk_batched_v2"
+DEFAULT_FIXED_LAYOUT_EXECUTION_CONTRACT: FixedLayoutExecutionContract = "chunk_batched_v3"
 
 
 @dataclass(frozen=True, slots=True)
@@ -403,23 +403,6 @@ def _signature_node_plan_payload(node_plan: FixedLayoutNodePlan) -> dict[str, An
         stripped_specs.append(spec_payload)
     payload["converter_specs"] = stripped_specs
     return payload
-
-
-def _target_head_plan_payload(
-    target_head_plan: FixedLayoutTargetHeadPlan,
-    *,
-    execution_contract: str,
-) -> dict[str, Any]:
-    return {
-        "role": "target_head",
-        "parent_feature_indices": [
-            int(feature_index) for feature_index in target_head_plan.parent_feature_indices
-        ],
-        "node_plan": _node_plan_payload(
-            target_head_plan.node_plan,
-            execution_contract=execution_contract,
-        ),
-    }
 
 
 def _signature_target_head_payload(target_head_plan: FixedLayoutTargetHeadPlan) -> dict[str, Any]:

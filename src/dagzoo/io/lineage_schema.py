@@ -35,7 +35,7 @@ _ADJACENCY_REF_REQUIRED_KEYS = frozenset(
 )
 _ASSIGNMENTS_REQUIRED_KEYS = frozenset({"feature_to_node"})
 _ASSIGNMENTS_ALLOWED_KEYS = frozenset({"feature_to_node", "target_to_node", "target_mode"})
-_TARGET_MODE_VALUES = frozenset({"observed_x_conditional"})
+_TARGET_MODE_VALUES = frozenset({"observed_x_conditional", "latent_complete_x_conditional"})
 
 
 class LineageValidationError(ValueError):

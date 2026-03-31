@@ -43,7 +43,7 @@ def _build_lineage_metadata(
         },
         "assignments": {
             "feature_to_node": feature_to_node,
-            "target_mode": "observed_x_conditional",
+            "target_mode": "latent_complete_x_conditional",
         },
     }
     validate_lineage_payload(payload)

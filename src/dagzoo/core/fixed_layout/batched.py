@@ -916,63 +916,6 @@ def _apply_node_plan_batch(
     return latent, extracted
 
 
-def _classification_target_supports_split(
-    y: torch.Tensor,
-    *,
-    n_classes: int,
-    n_train: int,
-    n_test: int,
-) -> bool:
-    """Return whether one raw label vector can support a non-degenerate split."""
-
-    if n_train <= 0 or n_test <= 0:
-        return False
-    labels = torch.remainder(y.to(torch.int64), max(2, int(n_classes)))
-    _classes, counts = torch.unique(labels, sorted=True, return_counts=True)
-    if int(counts.numel()) < 2:
-        return False
-    return bool(torch.all(counts >= 2))
-
-
-def _fallback_target_labels_from_observed_features(
-    x: torch.Tensor,
-    rng: FixedLayoutBatchRng,
-    *,
-    n_classes: int,
-    noise_spec: NoiseSamplingSpec | None,
-) -> torch.Tensor:
-    """Build replayable class labels directly from observed features when the head collapses."""
-
-    batch_size, n_rows, n_features = x.shape
-    if n_rows <= 0:
-        return torch.empty((batch_size, 0), dtype=torch.int64, device=x.device)
-    if n_features > 0:
-        weights = rng.keyed("weights").normal((batch_size, n_features))
-        projection = torch.einsum("bnf,bf->bn", x.to(torch.float32), weights)
-    else:
-        projection = sample_noise_from_spec(
-            (batch_size, n_rows),
-            generator=rng.keyed("projection_noise").torch_generator,
-            device=x.device.type,
-            noise_spec=noise_spec,
-        ).to(torch.float32)
-    jitter = sample_noise_from_spec(
-        (batch_size, n_rows),
-        generator=rng.keyed("jitter").torch_generator,
-        device=x.device.type,
-        noise_spec=noise_spec,
-        scale_multiplier=0.05,
-    ).to(torch.float32)
-    scores = torch.nan_to_num(projection + jitter, nan=0.0, posinf=1e6, neginf=-1e6)
-    ranks = torch.argsort(torch.argsort(scores, dim=1), dim=1)
-    labels = torch.div(
-        ranks * max(2, int(n_classes)),
-        max(1, int(n_rows)),
-        rounding_mode="floor",
-    )
-    return torch.clamp(labels, min=0, max=max(2, int(n_classes)) - 1).to(torch.int64)
-
-
 def _generate_fixed_layout_raw_batch(
     config: GeneratorConfig,
     layout: LayoutPlan,
@@ -985,7 +928,7 @@ def _generate_fixed_layout_raw_batch(
     emit_features: bool,
     runtime_metrics_out: dict[str, float] | None = None,
 ) -> tuple[torch.Tensor | None, torch.Tensor, list[dict[str, Any]]]:
-    """Generate one fixed-layout microbatch of observed features and raw targets."""
+    """Generate one fixed-layout microbatch of complete features and raw targets."""
 
     if not dataset_seeds:
         raise ValueError("dataset_seeds must be non-empty.")
@@ -1047,13 +990,13 @@ def _generate_fixed_layout_raw_batch(
                     noise_spec=noise_spec,
                 )
         feature_columns.append(feature_tensor.to(dtype).unsqueeze(2))
-    x_all = (
+    x_complete = (
         torch.cat(feature_columns, dim=2)
         if feature_columns
         else torch.empty((batch_size, n_rows, 0), dtype=dtype, device=device)
     )
-    x_all, _feature_types, _feature_index_map = postprocess_feature_matrix(
-        x_all,
+    x_complete, _feature_types, _feature_index_map = postprocess_feature_matrix(
+        x_complete,
         list(layout.feature_types),
         keyed_rng=None,
         preserve_feature_schema=True,
@@ -1077,7 +1020,7 @@ def _generate_fixed_layout_raw_batch(
         target_start = time.perf_counter()
         target_start_cpu = time.process_time()
         target_parent_tensors = [
-            x_all[:, :, int(feature_index) : int(feature_index) + 1]
+            x_complete[:, :, int(feature_index) : int(feature_index) + 1]
             for feature_index in target_head.parent_feature_indices
         ]
         _target_latent, extracted = _apply_node_plan_batch(
@@ -1116,27 +1059,6 @@ def _generate_fixed_layout_raw_batch(
     else:
         if str(config.dataset.task) == "classification":
             y = target_values.to(torch.int64) % int(layout.n_classes)
-            fallback_mask = torch.tensor(
-                [
-                    not _classification_target_supports_split(
-                        y[batch_index],
-                        n_classes=int(layout.n_classes),
-                        n_train=int(config.dataset.n_train),
-                        n_test=int(config.dataset.n_test),
-                    )
-                    for batch_index in range(batch_size)
-                ],
-                device=y.device,
-                dtype=torch.bool,
-            )
-            if bool(torch.any(fallback_mask)):
-                fallback_labels = _fallback_target_labels_from_observed_features(
-                    x_all,
-                    rng.keyed("target_head", "fallback"),
-                    n_classes=int(layout.n_classes),
-                    noise_spec=noise_spec,
-                )
-                y = torch.where(fallback_mask.unsqueeze(1), fallback_labels, y)
         else:
             y = target_values.to(dtype)
     _accumulate_runtime_metric(
@@ -1149,7 +1071,7 @@ def _generate_fixed_layout_raw_batch(
         "raw_batch_cpu_time_seconds",
         time.process_time() - raw_batch_start_cpu,
     )
-    return x_all if emit_features else None, y, aux_meta_batch
+    return x_complete if emit_features else None, y, aux_meta_batch
 
 
 def generate_fixed_layout_graph_batch(

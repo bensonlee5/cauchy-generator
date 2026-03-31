@@ -22,11 +22,11 @@ quality and realism controls.
 1. Sample a feature-only latent DAG and feature-to-node assignments.
 1. Execute node pipelines in topological order to produce latent
    feature outputs.
-1. Convert latent feature outputs into observable `X`.
-1. Generate `y` from an independently sampled observed-`X`
-   conditional head.
-1. Apply split checks, postprocess transforms, and optional
-   missingness.
+1. Convert latent feature outputs into complete `X_complete`.
+1. Generate `y` from an independently sampled
+   `p(y | X_complete)` conditional head.
+1. Apply split checks and target postprocess, then optionally apply
+   missingness as a joint observation process before emission.
 1. Emit `DatasetBundle` outputs; optionally persist shards and
    diagnostics.
 1. Persist shard outputs and effective-config artifacts; when needed,
@@ -42,7 +42,7 @@ tabular projection of that latent graph.
 - Latent nodes represent abstract causal variables.
 - Feature columns are assigned to latent nodes by sampled layout state.
 - The target is generated after feature postprocess by a separate
-  observed-`X` conditional head.
+  latent-complete-data conditional head.
 - Multiple columns can map to one node, and one node can influence many
   columns.
 - This decoupling allows rich causal interactions while preserving a
@@ -67,7 +67,7 @@ flowchart LR
         F1[feature_0 num]
         F2[feature_1 cat]
         F3[feature_2 num]
-        H[target head y|X]
+        H[target head y|X_complete]
         T[target]
     end
 
@@ -318,8 +318,8 @@ This section maps the runtime to module boundaries and data flow.
     `sum | product | max | logsumexp`
 - Converter specs slice latent columns and emit feature values.
 - Unassigned feature slots are filled with sampled noise.
-- A separate observed-`X` target head then generates raw targets from the
-  postprocessed feature matrix.
+- A separate latent-complete-data target head then generates raw targets from
+  the postprocessed complete feature matrix.
 
 ### 4) Quality, shift/noise controls, and postprocessing {#4-quality-shiftnoise-controls-and-postprocessing}
 
@@ -327,8 +327,19 @@ This section maps the runtime to module boundaries and data flow.
   enabled.
 - Noise runtime resolution picks one family per dataset in mixture mode,
   then propagates through node-level samplers.
-- Split, postprocess, and missingness run in-generation.
+- Split, target postprocess, and optional missingness run in-generation.
 - Classification split validity is enforced before bundle emission.
+
+Theory note:
+
+- This default prior is factorized in the sense of Nagler section 2.2 when
+  `X` is interpreted as complete covariates.
+- The emitted observed-data task is induced later by an observation model
+  that can mask features after `y` has already been sampled from
+  `X_complete`.
+- `dagzoo` does not currently implement localization or an explicit
+  `n`-adaptive prior family, so it should not be read as guaranteeing any
+  monotone variance or bias behavior as a function of `n`.
 
 Canonical postprocess behavior:
 
@@ -343,7 +354,7 @@ Each bundle includes runtime metadata for lineage, deferred-filter
 status, shift, noise distribution, and resolved config snapshot.
 
 - `lineage` aligns emitted feature columns with DAG node assignments and
-  records the observed-`X` target mode.
+  records the latent-complete-data target mode.
 - `requested_device`, `resolved_device`, and the reserved
   `device_fallback_reason` field are emitted for runtime observability.
 - Canonical generation outputs add `layout_mode`, `layout_plan_seed`,
@@ -384,8 +395,9 @@ flowchart TB
     Emit --> Walk
     Emit --> Assemble[assemble raw feature matrix]
     Assemble --> PostX[feature postprocess]
-    PostX --> TargetHead[apply observed-X target head]
-    TargetHead --> Out[[return observed X + raw y + deferred filter metadata]]
+    PostX --> TargetHead[apply complete-data target head]
+    TargetHead --> Missing[apply optional observation missingness]
+    Missing --> Out[[return emitted X + raw y + deferred filter metadata]]
 
     %% Assign Classes
     class Setup setup
@@ -411,7 +423,7 @@ These are related but distinct runtime surfaces.
 - **node pipeline**: per-node transform and converter execution path.
 - **converter spec**: instruction for extracting observable feature slices.
 - **target head**: separately sampled conditional generator that maps the
-  realized observed feature table to raw targets.
+  realized complete feature table to raw targets.
 - **deferred filter**: ExtraTrees-based post-generation gate that rejects
   trivial small-shot tasks, pure garbage tasks, and optional structural
   no-path cases.

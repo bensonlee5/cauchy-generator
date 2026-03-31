@@ -77,6 +77,7 @@ class CanonicalFixedLayoutRun:
     requested_device: str
     resolved_device: str
     batch_size: int
+    classification_attempt_plan: tuple[int, ...] | None = None
 
 
 @dataclass(slots=True)
@@ -374,19 +375,33 @@ def prepare_canonical_fixed_layout_run(
             target_cells=_effective_fixed_layout_target_cells(realized_config),
             batch_size_cap=realized_config.runtime.fixed_layout_batch_size_cap,
         )
-        break
-    else:
-        raise ValueError(
-            "Failed to prepare a fixed-layout run after "
-            f"{attempts} attempts. Last reason: {last_error}."
+        classification_attempt_plan: tuple[int, ...] | None = None
+        if str(realized_config.dataset.task) == "classification":
+            classification_attempt_plan = _fixed_layout_plan_classification_attempt_plan(
+                realized_config,
+                plan=plan,
+                requested_device=requested_device,
+                resolved_device=resolved_device,
+                run_root=run_root,
+                num_datasets=max(1, int(num_datasets)),
+                batch_size=int(effective_batch_size),
+            )
+            if classification_attempt_plan is None:
+                last_error = "invalid_class_split"
+                continue
+        return CanonicalFixedLayoutRun(
+            config=realized_config,
+            plan=plan,
+            run_seed=int(run_seed),
+            requested_device=str(requested_device),
+            resolved_device=str(resolved_device),
+            batch_size=int(effective_batch_size),
+            classification_attempt_plan=classification_attempt_plan,
         )
-    return CanonicalFixedLayoutRun(
-        config=realized_config,
-        plan=plan,
-        run_seed=int(run_seed),
-        requested_device=str(requested_device),
-        resolved_device=str(resolved_device),
-        batch_size=int(effective_batch_size),
+
+    raise ValueError(
+        "Failed to prepare a fixed-layout run after "
+        f"{attempts} attempts. Last reason: {last_error}."
     )
 
 

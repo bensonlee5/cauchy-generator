@@ -18,7 +18,7 @@ from .plan_types import (
     execution_plan_variant_counts,
 )
 
-_FIXED_LAYOUT_METADATA_SCHEMA_VERSION = 8
+_FIXED_LAYOUT_METADATA_SCHEMA_VERSION = 9
 
 
 @dataclass(slots=True)
