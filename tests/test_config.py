@@ -1071,6 +1071,12 @@ def test_runtime_config_rejects_invalid_fixed_layout_target_cells(value: object)
         GeneratorConfig.from_dict({"runtime": {"fixed_layout_target_cells": value}})
 
 
+@pytest.mark.parametrize("value", [0, -1, True, "abc"])
+def test_runtime_config_rejects_invalid_fixed_layout_batch_size_cap(value: object) -> None:
+    with pytest.raises(ValueError, match=r"runtime\.fixed_layout_batch_size_cap must"):
+        GeneratorConfig.from_dict({"runtime": {"fixed_layout_batch_size_cap": value}})
+
+
 def test_legacy_filter_keys_are_rejected() -> None:
     with pytest.raises(TypeError, match="n_trees"):
         GeneratorConfig.from_dict(

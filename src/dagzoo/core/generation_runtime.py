@@ -67,6 +67,11 @@ def _config_payload_for_metadata(
         and runtime_payload.get("fixed_layout_target_cells") is None
     ):
         runtime_payload.pop("fixed_layout_target_cells", None)
+    if (
+        isinstance(runtime_payload, dict)
+        and runtime_payload.get("fixed_layout_batch_size_cap") is None
+    ):
+        runtime_payload.pop("fixed_layout_batch_size_cap", None)
     return config_payload
 
 

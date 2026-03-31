@@ -372,6 +372,7 @@ def prepare_canonical_fixed_layout_run(
             num_datasets=max(1, int(num_datasets)),
             batch_size=batch_size,
             target_cells=_effective_fixed_layout_target_cells(realized_config),
+            batch_size_cap=realized_config.runtime.fixed_layout_batch_size_cap,
         )
         break
     else:
@@ -565,6 +566,7 @@ def _generate_batch_with_dynamic_steering_iter(
         num_datasets=num_datasets,
         batch_size=batch_size,
         target_cells=_effective_fixed_layout_target_cells(config),
+        batch_size_cap=config.runtime.fixed_layout_batch_size_cap,
     )
 
     dataset_index = 0
@@ -1098,6 +1100,7 @@ def _generate_batch_with_plan_iter(
         num_datasets=num_datasets,
         batch_size=batch_size,
         target_cells=_effective_fixed_layout_target_cells(config),
+        batch_size_cap=config.runtime.fixed_layout_batch_size_cap,
     )
     dataset_index = 0
     while dataset_index < num_datasets:
