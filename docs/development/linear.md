@@ -1,7 +1,7 @@
 # Linear Tracker Operations
 
 `dagzoo` uses Linear as its live tracker. This document covers the repo-owned
-tracker tooling for migration, workflow-state bootstrap, and recurring harness
+tracker tooling for migration, workflow-state bootstrap, and recurring repo
 audit seeding.
 
 ## What lives in this repo
@@ -10,9 +10,10 @@ audit seeding.
   migration and GitHub cutover tool.
 - `scripts/linear/seed_harness_backlog.py`: seeds the harness-engineering epic,
   child tickets, and weekly audit issue body.
-- `docs/development/harness_audit.md`: weekly harness-audit rubric.
-- `docs/development/issue_authoring.md`: issue-writing standard for unattended
-  execution.
+- `AGENTS.md`: canonical operating contract for autonomous contributors.
+- `docs/development/harness_audit.md`: weekly repo-audit rubric.
+- `docs/development/issue_authoring.md`: issue-writing standard for
+  implementation-ready work.
 
 ## Required environment
 
@@ -40,7 +41,7 @@ Canonical workflow states for this repo:
 The migration tool bootstraps any missing workflow states on the owning team
 before importing issues.
 
-## Weekly Harness Audit
+## Weekly Repo Audit
 
 The repo-owned weekly audit rubric lives at
 [`docs/development/harness_audit.md`](harness_audit.md).

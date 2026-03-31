@@ -66,7 +66,11 @@ from dagzoo.bench.stage_metrics import (
     measure_filter_stage_metrics,
     measure_write_stage_metrics,
 )
-from dagzoo.bench.throughput import _throughput_measure_seed, run_throughput_benchmark
+from dagzoo.bench.throughput import (
+    _benchmark_precompute_classification_attempt_plan,
+    _throughput_measure_seed,
+    run_throughput_benchmark,
+)
 from dagzoo.config import (
     MISSINGNESS_MECHANISM_NONE,
     NOISE_FAMILY_GAUSSIAN,
@@ -151,6 +155,10 @@ def _build_fixed_layout_evidence(
         num_datasets=sample_n,
         seed=_throughput_measure_seed(config),
         device=device,
+        precompute_classification_attempt_plan=_benchmark_precompute_classification_attempt_plan(
+            config,
+            benchmark_fast_prepare=True,
+        ),
     )
     per_dataset_cells = int(prepared.plan.n_train + prepared.plan.n_test) * max(
         1, int(prepared.plan.layout.n_features)

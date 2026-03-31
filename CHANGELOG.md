@@ -10,6 +10,34 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.16.1] - 2026-03-31
+
+### Added
+
+- Classification generation can now optionally export teacher-conditional
+  test-split probabilities and optimal log-loss metadata when
+  `diagnostics.teacher_conditional_export` is enabled.
+- Generate handoff manifests now include posterior-predictive provenance
+  fields derived from emitted dataset metadata.
+- Dataset config now supports target-parent prior controls for lineage
+  sampling, including explicit count bounds and near-max mixture weights.
+- Emitted lineage metadata and generate-handoff manifests now record
+  target-parent selections, fractions, regimes, and prior provenance for
+  downstream adequacy checks.
+
+### Changed
+
+- Diagnostics config normalization now validates
+  `diagnostics.teacher_conditional_export` as a boolean.
+- `README.md` and the published docs now stay user-facing, while autonomous
+  contributor workflow guidance is consolidated into `AGENTS.md` and internal
+  maintainer docs.
+- Fixed-layout schema consistency checks now include target-parent feature
+  assignments when validating reused layouts and grouped batch outputs.
+- Throughput benchmark preparation now skips eager run-wide classification
+  attempt-plan precomputation while preserving the stricter default
+  classification replay validation used by canonical dataset generation.
+
 ## [0.16.0] - 2026-03-31
 
 ### Changed

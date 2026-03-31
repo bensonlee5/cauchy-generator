@@ -16,6 +16,12 @@ from dagzoo.rng import KeyedRng
 from dagzoo.sampling import CorrelatedSampler
 
 
+def _clamp_int(value: int, lo: int, hi: int) -> int:
+    """Clamp one integer into the inclusive `[lo, hi]` interval."""
+
+    return max(int(lo), min(int(hi), int(value)))
+
+
 def _sample_log_uniform_int(generator: torch.Generator, device: str, low: int, high: int) -> int:
     """Sample an integer from a log-uniform range [low, high]."""
 
@@ -52,6 +58,179 @@ def _sample_assignments(
     # Sample with replacement from eligible nodes
     indices = torch.randint(0, eligible_count, (n_cols,), generator=generator, device=device)
     return eligible_nodes[indices].tolist()
+
+
+def _sample_uniform_int(
+    *,
+    low: int,
+    high: int,
+    generator: torch.Generator,
+    device: str,
+) -> int:
+    """Sample one integer uniformly from the inclusive `[low, high]` interval."""
+
+    if low >= high:
+        return int(low)
+    return int(torch.randint(low, high + 1, (1,), generator=generator, device=device).item())
+
+
+def _sample_linearly_weighted_int(
+    *,
+    low: int,
+    high: int,
+    generator: torch.Generator,
+    device: str,
+) -> int:
+    """Sample one integer with linearly increasing mass toward `high`."""
+
+    if low >= high:
+        return int(low)
+    weights = torch.arange(
+        1,
+        (high - low) + 2,
+        dtype=torch.float64,
+        device=device,
+    )
+    sampled_offset = int(torch.multinomial(weights, 1, generator=generator).item())
+    return int(low + sampled_offset)
+
+
+def _sample_target_parent_features(
+    *,
+    config: GeneratorConfig,
+    n_features: int,
+    keyed_rng: KeyedRng,
+    device: str,
+) -> tuple[list[int], str, int]:
+    """Sample the observed-feature subset that directly drives the target head."""
+
+    dataset_cfg = config.dataset
+    if str(dataset_cfg.target_parent_prior) == "all_features":
+        sqrt_threshold = max(1, min(int(n_features), int(math.floor(math.sqrt(n_features)))))
+        return list(range(int(n_features))), "all_features", int(sqrt_threshold)
+
+    lo = min(max(1, int(dataset_cfg.target_parent_count_min)), int(n_features))
+    hi = min(
+        int(n_features),
+        int(dataset_cfg.target_parent_count_max)
+        if dataset_cfg.target_parent_count_max is not None
+        else int(n_features),
+    )
+    if lo > hi:
+        lo = hi
+    sqrt_floor = _clamp_int(int(math.floor(math.sqrt(n_features))), lo, hi)
+    near_max_lo = _clamp_int(
+        max(
+            int(sqrt_floor),
+            int(math.ceil(float(dataset_cfg.target_parent_near_max_band_min_fraction) * float(hi))),
+        ),
+        lo,
+        hi,
+    )
+
+    regime_specs: list[tuple[str, float, int, int, str]] = [
+        (
+            "sparse_tail",
+            float(dataset_cfg.target_parent_below_sqrt_prob),
+            int(lo),
+            int(sqrt_floor - 1),
+            "uniform",
+        ),
+        (
+            "midrange",
+            float(dataset_cfg.target_parent_midrange_prob),
+            int(sqrt_floor),
+            int(near_max_lo - 1),
+            "uniform",
+        ),
+        (
+            "near_max",
+            max(
+                0.0,
+                1.0
+                - float(dataset_cfg.target_parent_below_sqrt_prob)
+                - float(dataset_cfg.target_parent_midrange_prob),
+            ),
+            int(near_max_lo),
+            int(hi),
+            "linear_up",
+        ),
+    ]
+    available_regimes: list[tuple[str, float, int, int, str]] = []
+    carried_mass = 0.0
+    for regime_name, regime_prob, start, end, draw_kind in regime_specs:
+        total_mass = float(regime_prob) + float(carried_mass)
+        if start <= end:
+            available_regimes.append((regime_name, total_mass, start, end, draw_kind))
+            carried_mass = 0.0
+        else:
+            carried_mass = total_mass
+    if not available_regimes:
+        target_parent_count = int(hi)
+        target_parent_regime = "near_max"
+    else:
+        if carried_mass > 0.0:
+            last_name, last_prob, last_start, last_end, last_kind = available_regimes[-1]
+            available_regimes[-1] = (
+                last_name,
+                float(last_prob) + float(carried_mass),
+                last_start,
+                last_end,
+                last_kind,
+            )
+        if len(available_regimes) == 1:
+            chosen_regime = available_regimes[0]
+        else:
+            weights = torch.tensor(
+                [float(max(0.0, regime_prob)) for _, regime_prob, _, _, _ in available_regimes],
+                dtype=torch.float64,
+                device=device,
+            )
+            if float(weights.sum().item()) <= 0.0:
+                chosen_regime = available_regimes[-1]
+            else:
+                chosen_regime = available_regimes[
+                    int(
+                        torch.multinomial(
+                            weights,
+                            1,
+                            generator=keyed_rng.keyed("target_parent_regime").torch_rng(
+                                device=device
+                            ),
+                        ).item()
+                    )
+                ]
+        target_parent_regime, _, regime_lo, regime_hi, draw_kind = chosen_regime
+        draw_generator = keyed_rng.keyed("target_parent_count").torch_rng(device=device)
+        if draw_kind == "linear_up":
+            target_parent_count = _sample_linearly_weighted_int(
+                low=int(regime_lo),
+                high=int(regime_hi),
+                generator=draw_generator,
+                device=device,
+            )
+        else:
+            target_parent_count = _sample_uniform_int(
+                low=int(regime_lo),
+                high=int(regime_hi),
+                generator=draw_generator,
+                device=device,
+            )
+
+    if target_parent_count >= int(n_features):
+        return list(range(int(n_features))), str(target_parent_regime), int(sqrt_floor)
+
+    sampled_indices = torch.randperm(
+        int(n_features),
+        generator=keyed_rng.keyed("target_parent_features").torch_rng(device=device),
+        device=device,
+    )[: int(target_parent_count)]
+    sampled_indices, _ = torch.sort(sampled_indices)
+    return (
+        [int(index) for index in sampled_indices.tolist()],
+        str(target_parent_regime),
+        int(sqrt_floor),
+    )
 
 
 def _sample_layout(
@@ -142,6 +321,14 @@ def _sample_layout(
         keyed_rng.keyed("assignments", "feature").torch_rng(device=device),
         device,
     )
+    target_parent_features, target_parent_regime, target_parent_sqrt_threshold = (
+        _sample_target_parent_features(
+            config=config,
+            n_features=num_features,
+            keyed_rng=keyed_rng.keyed("assignments", "target"),
+            device=device,
+        )
+    )
 
     feature_types: list[FeatureType] = ["num"] * num_features
     for i in cat_idx:
@@ -161,6 +348,10 @@ def _sample_layout(
         graph_edge_density=float(graph_edge_density),
         adjacency=adjacency,
         feature_node_assignment=feature_to_node,
+        target_parent_features=target_parent_features,
+        target_parent_prior=str(config.dataset.target_parent_prior),
+        target_parent_regime=target_parent_regime,
+        target_parent_sqrt_threshold=int(target_parent_sqrt_threshold),
     )
 
 
@@ -193,6 +384,10 @@ def _resample_layout_graph(
         graph_edge_density=float(graph_edge_density),
         adjacency=adjacency,
         feature_node_assignment=[int(value) for value in layout.feature_node_assignment],
+        target_parent_features=[int(value) for value in layout.target_parent_features],
+        target_parent_prior=str(layout.target_parent_prior),
+        target_parent_regime=str(layout.target_parent_regime),
+        target_parent_sqrt_threshold=int(layout.target_parent_sqrt_threshold),
     )
 
 

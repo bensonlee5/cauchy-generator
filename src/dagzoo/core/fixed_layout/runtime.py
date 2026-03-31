@@ -342,6 +342,7 @@ def prepare_canonical_fixed_layout_run(
     seed: int | None = None,
     device: str | None = None,
     batch_size: int | None = None,
+    precompute_classification_attempt_plan: bool = True,
 ) -> CanonicalFixedLayoutRun:
     """Prepare one internal fixed-layout run context for public generation APIs."""
 
@@ -376,7 +377,10 @@ def prepare_canonical_fixed_layout_run(
             batch_size_cap=realized_config.runtime.fixed_layout_batch_size_cap,
         )
         classification_attempt_plan: tuple[int, ...] | None = None
-        if str(realized_config.dataset.task) == "classification":
+        if (
+            precompute_classification_attempt_plan
+            and str(realized_config.dataset.task) == "classification"
+        ):
             classification_attempt_plan = _fixed_layout_plan_classification_attempt_plan(
                 realized_config,
                 plan=plan,
@@ -575,7 +579,7 @@ def _generate_batch_with_dynamic_steering_iter(
     run_seed = _resolve_run_seed(config, seed)
     run_root = KeyedRng(run_seed)
     dtype = _torch_dtype(config)
-    expected_schema: tuple[int, tuple[str, ...], tuple[int, ...]] | None = None
+    expected_schema: tuple[int, tuple[str, ...], tuple[int, ...], tuple[int, ...]] | None = None
     effective_batch_size = _resolve_fixed_layout_batch_size(
         base_plan,
         num_datasets=num_datasets,
@@ -1101,7 +1105,7 @@ def _generate_batch_with_plan_iter(
     run_root = KeyedRng(run_seed)
     dtype = _torch_dtype(config)
     shift_params = resolve_shift_runtime_params(config)
-    expected_schema: tuple[int, tuple[str, ...], tuple[int, ...]] | None = None
+    expected_schema: tuple[int, tuple[str, ...], tuple[int, ...], tuple[int, ...]] | None = None
     finalization_context = _build_fixed_schema_finalization_context(
         config,
         plan.layout,

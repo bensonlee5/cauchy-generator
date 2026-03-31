@@ -154,6 +154,16 @@ def _normalize_target_cells_value(value: int) -> int:
     return int(value)
 
 
+def _benchmark_precompute_classification_attempt_plan(
+    config: GeneratorConfig,
+    *,
+    benchmark_fast_prepare: bool,
+) -> bool:
+    """Keep classification benchmarks on the validated canonical generation path."""
+
+    return str(config.dataset.task) == "classification" or not bool(benchmark_fast_prepare)
+
+
 def _consume_generation(
     config: GeneratorConfig,
     *,
@@ -179,6 +189,7 @@ def iter_throughput_measure_bundles(
     *,
     num_datasets: int,
     device: str | None = None,
+    benchmark_fast_prepare: bool = True,
 ) -> Iterator[DatasetBundle]:
     """Yield the deterministic measured corpus used by throughput benchmarks."""
 
@@ -187,6 +198,10 @@ def iter_throughput_measure_bundles(
         num_datasets=num_datasets,
         seed=_throughput_measure_seed(config),
         device=device,
+        precompute_classification_attempt_plan=_benchmark_precompute_classification_attempt_plan(
+            config,
+            benchmark_fast_prepare=benchmark_fast_prepare,
+        ),
     )
     yield from _iter_prepared_canonical_batch_iter(prepared, num_datasets=num_datasets)
 
@@ -198,6 +213,7 @@ def run_throughput_benchmark(
     warmup_datasets: int = 10,
     device: str | None = None,
     on_bundle: Callable[[DatasetBundle], object] | None = None,
+    benchmark_fast_prepare: bool = True,
 ) -> dict[str, Any]:
     """Measure end-to-end generation throughput for a benchmark preset."""
 
@@ -219,6 +235,10 @@ def run_throughput_benchmark(
         num_datasets=num_datasets,
         seed=_throughput_measure_seed(config),
         device=device,
+        precompute_classification_attempt_plan=_benchmark_precompute_classification_attempt_plan(
+            config,
+            benchmark_fast_prepare=benchmark_fast_prepare,
+        ),
     )
     _synchronize_accelerator(timing_device)
     prepare_elapsed_seconds = time.perf_counter() - start

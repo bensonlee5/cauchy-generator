@@ -33,6 +33,21 @@ def _build_lineage_metadata(
 
     raw_feature_to_node = [int(node_index) for node_index in list(layout.feature_node_assignment)]
     feature_to_node = [raw_feature_to_node[int(src_col)] for src_col in feature_index_map]
+    source_to_emitted = {
+        int(src_col): int(emitted_index) for emitted_index, src_col in enumerate(feature_index_map)
+    }
+    target_parent_features = sorted(
+        int(source_to_emitted[src_col])
+        for src_col in list(layout.target_parent_features)
+        if int(src_col) in source_to_emitted
+    )
+    target_parent_count = int(len(target_parent_features))
+    emitted_feature_count = int(len(feature_index_map))
+    target_parent_fraction = (
+        float(target_parent_count) / float(emitted_feature_count)
+        if emitted_feature_count > 0
+        else 0.0
+    )
 
     payload = {
         "schema_name": LINEAGE_SCHEMA_NAME,
@@ -44,6 +59,12 @@ def _build_lineage_metadata(
         "assignments": {
             "feature_to_node": feature_to_node,
             "target_mode": "latent_complete_x_conditional",
+            "target_parent_features": target_parent_features,
+            "target_parent_count": target_parent_count,
+            "target_parent_fraction": float(target_parent_fraction),
+            "target_parent_prior": str(layout.target_parent_prior),
+            "target_parent_regime": str(layout.target_parent_regime),
+            "target_parent_sqrt_threshold": int(layout.target_parent_sqrt_threshold),
         },
     }
     validate_lineage_payload(payload)

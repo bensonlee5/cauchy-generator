@@ -1,7 +1,7 @@
 ---
 title: "Documentation"
 linkTitle: "Docs"
-description: "Start guides, recipe packs, artifact contracts, and contributor docs for dagzoo."
+description: "Start guides, recipe packs, artifact contracts, and runtime guides for dagzoo."
 weight: 1
 ---
 
@@ -20,15 +20,3 @@ weight: 1
 ## Artifacts & API
 
 - [Artifacts & API]({{< relref "/docs/output-format.md" >}}): shard layout, metadata schema, handoff manifest, and in-memory sample contract.
-
-## Contributor Docs
-
-Contributor and planning docs remain canonical in repo Markdown and are linked out here:
-
-- [Roadmap](https://github.com/bensonlee5/dagzoo/blob/main/docs/development/roadmap.md)
-- [Contributing](https://github.com/bensonlee5/dagzoo/blob/main/CONTRIBUTING.md)
-- [Security](https://github.com/bensonlee5/dagzoo/blob/main/SECURITY.md)
-- [Backlog Decision Rules](https://github.com/bensonlee5/dagzoo/blob/main/docs/development/backlog_decision_rules.md)
-- [Codebase Navigation](https://github.com/bensonlee5/dagzoo/blob/main/docs/development/codebase-navigation.md)
-- [Design Decisions](https://github.com/bensonlee5/dagzoo/blob/main/docs/development/design-decisions.md)
-- [Config Resolution](https://github.com/bensonlee5/dagzoo/blob/main/docs/development/config-resolution.md)

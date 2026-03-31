@@ -176,6 +176,16 @@ def _build_compact_lineage_payload(
         assignments_payload["target_to_node"] = cast(int, assignments["target_to_node"])
     if "target_mode" in assignments:
         assignments_payload["target_mode"] = cast(str, assignments["target_mode"])
+    for key in (
+        "target_parent_features",
+        "target_parent_count",
+        "target_parent_fraction",
+        "target_parent_prior",
+        "target_parent_regime",
+        "target_parent_sqrt_threshold",
+    ):
+        if key in assignments:
+            assignments_payload[key] = assignments[key]
     return payload
 
 

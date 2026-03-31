@@ -18,7 +18,7 @@ from .plan_types import (
     execution_plan_variant_counts,
 )
 
-_FIXED_LAYOUT_METADATA_SCHEMA_VERSION = 9
+_FIXED_LAYOUT_METADATA_SCHEMA_VERSION = 10
 
 
 @dataclass(slots=True)
@@ -63,6 +63,10 @@ def _layout_to_dict(layout: LayoutPlan) -> dict[str, Any]:
         "graph_edge_density": float(layout.graph_edge_density),
         "adjacency": adjacency_payload,
         "feature_node_assignment": [int(value) for value in layout.feature_node_assignment],
+        "target_parent_features": [int(value) for value in layout.target_parent_features],
+        "target_parent_prior": str(layout.target_parent_prior),
+        "target_parent_regime": str(layout.target_parent_regime),
+        "target_parent_sqrt_threshold": int(layout.target_parent_sqrt_threshold),
     }
 
 
@@ -121,7 +125,7 @@ def _annotate_fixed_layout_metadata(bundle: DatasetBundle, *, plan: _FixedLayout
 
 def _extract_emitted_schema_signature(
     bundle: DatasetBundle,
-) -> tuple[int, tuple[str, ...], tuple[int, ...]]:
+) -> tuple[int, tuple[str, ...], tuple[int, ...], tuple[int, ...]]:
     n_features = int(bundle.metadata.get("n_features", int(bundle.X_train.shape[1])))
     feature_types = tuple(str(t) for t in bundle.feature_types)
     if len(feature_types) != n_features:
@@ -145,8 +149,14 @@ def _extract_emitted_schema_signature(
             "Fixed-layout bundle emitted inconsistent lineage feature mapping: "
             f"n_features={n_features}, feature_to_node_len={len(feature_to_node)}."
         )
+    raw_target_parent_features = assignments.get("target_parent_features")
+    if not isinstance(raw_target_parent_features, list):
+        raise ValueError(
+            "Fixed-layout bundle is missing lineage assignments.target_parent_features."
+        )
+    target_parent_features = tuple(int(value) for value in raw_target_parent_features)
 
-    return n_features, feature_types, feature_to_node
+    return n_features, feature_types, feature_to_node, target_parent_features
 
 
 __all__ = [
