@@ -66,35 +66,53 @@ def _postprocess_feature_splits(
 
     row_dim = x_train.ndim - 2
     x_all = torch.cat([x_train, x_test], dim=row_dim).to(torch.float32)
-    if preserve_feature_schema:
-        feature_types_out = list(feature_types)
-        feature_index_map = [int(i) for i in range(int(x_all.shape[-1]))]
-    else:
-        if x_all.ndim != 2:
-            raise ValueError("Constant-column removal is only supported for unbatched features.")
-        x_all, feature_types_out, feature_index_map = _remove_constant_columns(x_all, feature_types)
-
-    x_all = _clip_and_standardize_rows(x_all, feature_types_out)
-
-    if not preserve_feature_schema:
-        if keyed_rng is None:
-            raise ValueError("keyed_rng is required when preserve_feature_schema is False.")
-        perm_cpu = torch.randperm(
-            x_all.shape[-1],
-            generator=keyed_rng.keyed("feature_permutation").torch_rng(device="cpu"),
-            device="cpu",
-        )
-        perm_list = [int(i) for i in perm_cpu.tolist()]
-        perm = perm_cpu.to(device=x_all.device)
-        x_all = x_all.index_select(dim=x_all.ndim - 1, index=perm)
-        feature_types_out = [feature_types_out[i] for i in perm_list]
-        feature_index_map = [feature_index_map[i] for i in perm_list]
+    x_all, feature_types_out, feature_index_map = postprocess_feature_matrix(
+        x_all,
+        feature_types,
+        keyed_rng=keyed_rng,
+        preserve_feature_schema=preserve_feature_schema,
+    )
 
     n_train = int(x_train.shape[row_dim])
     n_test = int(x_test.shape[row_dim])
     x_train_p = x_all.narrow(row_dim, 0, n_train)
     x_test_p = x_all.narrow(row_dim, n_train, n_test)
     return x_train_p, x_test_p, feature_types_out, feature_index_map
+
+
+def postprocess_feature_matrix(
+    x: torch.Tensor,
+    feature_types: list[str],
+    *,
+    keyed_rng: KeyedRng | None,
+    preserve_feature_schema: bool,
+) -> tuple[torch.Tensor, list[str], list[int]]:
+    """Postprocess one full observed feature matrix before any target generation."""
+
+    if preserve_feature_schema:
+        feature_types_out = list(feature_types)
+        feature_index_map = [int(i) for i in range(int(x.shape[-1]))]
+    else:
+        if x.ndim != 2:
+            raise ValueError("Constant-column removal is only supported for unbatched features.")
+        x, feature_types_out, feature_index_map = _remove_constant_columns(x, feature_types)
+
+    x = _clip_and_standardize_rows(x, feature_types_out)
+
+    if not preserve_feature_schema:
+        if keyed_rng is None:
+            raise ValueError("keyed_rng is required when preserve_feature_schema is False.")
+        perm_cpu = torch.randperm(
+            x.shape[-1],
+            generator=keyed_rng.keyed("feature_permutation").torch_rng(device="cpu"),
+            device="cpu",
+        )
+        perm_list = [int(i) for i in perm_cpu.tolist()]
+        perm = perm_cpu.to(device=x.device)
+        x = x.index_select(dim=x.ndim - 1, index=perm)
+        feature_types_out = [feature_types_out[i] for i in perm_list]
+        feature_index_map = [feature_index_map[i] for i in perm_list]
+    return x, feature_types_out, feature_index_map
 
 
 def _postprocess_regression_targets(
@@ -227,6 +245,38 @@ def _postprocess_classification_label_batch(
     return torch.stack(y_train_batches), torch.stack(y_test_batches)
 
 
+def postprocess_targets(
+    y_train: torch.Tensor,
+    y_test: torch.Tensor,
+    task: str,
+    *,
+    keyed_rng: KeyedRng,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Postprocess targets after feature-conditioned target generation and splitting."""
+
+    if task == "regression":
+        return _postprocess_regression_targets(y_train, y_test)
+    return _postprocess_classification_labels(y_train, y_test, keyed_rng)
+
+
+def postprocess_fixed_schema_target_batch(
+    y_train: torch.Tensor,
+    y_test: torch.Tensor,
+    task: str,
+    *,
+    postprocess_roots: list[KeyedRng],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Postprocess one fixed-schema target batch after splitting."""
+
+    if task == "regression":
+        return _postprocess_regression_targets(y_train, y_test)
+    return _postprocess_classification_label_batch(
+        y_train,
+        y_test,
+        postprocess_roots=postprocess_roots,
+    )
+
+
 @overload
 def postprocess_dataset(
     x_train: torch.Tensor,
@@ -293,20 +343,12 @@ def postprocess_dataset(
         preserve_feature_schema=preserve_feature_schema,
     )
 
-    if task == "regression":
-        y_train_p, y_test_p = _postprocess_regression_targets(y_train, y_test)
-        if return_feature_index_map:
-            return (
-                x_train_p,
-                y_train_p,
-                x_test_p,
-                y_test_p,
-                feature_types,
-                feature_index_map,
-            )
-        return x_train_p, y_train_p, x_test_p, y_test_p, feature_types
-
-    y_train_p, y_test_p = _postprocess_classification_labels(y_train, y_test, keyed_rng)
+    y_train_p, y_test_p = postprocess_targets(
+        y_train,
+        y_test,
+        task,
+        keyed_rng=keyed_rng,
+    )
 
     if return_feature_index_map:
         return x_train_p, y_train_p, x_test_p, y_test_p, feature_types, feature_index_map
@@ -340,13 +382,10 @@ def postprocess_fixed_schema_batch(
         preserve_feature_schema=True,
     )
 
-    if task == "regression":
-        y_train_p, y_test_p = _postprocess_regression_targets(y_train, y_test)
-        return x_train_p, y_train_p, x_test_p, y_test_p
-
-    y_train_p, y_test_p = _postprocess_classification_label_batch(
+    y_train_p, y_test_p = postprocess_fixed_schema_target_batch(
         y_train,
         y_test,
+        task,
         postprocess_roots=postprocess_roots,
     )
     return x_train_p, y_train_p, x_test_p, y_test_p

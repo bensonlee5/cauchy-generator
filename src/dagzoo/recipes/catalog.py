@@ -45,7 +45,10 @@ _RECIPES: dict[str, RecipeSpec] = {
     "default-baseline": RecipeSpec(
         name="default-baseline",
         title="Default Baseline",
-        summary="Balanced mixed-type baseline for general PFN and tabular generation experiments.",
+        summary=(
+            "Balanced mixed-type baseline with the default factorized "
+            "feature-prior plus observed-X target-head semantics."
+        ),
         confidence_tier="baseline",
         category="reference prior",
         expected_regime="General mixed-type classification with no added stress regime.",
@@ -55,7 +58,10 @@ _RECIPES: dict[str, RecipeSpec] = {
     "tabpfn-v1-prior-approx": RecipeSpec(
         name="tabpfn-v1-prior-approx",
         title="TabPFN v1 Prior Approximation",
-        summary="Paper-backed approximation for small-data, numeric-heavy classification workflows.",
+        summary=(
+            "Paper-backed numeric-heavy classification prior with the default "
+            "factorized observed-X target-head semantics."
+        ),
         confidence_tier="paper-backed approximation",
         category="reference prior",
         expected_regime="Numeric-only small-table classification with moderate feature and class counts.",

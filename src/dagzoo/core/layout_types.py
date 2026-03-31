@@ -40,7 +40,6 @@ class LayoutPlan:
     graph_edge_density: float
     adjacency: torch.Tensor
     feature_node_assignment: list[int]
-    target_node_assignment: int
 
 
 __all__ = [

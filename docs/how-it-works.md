@@ -19,10 +19,12 @@ quality and realism controls.
 1. Derive deterministic seeds for run, dataset, and component scopes.
 1. Sample a dataset layout (feature types, assignments, graph size
    bounds).
-1. Sample a DAG and node assignments.
+1. Sample a feature-only latent DAG and feature-to-node assignments.
 1. Execute node pipelines in topological order to produce latent
-   outputs.
-1. Convert latent outputs into observable `X` and `y`.
+   feature outputs.
+1. Convert latent feature outputs into observable `X`.
+1. Generate `y` from an independently sampled observed-`X`
+   conditional head.
 1. Apply split checks, postprocess transforms, and optional
    missingness.
 1. Emit `DatasetBundle` outputs; optionally persist shards and
@@ -38,7 +40,9 @@ The generation graph is a latent DAG, while emitted columns are a
 tabular projection of that latent graph.
 
 - Latent nodes represent abstract causal variables.
-- Feature/target columns are assigned to nodes by sampled layout state.
+- Feature columns are assigned to latent nodes by sampled layout state.
+- The target is generated after feature postprocess by a separate
+  observed-`X` conditional head.
 - Multiple columns can map to one node, and one node can influence many
   columns.
 - This decoupling allows rich causal interactions while preserving a
@@ -63,6 +67,7 @@ flowchart LR
         F1[feature_0 num]
         F2[feature_1 cat]
         F3[feature_2 num]
+        H[target head y|X]
         T[target]
     end
 
@@ -70,7 +75,10 @@ flowchart LR
     A -. mapping .-> F1
     A -. mapping .-> F2
     B -. mapping .-> F3
-    C -. mapping .-> T
+    A --> H
+    B --> H
+    C --> H
+    H --> T
 
     %% Assign Classes
     class A,B,C latent
@@ -295,7 +303,7 @@ This section maps the runtime to module boundaries and data flow.
 ### 2) Layout and structure sampling {#2-layout-and-structure-sampling}
 
 - `_sample_layout` samples feature counts/types, class bounds, and
-  feature/target-to-node assignments.
+  feature-to-node assignments.
 - `sample_dag` samples strict upper-triangular adjacency.
 - Adjacency convention is `adjacency[src, dst]`; parents of node `j` are
   read from column `adjacency[:, j]`.
@@ -308,8 +316,10 @@ This section maps the runtime to module boundaries and data flow.
   - 50% path: concatenate parents and apply one mechanism
   - 50% path: apply per-parent mechanisms, then aggregate via
     `sum | product | max | logsumexp`
-- Converter specs slice latent columns and emit feature/target values.
+- Converter specs slice latent columns and emit feature values.
 - Unassigned feature slots are filled with sampled noise.
+- A separate observed-`X` target head then generates raw targets from the
+  postprocessed feature matrix.
 
 ### 4) Quality, shift/noise controls, and postprocessing {#4-quality-shiftnoise-controls-and-postprocessing}
 
@@ -332,7 +342,8 @@ Canonical postprocess behavior:
 Each bundle includes runtime metadata for lineage, deferred-filter
 status, shift, noise distribution, and resolved config snapshot.
 
-- `lineage` aligns emitted columns with DAG node assignments.
+- `lineage` aligns emitted feature columns with DAG node assignments and
+  records the observed-`X` target mode.
 - `requested_device`, `resolved_device`, and the reserved
   `device_fallback_reason` field are emitted for runtime observability.
 - Canonical generation outputs add `layout_mode`, `layout_plan_seed`,
@@ -351,7 +362,7 @@ flowchart TB
     classDef pipe fill:#f3e5f5,stroke:#4a148c,stroke-width:2px,color:#4a148c
     classDef out fill:#f1f8e9,stroke:#33691e,stroke-width:2px,color:#33691e
 
-    Setup[layout + DAG + node specs] --> Walk[for node in topological order]
+    Setup[layout + DAG + feature node specs] --> Walk[for node in topological order]
     Walk --> Root{root node?}
 
     Root -- yes --> RootSample[sample_random_points]
@@ -371,8 +382,10 @@ flowchart TB
 
     Pipe --> Emit[emit node output + extracted values]
     Emit --> Walk
-    Emit --> Assemble[assemble final X/y]
-    Assemble --> Out[[return tensors + deferred filter metadata]]
+    Emit --> Assemble[assemble raw feature matrix]
+    Assemble --> PostX[feature postprocess]
+    PostX --> TargetHead[apply observed-X target head]
+    TargetHead --> Out[[return observed X + raw y + deferred filter metadata]]
 
     %% Assign Classes
     class Setup setup
@@ -393,11 +406,12 @@ These are related but distinct runtime surfaces.
 
 ## Glossary quick reference
 
-- **layout**: sampled feature/task/assignment scaffold for one dataset.
+- **layout**: sampled feature/task scaffold for one dataset.
 - **DAG adjacency**: upper-triangular parent-child matrix, `src -> dst`.
 - **node pipeline**: per-node transform and converter execution path.
-- **converter spec**: instruction for extracting observable
-  feature/target slices.
+- **converter spec**: instruction for extracting observable feature slices.
+- **target head**: separately sampled conditional generator that maps the
+  realized observed feature table to raw targets.
 - **deferred filter**: ExtraTrees-based post-generation gate that rejects
   trivial small-shot tasks, pure garbage tasks, and optional structural
   no-path cases.

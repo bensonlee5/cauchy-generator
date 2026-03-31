@@ -45,11 +45,15 @@ ______________________________________________________________________
 ### `default-baseline`
 
 - Purpose: general-purpose starting point for mixed-type classification studies
+- Prior note: feature-only latent DAG for `p(x)` plus an observed-`X`
+  conditional target head for `p(y | x)`
 - Citation note: cite `dagzoo` itself plus the specific recipe name
 
 ### `tabpfn-v1-prior-approx`
 
 - Purpose: practical approximation for TabPFN-style small-data classification workflows
+- Prior note: numeric-heavy factorized prior that keeps the target on an
+  observed-`X` conditional head rather than a latent target node
 - Citations:
   - `Accurate predictions on small data with a tabular foundation model`
   - `TabICLv2: A better, faster, scalable, and open tabular foundation model`

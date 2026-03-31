@@ -33,7 +33,6 @@ def _build_lineage_metadata(
 
     raw_feature_to_node = [int(node_index) for node_index in list(layout.feature_node_assignment)]
     feature_to_node = [raw_feature_to_node[int(src_col)] for src_col in feature_index_map]
-    target_to_node = int(layout.target_node_assignment)
 
     payload = {
         "schema_name": LINEAGE_SCHEMA_NAME,
@@ -44,7 +43,7 @@ def _build_lineage_metadata(
         },
         "assignments": {
             "feature_to_node": feature_to_node,
-            "target_to_node": target_to_node,
+            "target_mode": "observed_x_conditional",
         },
     }
     validate_lineage_payload(payload)

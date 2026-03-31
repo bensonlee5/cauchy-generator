@@ -101,8 +101,9 @@ def _layout_stub(
     graph_nodes: int,
     adjacency: torch.Tensor,
     feature_node_assignment: list[int],
-    target_node_assignment: int,
+    target_node_assignment: int | None = None,
 ) -> LayoutPlan:
+    _ = target_node_assignment
     graph_edges = int(adjacency.to(dtype=torch.int64).sum().item())
     n_features = len(feature_types)
     cat_idx = [idx for idx, kind in enumerate(feature_types) if kind == "cat"]
@@ -123,7 +124,6 @@ def _layout_stub(
         graph_edge_density=graph_edge_density,
         adjacency=adjacency,
         feature_node_assignment=list(feature_node_assignment),
-        target_node_assignment=int(target_node_assignment),
     )
 
 
@@ -1968,9 +1968,8 @@ def test_generate_one_lineage_assignment_lengths_and_bounds() -> None:
     n_nodes = int(bundle.metadata["graph_nodes"])
 
     feature_to_node = assignments["feature_to_node"]
-    target_to_node = int(assignments["target_to_node"])
     assert len(feature_to_node) == int(bundle.metadata["n_features"])
-    assert 0 <= target_to_node < n_nodes
+    assert assignments["target_mode"] == "observed_x_conditional"
     for node_index in feature_to_node:
         assert 0 <= int(node_index) < n_nodes
 
@@ -2302,7 +2301,7 @@ def test_generate_one_lineage_assignments_follow_postprocess_feature_mapping(
         preserve_feature_schema=False,
     ):
         assert return_feature_index_map is True
-        assert preserve_feature_schema is True
+        assert preserve_feature_schema is False
         index_map = [2, 0, 3]
         reordered_types = [feature_types[i] for i in index_map]
         return (
@@ -2346,7 +2345,7 @@ def test_generate_one_lineage_assignments_follow_postprocess_feature_mapping(
             mixture_weights=None,
         ),
         dtype=torch.float32,
-        preserve_feature_schema=True,
+        preserve_feature_schema=False,
     )
     assert int(bundle.metadata["n_features"]) == 3
     assert bundle.metadata["lineage"]["assignments"]["feature_to_node"] == [2, 0, 1]
@@ -4428,7 +4427,7 @@ def test_h100_large_shape_reduces_auto_batch_size_relative_to_standard_h100() ->
 def test_fixed_layout_batch_size_cap_limits_auto_batch_size() -> None:
     cfg = _tiny_config()
     cfg.runtime.fixed_layout_target_cells = 64_000_000
-    cfg.runtime.fixed_layout_batch_size_cap = 16
+    cfg.runtime.fixed_layout_batch_size_cap = 128
 
     plan = SimpleNamespace(
         n_train=cfg.dataset.n_train,
@@ -4444,7 +4443,7 @@ def test_fixed_layout_batch_size_cap_limits_auto_batch_size() -> None:
         batch_size_cap=cfg.runtime.fixed_layout_batch_size_cap,
     )
 
-    assert capped_batch == 16
+    assert capped_batch == 128
 
 
 def test_generate_batch_with_plan_iter_allows_late_classification_failure_after_partial_output(
@@ -5150,7 +5149,7 @@ def test_generate_batch_graph_steering_preserves_base_replay_roots_and_replays_p
         "steering",
         "execution_plan",
     ]
-    assert int(steered_bundle.metadata["layout_plan_schema_version"]) == 7
+    assert int(steered_bundle.metadata["layout_plan_schema_version"]) == 8
     assert str(replayed_plan.layout_signature) == str(steered_bundle.metadata["layout_signature"])
     assert str(replayed_plan.plan_signature) == str(
         steered_bundle.metadata["layout_plan_signature"]

@@ -18,7 +18,7 @@ from .plan_types import (
     execution_plan_variant_counts,
 )
 
-_FIXED_LAYOUT_METADATA_SCHEMA_VERSION = 7
+_FIXED_LAYOUT_METADATA_SCHEMA_VERSION = 8
 
 
 @dataclass(slots=True)
@@ -63,7 +63,6 @@ def _layout_to_dict(layout: LayoutPlan) -> dict[str, Any]:
         "graph_edge_density": float(layout.graph_edge_density),
         "adjacency": adjacency_payload,
         "feature_node_assignment": [int(value) for value in layout.feature_node_assignment],
-        "target_node_assignment": int(layout.target_node_assignment),
     }
 
 

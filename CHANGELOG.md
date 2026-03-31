@@ -10,6 +10,25 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.16.0] - 2026-03-31
+
+### Changed
+
+- **BREAKING:** The default synthetic prior is now factorized. Canonical
+  generation samples observed features `X` from the latent DAG first, then
+  generates `y` from a separately sampled observed-`X` conditional head
+  instead of extracting the target from a latent DAG node.
+- **BREAKING:** Emitted metadata now includes `metadata.prior`, lineage
+  assignments now mark the target as `observed_x_conditional`, and canonical
+  fixed-layout contract metadata now uses
+  `layout_plan_schema_version=8` with
+  `layout_execution_contract=chunk_batched_v2`.
+- Fixed-layout replay and plan signatures now include the explicit target-head
+  payload, and classification generation now materializes observed features
+  before target generation and replay-attempt validation.
+- README, runtime docs, transform notes, output-format docs, and curated recipe
+  descriptions now describe the factorized `p(x)` plus `p(y | x)` default.
+
 ## [0.15.2] - 2026-03-30
 
 ### Added

@@ -10,7 +10,7 @@ from typing import Any, Literal, TypeAlias
 
 from dagzoo.core.layout_types import AggregationKind, ConverterKind, MechanismFamily
 
-FixedLayoutExecutionContract = Literal["chunk_batched_v1"]
+FixedLayoutExecutionContract = Literal["chunk_batched_v2"]
 FixedLayoutRootBaseKind = Literal["normal", "uniform", "unit_ball", "normal_cov"]
 FixedLayoutMatrixBaseKind = Literal["gaussian", "weights", "singular_values", "kernel"]
 FixedLayoutActivationKind = Literal[
@@ -31,7 +31,7 @@ FixedLayoutConverterVariant = Literal[
     "softmax_points",
 ]
 
-DEFAULT_FIXED_LAYOUT_EXECUTION_CONTRACT: FixedLayoutExecutionContract = "chunk_batched_v1"
+DEFAULT_FIXED_LAYOUT_EXECUTION_CONTRACT: FixedLayoutExecutionContract = "chunk_batched_v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,8 +271,15 @@ class FixedLayoutNodePlan:
 
 
 @dataclass(frozen=True, slots=True)
+class FixedLayoutTargetHeadPlan:
+    parent_feature_indices: tuple[int, ...]
+    node_plan: FixedLayoutNodePlan
+
+
+@dataclass(frozen=True, slots=True)
 class FixedLayoutExecutionPlan:
     node_plans: tuple[FixedLayoutNodePlan, ...] = ()
+    target_head_plan: FixedLayoutTargetHeadPlan | None = None
     execution_contract: FixedLayoutExecutionContract = DEFAULT_FIXED_LAYOUT_EXECUTION_CONTRACT
 
 
@@ -319,7 +326,10 @@ def fixed_layout_converter_groups(
 def fixed_layout_signature_payloads(
     execution_plan: FixedLayoutExecutionPlan,
 ) -> list[dict[str, Any]]:
-    return [_signature_node_plan_payload(node_plan) for node_plan in execution_plan.node_plans]
+    payloads = [_signature_node_plan_payload(node_plan) for node_plan in execution_plan.node_plans]
+    if execution_plan.target_head_plan is not None:
+        payloads.append(_signature_target_head_payload(execution_plan.target_head_plan))
+    return payloads
 
 
 def _converter_function_signature(plan: FixedLayoutFunctionPlan | None) -> str | None:
@@ -393,6 +403,33 @@ def _signature_node_plan_payload(node_plan: FixedLayoutNodePlan) -> dict[str, An
         stripped_specs.append(spec_payload)
     payload["converter_specs"] = stripped_specs
     return payload
+
+
+def _target_head_plan_payload(
+    target_head_plan: FixedLayoutTargetHeadPlan,
+    *,
+    execution_contract: str,
+) -> dict[str, Any]:
+    return {
+        "role": "target_head",
+        "parent_feature_indices": [
+            int(feature_index) for feature_index in target_head_plan.parent_feature_indices
+        ],
+        "node_plan": _node_plan_payload(
+            target_head_plan.node_plan,
+            execution_contract=execution_contract,
+        ),
+    }
+
+
+def _signature_target_head_payload(target_head_plan: FixedLayoutTargetHeadPlan) -> dict[str, Any]:
+    return {
+        "role": "target_head",
+        "parent_feature_indices": [
+            int(feature_index) for feature_index in target_head_plan.parent_feature_indices
+        ],
+        "node_plan": _signature_node_plan_payload(target_head_plan.node_plan),
+    }
 
 
 def _converter_plan_payload(plan: FixedLayoutConverterPlan) -> dict[str, Any]:
@@ -569,7 +606,7 @@ def execution_plan_family_counts(
         for family, count in function_plan_family_counts(plan).items():
             counts[family] = int(counts.get(family, 0)) + int(count)
 
-    for node_plan in execution_plan.node_plans:
+    def _merge_node_plan(node_plan: FixedLayoutNodePlan) -> None:
         source = node_plan.source
         if isinstance(source, (RandomPointsNodeSource, ConcatNodeSource)):
             _merge(source.function)
@@ -579,6 +616,11 @@ def execution_plan_family_counts(
         for converter_plan in node_plan.converter_plans:
             if isinstance(converter_plan, CategoricalConverterPlan):
                 _merge(converter_plan.function)
+
+    for node_plan in execution_plan.node_plans:
+        _merge_node_plan(node_plan)
+    if execution_plan.target_head_plan is not None:
+        _merge_node_plan(execution_plan.target_head_plan.node_plan)
 
     return {family: int(counts[family]) for family in sorted(counts)}
 
@@ -619,7 +661,7 @@ def execution_plan_variant_counts(
         for label, count in function_plan_variant_counts(plan).items():
             counts[label] = int(counts.get(label, 0)) + int(count)
 
-    for node_plan in execution_plan.node_plans:
+    def _merge_node_plan(node_plan: FixedLayoutNodePlan) -> None:
         source = node_plan.source
         if isinstance(source, (RandomPointsNodeSource, ConcatNodeSource)):
             _merge(source.function)
@@ -629,6 +671,11 @@ def execution_plan_variant_counts(
         for converter_plan in node_plan.converter_plans:
             if isinstance(converter_plan, CategoricalConverterPlan):
                 _merge(converter_plan.function)
+
+    for node_plan in execution_plan.node_plans:
+        _merge_node_plan(node_plan)
+    if execution_plan.target_head_plan is not None:
+        _merge_node_plan(execution_plan.target_head_plan.node_plan)
 
     return {label: int(counts[label]) for label in sorted(counts)}
 
@@ -683,6 +730,7 @@ __all__ = [
     "FixedLayoutMatrixPlan",
     "FixedLayoutNodePlan",
     "FixedLayoutNodeSource",
+    "FixedLayoutTargetHeadPlan",
     "GaussianMatrixPlan",
     "GpFunctionPlan",
     "KernelMatrixPlan",

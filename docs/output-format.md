@@ -237,6 +237,7 @@ Each line contains:
 | `run_num_datasets`           | int         | Optional canonical run length used to replay the saved bundle                                         |
 | `attempt_used`               | int         | Generation attempt index (0-based)                                                                    |
 | `lineage`                    | object      | DAG lineage record (see Lineage below)                                                                |
+| `prior`                      | object      | Realized default-prior semantics for feature generation and the conditional target head               |
 | `shift`                      | object      | Resolved shift settings and realized observability signals                                            |
 | `noise_distribution`         | object      | Resolved noise-family selection and effective sampling params                                         |
 | `config`                     | object      | Full serialized generator configuration                                                               |
@@ -380,19 +381,19 @@ Present for all canonical generation outputs. These bundles share one sampled
 layout per run and preserve emitted column alignment (feature count, column
 order, and lineage feature-to-node mapping) within that run.
 
-| Key                          | Type   | Description                                                            |
-| ---------------------------- | ------ | ---------------------------------------------------------------------- |
-| `layout_mode`                | str    | `"fixed"`                                                              |
-| `layout_plan_seed`           | int    | Internal seed used to sample the shared per-run layout                 |
-| `layout_signature`           | str    | Stable fingerprint for the shared sampled layout                       |
-| `layout_plan_signature`      | str    | Stable fingerprint for the frozen internal node payload                |
-| `layout_plan_schema_version` | int    | Internal canonical layout metadata version                             |
-| `layout_execution_contract`  | str    | Internal execution contract (`chunk_batched_v1`)                       |
-| `dataset_id`                 | str    | Stable dataset identifier derived from canonical run/layout provenance |
-| `split_groups`               | object | Stable downstream grouping keys for request-run and layout-plan splits |
-| `keyed_replay`               | object | Exact keyed subtree replay paths for layout/execution/dataset roots    |
+| Key                          | Type   | Description                                                             |
+| ---------------------------- | ------ | ----------------------------------------------------------------------- |
+| `layout_mode`                | str    | `"fixed"`                                                               |
+| `layout_plan_seed`           | int    | Internal seed used to sample the shared per-run layout                  |
+| `layout_signature`           | str    | Stable fingerprint for the shared sampled layout                        |
+| `layout_plan_signature`      | str    | Stable fingerprint for the frozen feature-node payload plus target head |
+| `layout_plan_schema_version` | int    | Internal canonical layout metadata version                              |
+| `layout_execution_contract`  | str    | Internal execution contract (`chunk_batched_v2`)                        |
+| `dataset_id`                 | str    | Stable dataset identifier derived from canonical run/layout provenance  |
+| `split_groups`               | object | Stable downstream grouping keys for request-run and layout-plan splits  |
+| `keyed_replay`               | object | Exact keyed subtree replay paths for layout/execution/dataset roots     |
 
-Under `chunk_batched_v1`, canonical fixed-layout outputs are deterministic for
+Under `chunk_batched_v2`, canonical fixed-layout outputs are deterministic for
 the same run seed and realized run shape. Internal plan metadata records the
 shared sampled layout and execution-plan fingerprint used for that run, while
 `dataset_id` and `split_groups` provide the public path-independent grouping
@@ -400,6 +401,20 @@ surface for downstream consumers: `request_run` includes non-plan run
 provenance, while `layout_plan` stays scoped to the shared fixed-layout
 execution plan. `keyed_replay` records the exact keyed subtree roots needed
 for internal replay.
+
+### Prior sub-object
+
+Present for all generated bundles.
+
+| Key                 | Type | Description                                             |
+| ------------------- | ---- | ------------------------------------------------------- |
+| `factorization`     | str  | Current default value `independent_p_x_and_p_y_given_x` |
+| `target_head`       | str  | Current default value `observed_x_conditional`          |
+| `feature_generator` | str  | Current default value `latent_dag`                      |
+
+The default prior generates observed features `X` from the latent DAG, applies
+feature postprocess, and only then samples `y` from a separately sampled
+conditional head over that observed `X`.
 
 ### Missingness sub-object (optional)
 
@@ -501,7 +516,7 @@ lineage is persisted to disk, payloads are rewritten to compact version
   },
   "assignments": {
     "feature_to_node": [2, 3, 5, 7],
-    "target_to_node": 7
+    "target_mode": "observed_x_conditional"
   }
 }
 ```
@@ -510,7 +525,8 @@ lineage is persisted to disk, payloads are rewritten to compact version
   Upper-triangular only; diagonal is always 0. Direction convention is
   `adjacency[src][dst]` (`src -> dst`), so parents of node `j` are found from column `j`.
 - `feature_to_node[i]` is the DAG node index that produces feature `i`.
-- `target_to_node` is the DAG node index that produces the target.
+- `target_mode=observed_x_conditional` means the target is generated by a
+  separate observed-`X` conditional head rather than a latent target node.
 
 ### Version 1.1.0 (compact, on-disk)
 
@@ -537,7 +553,7 @@ data.
   },
   "assignments": {
     "feature_to_node": [2, 3, 5, 7],
-    "target_to_node": 7
+    "target_mode": "observed_x_conditional"
   }
 }
 ```

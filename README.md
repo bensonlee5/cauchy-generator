@@ -1,10 +1,12 @@
 # dagzoo
 
 `dagzoo` generates reproducible synthetic tabular corpora from sampled causal
-structure. The stable adoption layer is a small set of named `recipe:<name>`
-configs plus stable artifact contracts. Repo-local authoring under `configs/`
-remains available for advanced work, but it is not the primary public
-entrypoint.
+structure. The default prior is factorized: a latent DAG first emits observed
+features `X`, then an independently sampled conditional head generates `y` from
+that observed `X`. The stable adoption layer is a small set of named
+`recipe:<name>` configs plus stable artifact contracts. Repo-local authoring
+under `configs/` remains available for advanced work, but it is not the
+primary public entrypoint.
 
 ```mermaid
 flowchart LR
@@ -15,8 +17,10 @@ flowchart LR
     Seed([Root Seed]) --> RNG[Deterministic Seeding]
     RNG --> Layout[Layout & DAG Sampling]
     Layout --> Mechanisms[Random Functional Mechanisms]
-    Mechanisms --> Converters[Feature/Target Converters]
-    Converters --> Bundle[[DatasetBundle: X, y, Metadata]]
+    Mechanisms --> Converters[Feature Converters]
+    Converters --> XObs[Observed Features X]
+    XObs --> TargetHead[Conditional Target Head y|X]
+    TargetHead --> Bundle[[DatasetBundle: X, y, Metadata]]
 
     class Seed,RNG setup
     class Layout,Mechanisms,Converters core
@@ -26,9 +30,11 @@ flowchart LR
 ### From Latent DAG to Tabular Data
 
 Unlike generators that treat each column as independent noise, `dagzoo`
-generates data from a latent causal structure. One node in the sampled graph
-can branch into multiple observable features, which preserves dependency
-patterns in the emitted table.
+generates observed features from a latent causal structure and then generates
+the target from the realized observed feature table. One node in the sampled
+graph can branch into multiple observable features, which preserves dependency
+patterns in the emitted table while keeping the target mechanism explicitly
+conditional on `X`.
 
 ```mermaid
 flowchart LR
@@ -43,13 +49,17 @@ flowchart LR
         Feat1[Feature 1: Numeric]
         Feat2[Feature 2: Categorical]
         Feat3[Feature 3: Numeric]
+        Head[Observed-X Target Head]
         Target[Target Variable]
     end
 
     NodeA -. mapping .-> Feat1
     NodeA -. mapping .-> Feat2
     NodeB -. mapping .-> Feat3
-    NodeB -. mapping .-> Target
+    Feat1 --> Head
+    Feat2 --> Head
+    Feat3 --> Head
+    Head --> Target
 
     class NodeA,NodeB latent
     class Feat1,Feat2,Feat3,Target observable
