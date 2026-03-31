@@ -170,6 +170,7 @@ def _iter_prepared_canonical_batch_iter(
             num_datasets=num_datasets,
             seed=prepared.run_seed,
             batch_size=prepared.batch_size,
+            classification_attempt_plan=prepared.classification_attempt_plan,
             on_raw_batch_metrics=on_raw_batch_metrics,
         )
     ):

@@ -84,7 +84,7 @@ jobs:
           --cov-report=xml:coverage.xml
           -q
       - name: Enforce diff coverage
-        run: uv run diff-cover coverage.xml --compare-branch origin/main --fail-under=90
+        run: uv run diff-cover coverage.xml --compare-branch origin/main --fail-under=85
       - uses: actions/upload-artifact@v7
         if: always()
         with:

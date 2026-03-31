@@ -1,10 +1,14 @@
 # dagzoo
 
 `dagzoo` generates reproducible synthetic tabular corpora from sampled causal
-structure. The stable adoption layer is a small set of named `recipe:<name>`
-configs plus stable artifact contracts. Repo-local authoring under `configs/`
-remains available for advanced work, but it is not the primary public
-entrypoint.
+structure. The default prior is factorized at the complete-data level: a latent
+DAG first emits complete features `X_complete`, then an independently sampled
+conditional head generates `y` from `X_complete`, and optional missingness acts
+afterward as an observation model that emits `X_obs`. The stable adoption layer
+is a small set of named
+`recipe:<name>` configs plus stable artifact contracts. Repo-local authoring
+under `configs/` remains available for advanced work, but it is not the
+primary public entrypoint.
 
 ```mermaid
 flowchart LR
@@ -15,8 +19,11 @@ flowchart LR
     Seed([Root Seed]) --> RNG[Deterministic Seeding]
     RNG --> Layout[Layout & DAG Sampling]
     Layout --> Mechanisms[Random Functional Mechanisms]
-    Mechanisms --> Converters[Feature/Target Converters]
-    Converters --> Bundle[[DatasetBundle: X, y, Metadata]]
+    Mechanisms --> Converters[Feature Converters]
+    Converters --> XComplete[Complete Features X_complete]
+    XComplete --> TargetHead[Conditional Target Head y|X_complete]
+    TargetHead --> Missingness[Observation Model / Missingness]
+    Missingness --> Bundle[[DatasetBundle: X_obs, y, Metadata]]
 
     class Seed,RNG setup
     class Layout,Mechanisms,Converters core
@@ -26,9 +33,12 @@ flowchart LR
 ### From Latent DAG to Tabular Data
 
 Unlike generators that treat each column as independent noise, `dagzoo`
-generates data from a latent causal structure. One node in the sampled graph
-can branch into multiple observable features, which preserves dependency
-patterns in the emitted table.
+generates complete features from a latent causal structure and then generates
+the target from that realized complete feature table. One node in the sampled
+graph can branch into multiple observable features, which preserves dependency
+patterns in the emitted table while keeping the target mechanism explicitly
+conditional on `X_complete`. Optional missingness can later censor the emitted
+feature table without changing how `y` was sampled.
 
 ```mermaid
 flowchart LR
@@ -43,13 +53,17 @@ flowchart LR
         Feat1[Feature 1: Numeric]
         Feat2[Feature 2: Categorical]
         Feat3[Feature 3: Numeric]
+        Head[Complete-X Target Head]
         Target[Target Variable]
     end
 
     NodeA -. mapping .-> Feat1
     NodeA -. mapping .-> Feat2
     NodeB -. mapping .-> Feat3
-    NodeB -. mapping .-> Target
+    Feat1 --> Head
+    Feat2 --> Head
+    Feat3 --> Head
+    Head --> Target
 
     class NodeA,NodeB latent
     class Feat1,Feat2,Feat3,Target observable
@@ -57,6 +71,13 @@ flowchart LR
     style LatentSpace fill:#f0faff,stroke:#01579b,stroke-dasharray: 5 5
     style ObservableSpace fill:#fafafa,stroke:#212121
 ```
+
+This matches the factorized posterior-predictive story in Nagler section 2.2
+when `X` is interpreted as complete covariates. `dagzoo` does not currently
+implement localization or an explicit `n`-adaptive prior family, so Nagler's
+McDiarmid-style variance discussion and the non-monotone bias-versus-`n`
+discussion should be treated as downstream learner considerations, not as
+generator guarantees.
 
 ## Start
 

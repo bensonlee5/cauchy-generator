@@ -10,6 +10,30 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.16.0] - 2026-03-31
+
+### Changed
+
+- **BREAKING:** The default synthetic prior is now factorized. Canonical
+  generation samples complete features `X_complete` from the latent DAG first,
+  then generates `y` from a separately sampled conditional head over
+  `X_complete`, and only later applies optional missingness as an observation
+  process instead of extracting the target from a latent DAG node.
+- **BREAKING:** Emitted metadata now includes `metadata.prior`, lineage
+  assignments now mark the target as `latent_complete_x_conditional`, and canonical
+  fixed-layout contract metadata now uses
+  `layout_plan_schema_version=9` with
+  `layout_execution_contract=chunk_batched_v3`.
+- Fixed-layout replay and plan signatures now include the explicit target-head
+  payload, classification generation now uses retry-only invalid-split
+  handling, and missingness is sampled once over the full emitted feature
+  matrix rather than independently per split.
+- README, runtime docs, transform notes, output-format docs, missingness docs,
+  and curated recipe descriptions now describe the factorized
+  `p(x_complete)` plus `p(y | x_complete)` default and call out that the repo
+  does not currently implement Nagler-style localization or explicit
+  `n`-adaptive prior semantics.
+
 ## [0.15.2] - 2026-03-30
 
 ### Added

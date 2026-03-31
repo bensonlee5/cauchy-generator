@@ -151,8 +151,7 @@ def _build_compact_lineage_payload(
 
     assignments = cast(Mapping[str, Any], lineage["assignments"])
     feature_to_node = list(cast(list[int], assignments["feature_to_node"]))
-    target_to_node = cast(int, assignments["target_to_node"])
-    return {
+    payload: dict[str, Any] = {
         "schema_name": LINEAGE_SCHEMA_NAME,
         "schema_version": LINEAGE_SCHEMA_VERSION_COMPACT,
         "graph": {
@@ -170,9 +169,14 @@ def _build_compact_lineage_payload(
         },
         "assignments": {
             "feature_to_node": feature_to_node,
-            "target_to_node": target_to_node,
         },
     }
+    assignments_payload = cast(dict[str, Any], payload["assignments"])
+    if "target_to_node" in assignments:
+        assignments_payload["target_to_node"] = cast(int, assignments["target_to_node"])
+    if "target_mode" in assignments:
+        assignments_payload["target_mode"] = cast(str, assignments["target_mode"])
+    return payload
 
 
 def _ensure_shard_blob_open(state: _ShardLineageState) -> BinaryIO:

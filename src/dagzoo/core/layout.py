@@ -142,12 +142,6 @@ def _sample_layout(
         keyed_rng.keyed("assignments", "feature").torch_rng(device=device),
         device,
     )
-    target_to_node = _sample_assignments(
-        1,
-        num_nodes,
-        keyed_rng.keyed("assignments", "target").torch_rng(device=device),
-        device,
-    )[0]
 
     feature_types: list[FeatureType] = ["num"] * num_features
     for i in cat_idx:
@@ -167,7 +161,6 @@ def _sample_layout(
         graph_edge_density=float(graph_edge_density),
         adjacency=adjacency,
         feature_node_assignment=feature_to_node,
-        target_node_assignment=target_to_node,
     )
 
 
@@ -200,7 +193,6 @@ def _resample_layout_graph(
         graph_edge_density=float(graph_edge_density),
         adjacency=adjacency,
         feature_node_assignment=[int(value) for value in layout.feature_node_assignment],
-        target_node_assignment=int(layout.target_node_assignment),
     )
 
 
@@ -213,7 +205,6 @@ def _feature_key(feature_index: int) -> str:
 def _build_node_specs(
     node_index: int,
     layout: LayoutPlan,
-    task: str,
     keyed_rng: KeyedRng,
 ) -> list[FixedLayoutConverterSpec]:
     """Build converter specs for one node in the graph execution order."""
@@ -273,20 +264,34 @@ def _build_node_specs(
                 cardinality=None,
             )
 
-    if int(layout.target_node_assignment) == node_index:
-        if task == "classification":
-            n_classes = int(layout.n_classes)
-            _append_spec(
+    return specs
+
+
+def _build_target_specs(
+    layout: LayoutPlan,
+    task: str,
+) -> list[FixedLayoutConverterSpec]:
+    """Build converter specs for the latent-complete-data target head."""
+
+    if task == "classification":
+        n_classes = int(layout.n_classes)
+        return [
+            FixedLayoutConverterSpec(
                 key="target",
                 kind="target_cls",
                 dim=max(2, n_classes),
                 cardinality=n_classes,
+                column_start=0,
+                column_end=max(2, n_classes),
             )
-        else:
-            _append_spec(
-                key="target",
-                kind="target_reg",
-                dim=1,
-                cardinality=None,
-            )
-    return specs
+        ]
+    return [
+        FixedLayoutConverterSpec(
+            key="target",
+            kind="target_reg",
+            dim=1,
+            cardinality=None,
+            column_start=0,
+            column_end=1,
+        )
+    ]

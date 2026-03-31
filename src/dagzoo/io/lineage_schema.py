@@ -33,7 +33,9 @@ _ADJACENCY_REF_REQUIRED_KEYS = frozenset(
         "sha256",
     }
 )
-_ASSIGNMENTS_REQUIRED_KEYS = frozenset({"feature_to_node", "target_to_node"})
+_ASSIGNMENTS_REQUIRED_KEYS = frozenset({"feature_to_node"})
+_ASSIGNMENTS_ALLOWED_KEYS = frozenset({"feature_to_node", "target_to_node", "target_mode"})
+_TARGET_MODE_VALUES = frozenset({"observed_x_conditional", "latent_complete_x_conditional"})
 
 
 class LineageValidationError(ValueError):
@@ -266,11 +268,18 @@ def _validate_lineage_payload(payload: object, *, root_path: str) -> None:
 
     assignments_path = f"{root_path}.assignments"
     assignments = _as_mapping(lineage["assignments"], path=assignments_path)
-    _validate_required_and_unknown_keys(
-        assignments,
-        path=assignments_path,
-        required_keys=_ASSIGNMENTS_REQUIRED_KEYS,
-    )
+    raw_assignment_keys = list(assignments.keys())
+    non_string_keys = [key for key in raw_assignment_keys if not isinstance(key, str)]
+    if non_string_keys:
+        formatted = ", ".join(repr(key) for key in non_string_keys)
+        _raise(assignments_path, f"contains non-string key(s): {formatted}")
+    assignment_keys = {str(key) for key in raw_assignment_keys}
+    missing = sorted(_ASSIGNMENTS_REQUIRED_KEYS - assignment_keys)
+    if missing:
+        _raise(assignments_path, f"missing required key(s): {', '.join(missing)}")
+    unknown = sorted(assignment_keys - _ASSIGNMENTS_ALLOWED_KEYS)
+    if unknown:
+        _raise(assignments_path, f"unknown key(s): {', '.join(unknown)}")
 
     feature_to_node = assignments["feature_to_node"]
     feature_to_node_path = f"{assignments_path}.feature_to_node"
@@ -283,11 +292,27 @@ def _validate_lineage_payload(payload: object, *, root_path: str) -> None:
             path=f"{feature_to_node_path}[{idx}]",
         )
 
-    _validate_assignment_node_index(
-        assignments["target_to_node"],
-        n_nodes=n_nodes,
-        path=f"{assignments_path}.target_to_node",
-    )
+    has_target_to_node = "target_to_node" in assignments
+    has_target_mode = "target_mode" in assignments
+    if not has_target_to_node and not has_target_mode:
+        _raise(
+            assignments_path,
+            "must include either target_to_node or target_mode",
+        )
+    if has_target_to_node:
+        _validate_assignment_node_index(
+            assignments["target_to_node"],
+            n_nodes=n_nodes,
+            path=f"{assignments_path}.target_to_node",
+        )
+    if has_target_mode:
+        target_mode = assignments["target_mode"]
+        target_mode_path = f"{assignments_path}.target_mode"
+        if not isinstance(target_mode, str):
+            _raise(target_mode_path, "must be a string")
+        if target_mode not in _TARGET_MODE_VALUES:
+            allowed = ", ".join(sorted(_TARGET_MODE_VALUES))
+            _raise(target_mode_path, f"must be one of: {allowed}")
 
 
 def validate_lineage_payload(payload: Mapping[str, Any]) -> None:

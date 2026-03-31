@@ -34,6 +34,12 @@ weak meta-feature settings.
 Use missingness workflows to inject deterministic synthetic null patterns for
 robustness testing under MCAR, MAR, and MNAR regimes.
 
+In `dagzoo`, missingness is an observation model applied after target
+generation. The default prior first samples complete features
+`X_complete ~ p(x)` and targets `y ~ p(y | X_complete)`, then samples a
+missingness process and emits `X_obs = mask(X_complete, m)`. This keeps the
+target mechanism separate from the later censoring process.
+
 ______________________________________________________________________
 
 ## When to use
@@ -102,7 +108,8 @@ ______________________________________________________________________
 
 - `--set dataset.missing_mechanism=...`: which statistical mechanism drives the missingness.
   `mcar` = independent coin flip per cell; `mar` = missingness depends on
-  observed features; `mnar` = missingness depends on the missing value itself.
+  complete feature values through the observation model; `mnar` = missingness depends on
+  the value being censored.
 
 - `--set dataset.missing_mar_observed_fraction=...`: fraction of features used to compute MAR
   logits (higher = more features influence which values go missing).
@@ -113,7 +120,8 @@ ______________________________________________________________________
   ```
 
 - `--set dataset.missing_mar_logit_scale=...`: MAR logit sensitivity multiplier. Higher values
-  make missingness more sharply dependent on the observed features.
+  make missingness more sharply dependent on the complete features used by the
+  observation model.
 
   ```
   --set dataset.missing_mar_logit_scale=0.5  →  weak MAR signal (missingness is nearly random)
@@ -125,6 +133,7 @@ ______________________________________________________________________
 ## What to inspect
 
 - `metadata.ndjson` dataset records for resolved missingness configuration.
+- `metadata.prior` for the complete-data versus observation-model semantics.
 - Benchmark summaries for `preset_results[*].scenarios.missingness` (when enabled).
 
 For output details, see

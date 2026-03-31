@@ -14,8 +14,9 @@ from dagzoo.config import GeneratorConfig
 from dagzoo.core.execution_semantics import (
     sample_node_plan,
 )
-from dagzoo.core.layout import _build_node_specs
+from dagzoo.core.layout import _build_node_specs, _build_target_specs
 from dagzoo.core.layout_types import LayoutPlan
+from dagzoo.postprocess.postprocess import postprocess_feature_matrix
 from dagzoo.rng import KeyedRng
 from dagzoo.sampling.noise import NoiseSamplingSpec, sample_noise_from_spec
 
@@ -55,6 +56,7 @@ from .plan_types import (
     FixedLayoutExecutionPlan,
     FixedLayoutFunctionPlan,
     FixedLayoutNodePlan,
+    FixedLayoutTargetHeadPlan,
     GpFunctionPlan,
     LinearFunctionPlan,
     NeuralNetFunctionPlan,
@@ -97,7 +99,7 @@ def build_fixed_layout_execution_plan(
     for node_index, parent_indices in enumerate(_parent_index_lists(layout)):
         spec_root = plan_root.keyed("node_spec", node_index)
         node_root = plan_root.keyed("node_plan", node_index)
-        converter_specs = _build_node_specs(node_index, layout, task, spec_root)
+        converter_specs = _build_node_specs(node_index, layout, spec_root)
         node_plans.append(
             _with_compiled_converter_groups(
                 sample_node_plan(
@@ -111,8 +113,23 @@ def build_fixed_layout_execution_plan(
                 )
             )
         )
+    target_head_plan = _with_compiled_converter_groups(
+        sample_node_plan(
+            node_index=int(layout.graph_nodes),
+            parent_indices=tuple(range(int(layout.n_features))),
+            converter_specs=_build_target_specs(layout, task),
+            keyed_rng=plan_root.keyed("target_head"),
+            device="cpu",
+            mechanism_logit_tilt=mechanism_logit_tilt,
+            function_family_mix=config.mechanism.function_family_mix,
+        )
+    )
     return FixedLayoutExecutionPlan(
         node_plans=tuple(node_plans),
+        target_head_plan=FixedLayoutTargetHeadPlan(
+            parent_feature_indices=tuple(range(int(layout.n_features))),
+            node_plan=target_head_plan,
+        ),
         execution_contract=_FIXED_LAYOUT_EXECUTION_CONTRACT,
     )
 
@@ -911,7 +928,7 @@ def _generate_fixed_layout_raw_batch(
     emit_features: bool,
     runtime_metrics_out: dict[str, float] | None = None,
 ) -> tuple[torch.Tensor | None, torch.Tensor, list[dict[str, Any]]]:
-    """Generate one fixed-layout microbatch of raw tensors."""
+    """Generate one fixed-layout microbatch of complete features and raw targets."""
 
     if not dataset_seeds:
         raise ValueError("dataset_seeds must be non-empty.")
@@ -925,10 +942,7 @@ def _generate_fixed_layout_raw_batch(
     rng = FixedLayoutBatchRng(seed=batch_seed, batch_size=batch_size, device=device)
 
     node_outputs: list[torch.Tensor | None] = [None] * int(layout.graph_nodes)
-    feature_values: list[torch.Tensor | None] | None = (
-        [None] * num_features if emit_features else None
-    )
-    target_values: torch.Tensor | None = None
+    feature_values: list[torch.Tensor | None] = [None] * num_features
     aux_meta_batch = [{"filter": {"mode": "deferred", "status": "not_run"}} for _ in dataset_seeds]
 
     for node_index, node_plan in enumerate(execution_plan.node_plans):
@@ -952,50 +966,84 @@ def _generate_fixed_layout_raw_batch(
         node_outputs[node_index] = latent
         for key, values in extracted.items():
             if key.startswith("feature_"):
-                if feature_values is None:
-                    continue
                 feature_index = int(key.split("_", 1)[1])
                 feature_values[feature_index] = values
-            elif key == "target":
-                target_values = values
             else:
                 raise ValueError(f"Unexpected extracted fixed-layout key {key!r}.")
 
-    x: torch.Tensor | None = None
-    if feature_values is not None:
-        feature_start = time.perf_counter()
-        feature_start_cpu = time.process_time()
-        feature_types = list(layout.feature_types)
-        card_by_feature = dict(layout.card_by_feature)
-        feature_columns: list[torch.Tensor] = []
-        for feature_index in range(num_features):
-            feature_tensor: torch.Tensor | None = feature_values[feature_index]
-            if feature_tensor is None:
-                if feature_types[feature_index] == "cat":
-                    cardinality = int(card_by_feature[feature_index])
-                    feature_tensor = rng.randint(0, cardinality, (batch_size, n_rows))
-                else:
-                    feature_tensor = sample_noise_from_spec(
-                        (batch_size, n_rows),
-                        generator=rng.torch_generator,
-                        device=device,
-                        noise_spec=noise_spec,
-                    )
-            feature_columns.append(feature_tensor.to(dtype).unsqueeze(2))
-        x = (
-            torch.cat(feature_columns, dim=2)
-            if feature_columns
-            else torch.empty((batch_size, n_rows, 0), dtype=dtype, device=device)
+    feature_start = time.perf_counter()
+    feature_start_cpu = time.process_time()
+    feature_types = list(layout.feature_types)
+    card_by_feature = dict(layout.card_by_feature)
+    feature_columns: list[torch.Tensor] = []
+    for feature_index in range(num_features):
+        feature_tensor = feature_values[feature_index]
+        if feature_tensor is None:
+            if feature_types[feature_index] == "cat":
+                cardinality = int(card_by_feature[feature_index])
+                feature_tensor = rng.randint(0, cardinality, (batch_size, n_rows))
+            else:
+                feature_tensor = sample_noise_from_spec(
+                    (batch_size, n_rows),
+                    generator=rng.torch_generator,
+                    device=device,
+                    noise_spec=noise_spec,
+                )
+        feature_columns.append(feature_tensor.to(dtype).unsqueeze(2))
+    x_complete = (
+        torch.cat(feature_columns, dim=2)
+        if feature_columns
+        else torch.empty((batch_size, n_rows, 0), dtype=dtype, device=device)
+    )
+    x_complete, _feature_types, _feature_index_map = postprocess_feature_matrix(
+        x_complete,
+        list(layout.feature_types),
+        keyed_rng=None,
+        preserve_feature_schema=True,
+    )
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "feature_materialization_elapsed_seconds",
+        time.perf_counter() - feature_start,
+    )
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "feature_materialization_cpu_time_seconds",
+        time.process_time() - feature_start_cpu,
+    )
+
+    target_head = execution_plan.target_head_plan
+    target_values: torch.Tensor | None
+    if target_head is None:
+        target_values = None
+    else:
+        target_start = time.perf_counter()
+        target_start_cpu = time.process_time()
+        target_parent_tensors = [
+            x_complete[:, :, int(feature_index) : int(feature_index) + 1]
+            for feature_index in target_head.parent_feature_indices
+        ]
+        _target_latent, extracted = _apply_node_plan_batch(
+            config,
+            target_head.node_plan,
+            target_parent_tensors,
+            n_rows=n_rows,
+            rng=rng.keyed("target_head"),
+            device=device,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+            runtime_metrics_out=runtime_metrics_out,
+        )
+        target_values = extracted.get("target")
+        _accumulate_runtime_metric(
+            runtime_metrics_out,
+            "target_materialization_elapsed_seconds",
+            time.perf_counter() - target_start,
         )
         _accumulate_runtime_metric(
             runtime_metrics_out,
-            "feature_materialization_elapsed_seconds",
-            time.perf_counter() - feature_start,
-        )
-        _accumulate_runtime_metric(
-            runtime_metrics_out,
-            "feature_materialization_cpu_time_seconds",
-            time.process_time() - feature_start_cpu,
+            "target_materialization_cpu_time_seconds",
+            time.process_time() - target_start_cpu,
         )
 
     if target_values is None:
@@ -1023,7 +1071,7 @@ def _generate_fixed_layout_raw_batch(
         "raw_batch_cpu_time_seconds",
         time.process_time() - raw_batch_start_cpu,
     )
-    return x, y, aux_meta_batch
+    return x_complete if emit_features else None, y, aux_meta_batch
 
 
 def generate_fixed_layout_graph_batch(

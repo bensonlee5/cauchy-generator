@@ -5,7 +5,10 @@ import pytest
 import torch
 
 from dagzoo.filtering import apply_extra_trees_filter
-from dagzoo.filtering.extra_trees_filter import _apply_extra_trees_filter_numpy
+from dagzoo.filtering.extra_trees_filter import (
+    _apply_extra_trees_filter_numpy,
+    _lineage_has_feature_target_path,
+)
 
 
 def _make_regression_split(
@@ -63,7 +66,22 @@ def _make_classification_split(
     return x_train, y_train, x_test, y_test
 
 
-def _dense_lineage(*, feature_to_node: list[int], target_to_node: int, adjacency: list[list[int]]):
+def _dense_lineage(
+    *,
+    feature_to_node: list[int],
+    target_to_node: int | None = None,
+    target_mode: str | None = None,
+    adjacency: list[list[int]],
+):
+    assignments: dict[str, object] = {
+        "feature_to_node": feature_to_node,
+    }
+    if target_mode is not None:
+        assignments["target_mode"] = target_mode
+    elif target_to_node is not None:
+        assignments["target_to_node"] = target_to_node
+    else:
+        raise ValueError("Either target_to_node or target_mode must be provided.")
     return {
         "schema_name": "dagzoo.dag_lineage",
         "schema_version": "1.0.0",
@@ -71,10 +89,7 @@ def _dense_lineage(*, feature_to_node: list[int], target_to_node: int, adjacency
             "n_nodes": len(adjacency),
             "adjacency": adjacency,
         },
-        "assignments": {
-            "feature_to_node": feature_to_node,
-            "target_to_node": target_to_node,
-        },
+        "assignments": assignments,
     }
 
 
@@ -338,6 +353,26 @@ def test_extra_trees_filter_rejects_lineage_without_feature_target_path(
     assert accepted is False
     assert details["reason"] == "no_feature_target_path"
     assert details["lineage_veto_applied"] is True
+
+
+def test_lineage_veto_accepts_latent_complete_conditional_target_mode() -> None:
+    lineage = _dense_lineage(
+        feature_to_node=[0, 1, 1],
+        target_mode="latent_complete_x_conditional",
+        adjacency=[
+            [0, 1, 1],
+            [0, 0, 1],
+            [0, 0, 0],
+        ],
+    )
+
+    lineage_present, has_path = _lineage_has_feature_target_path(
+        lineage_payload=lineage,
+        lineage_base_dir=None,
+    )
+
+    assert lineage_present is True
+    assert has_path is True
 
 
 @pytest.mark.parametrize(

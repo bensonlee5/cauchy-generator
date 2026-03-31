@@ -27,7 +27,8 @@ from dagzoo.core.validation import (
 from dagzoo.postprocess.postprocess import (
     inject_missingness,
     postprocess_dataset,
-    postprocess_fixed_schema_batch,
+    postprocess_fixed_schema_target_batch,
+    postprocess_targets,
 )
 from dagzoo.rng import KeyedRng
 from dagzoo.types import DatasetBundle
@@ -293,6 +294,15 @@ def _build_bundle_metadata(
                 "filter_rejections": 0,
                 "filter_rejection_rate": None,
             },
+            "prior": {
+                "factorization": "independent_p_x_complete_and_p_y_given_x_complete",
+                "target_head": "latent_complete_x_conditional",
+                "feature_generator": "latent_dag",
+                "missingness_stage": "post_target_observation",
+                "classification_validity_policy": "retry_only",
+                "localization_mode": "none",
+                "n_adaptation": "none",
+            },
             "config": copy.deepcopy(context.config_payload),
         }
     )
@@ -463,12 +473,11 @@ def _finalize_generated_chunk_preserve_schema(
     y_train_t = torch.gather(y_valid, 1, train_idx)
     y_test_t = torch.gather(y_valid, 1, test_idx)
 
-    x_train, y_train, x_test, y_test = postprocess_fixed_schema_batch(
-        x_train_t,
+    x_train = x_train_t
+    x_test = x_test_t
+    y_train, y_test = postprocess_fixed_schema_target_batch(
         y_train_t,
-        x_test_t,
         y_test_t,
-        list(context.feature_types),
         config.dataset.task,
         postprocess_roots=postprocess_roots,
     )
@@ -551,18 +560,40 @@ def _finalize_generated_tensors(
         test_idx=test_idx,
     )
 
-    x_train, y_train, x_test, y_test, feature_types, feature_index_map = postprocess_dataset(
-        x_train_t,
-        y_train_t,
-        x_test_t,
-        y_test_t,
-        list(layout.feature_types),
-        config.dataset.task,
-        attempt_root.keyed("postprocess"),
-        device,
-        return_feature_index_map=True,
-        preserve_feature_schema=preserve_feature_schema,
-    )
+    feature_types: list[str]
+    feature_index_map: list[int]
+    if preserve_feature_schema:
+        x_train = x_train_t
+        x_test = x_test_t
+        y_train, y_test = postprocess_targets(
+            y_train_t,
+            y_test_t,
+            config.dataset.task,
+            keyed_rng=attempt_root.keyed("postprocess"),
+        )
+        feature_types = [str(feature_type) for feature_type in layout.feature_types]
+        feature_index_map = [int(i) for i in range(int(x.shape[1]))]
+    else:
+        (
+            x_train,
+            y_train,
+            x_test,
+            y_test,
+            postprocessed_feature_types,
+            feature_index_map,
+        ) = postprocess_dataset(
+            x_train_t,
+            y_train_t,
+            x_test_t,
+            y_test_t,
+            list(layout.feature_types),
+            config.dataset.task,
+            attempt_root.keyed("postprocess"),
+            device,
+            return_feature_index_map=True,
+            preserve_feature_schema=False,
+        )
+        feature_types = [str(feature_type) for feature_type in postprocessed_feature_types]
     if (
         finalization_context is not None
         and list(feature_types) == list(finalization_context.feature_types)

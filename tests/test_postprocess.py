@@ -12,6 +12,7 @@ from dagzoo.postprocess.postprocess import (
     postprocess_fixed_schema_batch,
 )
 from dagzoo.rng import KeyedRng
+from dagzoo.sampling import sample_missingness_mask
 
 
 def _make_data(
@@ -342,3 +343,35 @@ def test_inject_missingness_changes_for_different_seed() -> None:
 
     assert not torch.equal(torch.isnan(a_train), torch.isnan(b_train))
     assert not torch.equal(torch.isnan(a_test), torch.isnan(b_test))
+
+
+def test_inject_missingness_samples_one_full_matrix_mask_before_resplitting() -> None:
+    g = _make_generator(21)
+    x_train = torch.randn(24, 4, generator=g)
+    x_test = torch.randn(12, 4, generator=g)
+    cfg = DatasetConfig(missing_rate=0.25, missing_mechanism="mar")
+    keyed_rng = KeyedRng(909)
+
+    out_train, out_test, summary = inject_missingness(
+        x_train,
+        x_test,
+        dataset_cfg=cfg,
+        keyed_rng=keyed_rng,
+        device="cpu",
+    )
+
+    x_all = torch.cat([x_train, x_test], dim=0)
+    full_mask = sample_missingness_mask(
+        x_all,
+        keyed_rng=KeyedRng(909).keyed("full_matrix"),
+        dataset_cfg=cfg,
+        device="cpu",
+    )
+    expected_all = x_all.masked_fill(full_mask, float("nan"))
+    expected_train = expected_all[: x_train.shape[0]]
+    expected_test = expected_all[x_train.shape[0] :]
+
+    torch.testing.assert_close(out_train, expected_train, equal_nan=True)
+    torch.testing.assert_close(out_test, expected_test, equal_nan=True)
+    assert summary is not None
+    assert summary["missing_count_overall"] == int(full_mask.sum().item())
