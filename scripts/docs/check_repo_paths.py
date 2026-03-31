@@ -31,7 +31,6 @@ REPO_PATH_EXACT = frozenset(
         "README.md",
         "CONTRIBUTING.md",
         "SECURITY.md",
-        "CITATION.cff",
         "CHANGELOG.md",
         "AGENTS.md",
         "pyproject.toml",

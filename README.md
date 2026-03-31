@@ -182,6 +182,5 @@ reproducible. The full artifact contract lives in `docs/output-format.md`.
 
 ## Community
 
-- [CITATION.cff](CITATION.cff)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)

@@ -30,7 +30,6 @@ REQUIRED_FILES = (
     REPO_ROOT / "docs" / "usage-guide.md",
     REPO_ROOT / "docs" / "output-format.md",
     REPO_ROOT / "recipes" / "README.md",
-    REPO_ROOT / "CITATION.cff",
     REPO_ROOT / "CONTRIBUTING.md",
     REPO_ROOT / "SECURITY.md",
 )
@@ -63,14 +62,6 @@ def _extract_version_from_changelog() -> str:
     match = re.search(r"^## \[([0-9]+\.[0-9]+\.[0-9]+)\]", text, re.MULTILINE)
     if match is None:
         raise ValueError("Could not find top release heading in CHANGELOG.md.")
-    return match.group(1)
-
-
-def _extract_version_from_citation() -> str:
-    text = _read_text(REPO_ROOT / "CITATION.cff")
-    match = re.search(r"^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$", text, re.MULTILINE)
-    if match is None:
-        raise ValueError("Could not find version in CITATION.cff.")
     return match.group(1)
 
 
@@ -151,15 +142,9 @@ def main() -> int:
 
     pyproject_version = _extract_version_from_pyproject()
     changelog_version = _extract_version_from_changelog()
-    citation_version = _extract_version_from_citation()
     _require(
         pyproject_version == changelog_version,
         "pyproject.toml and CHANGELOG.md versions must match.",
-        errors=errors,
-    )
-    _require(
-        pyproject_version == citation_version,
-        "pyproject.toml and CITATION.cff versions must match.",
         errors=errors,
     )
 
