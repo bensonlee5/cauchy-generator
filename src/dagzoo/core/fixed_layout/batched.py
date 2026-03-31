@@ -482,6 +482,7 @@ def _apply_categorical_group_batch(
     noise_sigma_multiplier: float,
     noise_spec: NoiseSamplingSpec | None,
     spec_indices: tuple[int, ...] | None = None,
+    class_probs_out: dict[str, torch.Tensor] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     y = x.to(torch.float32)
     batch_size, n_rows, group_size, width = y.shape
@@ -538,6 +539,10 @@ def _apply_categorical_group_batch(
         if n_centers < category_count:
             labels_bg = labels_bg % category_count
         labels = labels_bg.permute(0, 2, 1)
+        probs = torch.nn.functional.one_hot(
+            labels.to(torch.int64),
+            num_classes=category_count,
+        ).to(torch.float32)
     else:
         if width != category_count:
             if spec_indices is None:
@@ -607,6 +612,9 @@ def _apply_categorical_group_batch(
                 ],
                 dim=2,
             )
+
+    if class_probs_out is not None:
+        class_probs_out["probs"] = probs.to(torch.float32)
 
     if variant == "input":
         out = y
@@ -691,6 +699,7 @@ def _apply_node_plan_batch(
     noise_sigma_multiplier: float,
     noise_spec: NoiseSamplingSpec | None,
     runtime_metrics_out: dict[str, float] | None = None,
+    target_teacher_conditionals_out: dict[str, torch.Tensor] | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     _ = config
     _ = device
@@ -844,6 +853,9 @@ def _apply_node_plan_batch(
             continue
 
         if not group.uses_center_random_fn:
+            class_probs_payload: dict[str, torch.Tensor] | None = (
+                {} if target_teacher_conditionals_out is not None else None
+            )
             x_prime, values = _apply_categorical_group_batch(
                 _categorical_group_input_views(latent, group.slices),
                 rng,
@@ -852,6 +864,7 @@ def _apply_node_plan_batch(
                 noise_sigma_multiplier=noise_sigma_multiplier,
                 noise_spec=noise_spec,
                 spec_indices=group.spec_indices,
+                class_probs_out=class_probs_payload,
             )
             for local_index, spec in enumerate(group.slices):
                 start = int(spec.column_start)
@@ -866,11 +879,23 @@ def _apply_node_plan_batch(
                         )
                 latent[:, :, start:end] = spec_out
                 extracted[str(spec.key)] = values[:, :, local_index]
+                if (
+                    target_teacher_conditionals_out is not None
+                    and str(spec.key) == "target"
+                    and class_probs_payload is not None
+                    and "probs" in class_probs_payload
+                ):
+                    target_teacher_conditionals_out["probs"] = class_probs_payload["probs"][
+                        :, :, local_index, :
+                    ]
             continue
         for spec in group.slices:
             start = int(spec.column_start)
             end = int(spec.column_end)
             spec_view = latent[:, :, start:end].unsqueeze(2)
+            single_class_probs_payload: dict[str, torch.Tensor] | None = (
+                {} if target_teacher_conditionals_out is not None else None
+            )
             x_prime, values = _apply_categorical_group_batch(
                 spec_view,
                 rng.keyed("converter", spec.spec_index),
@@ -878,6 +903,7 @@ def _apply_node_plan_batch(
                 n_categories=max(2, int(spec.cardinality or 2)),
                 noise_sigma_multiplier=noise_sigma_multiplier,
                 noise_spec=noise_spec,
+                class_probs_out=single_class_probs_payload,
             )
             spec_out = x_prime[:, :, 0, :]
             if int(spec_out.shape[2]) != (end - start):
@@ -889,6 +915,15 @@ def _apply_node_plan_batch(
                     )
             latent[:, :, start:end] = spec_out
             extracted[str(spec.key)] = values[:, :, 0]
+            if (
+                target_teacher_conditionals_out is not None
+                and str(spec.key) == "target"
+                and single_class_probs_payload is not None
+                and "probs" in single_class_probs_payload
+            ):
+                target_teacher_conditionals_out["probs"] = single_class_probs_payload["probs"][
+                    :, :, 0, :
+                ]
 
     _accumulate_runtime_metric(
         runtime_metrics_out,
@@ -943,7 +978,9 @@ def _generate_fixed_layout_raw_batch(
 
     node_outputs: list[torch.Tensor | None] = [None] * int(layout.graph_nodes)
     feature_values: list[torch.Tensor | None] = [None] * num_features
-    aux_meta_batch = [{"filter": {"mode": "deferred", "status": "not_run"}} for _ in dataset_seeds]
+    aux_meta_batch: list[dict[str, Any]] = [
+        {"filter": {"mode": "deferred", "status": "not_run"}} for _ in dataset_seeds
+    ]
 
     for node_index, node_plan in enumerate(execution_plan.node_plans):
         parent_tensors = []
@@ -1014,6 +1051,12 @@ def _generate_fixed_layout_raw_batch(
 
     target_head = execution_plan.target_head_plan
     target_values: torch.Tensor | None
+    teacher_conditionals_payload: dict[str, torch.Tensor] | None = (
+        {}
+        if str(config.dataset.task) == "classification"
+        and config.diagnostics.teacher_conditional_export
+        else None
+    )
     if target_head is None:
         target_values = None
     else:
@@ -1033,6 +1076,7 @@ def _generate_fixed_layout_raw_batch(
             noise_sigma_multiplier=noise_sigma_multiplier,
             noise_spec=noise_spec,
             runtime_metrics_out=runtime_metrics_out,
+            target_teacher_conditionals_out=teacher_conditionals_payload,
         )
         target_values = extracted.get("target")
         _accumulate_runtime_metric(
@@ -1061,6 +1105,14 @@ def _generate_fixed_layout_raw_batch(
             y = target_values.to(torch.int64) % int(layout.n_classes)
         else:
             y = target_values.to(dtype)
+    if teacher_conditionals_payload is not None and "probs" in teacher_conditionals_payload:
+        target_probs = teacher_conditionals_payload["probs"].detach().to(device="cpu")
+        class_labels = list(range(int(target_probs.shape[-1])))
+        for batch_index in range(batch_size):
+            aux_meta_batch[batch_index]["teacher_conditional_class_labels"] = list(class_labels)
+            aux_meta_batch[batch_index]["teacher_conditional_full_probs"] = target_probs[
+                batch_index
+            ].tolist()
     _accumulate_runtime_metric(
         runtime_metrics_out,
         "raw_batch_elapsed_seconds",

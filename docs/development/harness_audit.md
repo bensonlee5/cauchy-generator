@@ -1,7 +1,7 @@
-# Weekly Harness Audit
+# Weekly Repo Audit
 
 This document is the repo-owned source of truth for the recurring `dagzoo`
-harness audit.
+repo audit.
 
 Primary reference:
 
@@ -11,8 +11,8 @@ The weekly audit translates the article's repo-relevant themes into an explicit
 operating checklist for `dagzoo`:
 
 - repo as system of record
-- agent legibility
-- agent-first interfaces
+- automation and contributor readiness
+- canonical interfaces
 - architecture and taste enforcement
 - entropy and garbage collection
 - safe autonomy and reliable handoffs
@@ -27,8 +27,8 @@ operating checklist for `dagzoo`:
   `Todo`
 - Recurrence:
   weekly, Friday at 10:00 PM `America/Los_Angeles`
-- Expected operator:
-  an unattended agent run
+- Execution mode:
+  scheduled automation or manual maintainer run
 
 ## Audit Checklist
 
@@ -41,14 +41,14 @@ Each weekly audit must inspect the current repo state, not stale assumptions.
   bump / changelog policy.
 - Linear backlog and roadmap references still align.
 
-### 2. Agent Legibility
+### 2. Automation And Contributor Readiness
 
-- `AGENTS.md` is sufficient for an unfamiliar agent to understand how to work in
-  the repo.
+- `AGENTS.md` is sufficient for an unfamiliar autonomous contributor to
+  understand how to work in the repo.
 - Canonical commands are discoverable without reconstructing them from CI files.
 - Public vs internal surfaces are legible in docs or codebase-navigation docs.
 
-### 3. Agent-First Interfaces
+### 3. Canonical Interfaces
 
 - There is a minimal, canonical bootstrap path for a fresh workspace.
 - There is a minimal, canonical verification path for a normal code change.

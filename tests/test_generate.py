@@ -1990,6 +1990,31 @@ def test_generate_one_emits_latent_complete_prior_metadata() -> None:
     }
 
 
+def test_generate_one_can_export_teacher_conditionals() -> None:
+    cfg = _tiny_config()
+    cfg.diagnostics.teacher_conditional_export = True
+    bundle = generate_one(cfg, seed=1414, device="cpu")
+
+    posterior_predictive = bundle.metadata["posterior_predictive"]
+    teacher_conditionals = bundle.metadata["teacher_conditionals"]
+
+    assert posterior_predictive == {
+        "factorization": "independent_p_x_complete_and_p_y_given_x_complete",
+        "teacher_conditional_export_enabled": True,
+        "teacher_conditionals_available": True,
+        "metric_definition": "label-target log loss per test cell",
+    }
+    assert teacher_conditionals["schema_version"] == 1
+    assert teacher_conditionals["target_split"] == "test"
+    assert teacher_conditionals["class_labels"] == list(range(bundle.metadata["n_classes"]))
+    probs = np.asarray(teacher_conditionals["test_probs"], dtype=np.float64)
+    assert probs.shape == (len(bundle.y_test), bundle.metadata["n_classes"])
+    np.testing.assert_allclose(probs.sum(axis=1), 1.0, atol=1e-6, rtol=1e-6)
+    chosen = probs[np.arange(len(bundle.y_test)), np.asarray(bundle.y_test, dtype=np.int64)]
+    expected = float((-np.log(np.clip(chosen, 1e-12, 1.0))).mean())
+    assert teacher_conditionals["optimal_log_loss_per_test_cell"] == pytest.approx(expected)
+
+
 def test_generate_one_emits_graph_complexity_metadata() -> None:
     cfg = _tiny_config()
     bundle = generate_one(cfg, seed=14, device="cpu")

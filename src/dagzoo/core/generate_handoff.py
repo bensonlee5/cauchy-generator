@@ -273,6 +273,94 @@ def _load_generated_identity(
     return generate_run_id, generated_corpus_id
 
 
+def _load_generated_provenance(
+    *,
+    generated_dir: str | Path,
+) -> dict[str, Any]:
+    """Read posterior-predictive provenance from emitted metadata records."""
+
+    metadata_paths = sorted(Path(generated_dir).glob("shard_*/metadata.ndjson"))
+    if not metadata_paths:
+        _raise("generated_dir", "must contain shard metadata under shard_*/metadata.ndjson")
+
+    factorization: str | None = None
+    teacher_conditional_export: bool | None = None
+    metric_definition: str | None = None
+    for metadata_path in metadata_paths:
+        with metadata_path.open("r", encoding="utf-8") as handle:
+            for line_number, raw_line in enumerate(handle, start=1):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    _raise(
+                        f"{metadata_path}:{line_number}",
+                        f"contains invalid JSON ({exc.msg})",
+                    )
+                record = _require_mapping(payload, path=f"{metadata_path}:{line_number}")
+                metadata = _require_mapping(
+                    record.get("metadata"),
+                    path=f"{metadata_path}:{line_number}.metadata",
+                )
+                prior = _require_mapping(
+                    metadata.get("prior"),
+                    path=f"{metadata_path}:{line_number}.metadata.prior",
+                )
+                current_factorization = _require_non_empty_string(
+                    prior.get("factorization"),
+                    path=f"{metadata_path}:{line_number}.metadata.prior.factorization",
+                )
+                posterior_predictive = _require_mapping(
+                    metadata.get("posterior_predictive"),
+                    path=f"{metadata_path}:{line_number}.metadata.posterior_predictive",
+                )
+                current_teacher_export = _require_bool(
+                    posterior_predictive.get("teacher_conditional_export_enabled"),
+                    path=(
+                        f"{metadata_path}:{line_number}."
+                        "metadata.posterior_predictive.teacher_conditional_export_enabled"
+                    ),
+                )
+                current_metric_definition = _require_non_empty_string(
+                    posterior_predictive.get("metric_definition"),
+                    path=(
+                        f"{metadata_path}:{line_number}."
+                        "metadata.posterior_predictive.metric_definition"
+                    ),
+                )
+                if factorization is None:
+                    factorization = current_factorization
+                elif factorization != current_factorization:
+                    _raise(
+                        str(metadata_path),
+                        "contains multiple posterior predictive factorizations; expected one",
+                    )
+                if teacher_conditional_export is None:
+                    teacher_conditional_export = current_teacher_export
+                elif teacher_conditional_export != current_teacher_export:
+                    _raise(
+                        str(metadata_path),
+                        "contains mixed teacher-conditional export settings; expected one",
+                    )
+                if metric_definition is None:
+                    metric_definition = current_metric_definition
+                elif metric_definition != current_metric_definition:
+                    _raise(
+                        str(metadata_path),
+                        "contains mixed posterior predictive metric definitions; expected one",
+                    )
+
+    if factorization is None or teacher_conditional_export is None or metric_definition is None:
+        _raise("generated_dir", "must contain posterior predictive provenance metadata")
+    return {
+        "posterior_predictive_factorization": factorization,
+        "teacher_conditional_export": teacher_conditional_export,
+        "teacher_conditional_metric_definition": metric_definition,
+    }
+
+
 def build_generate_handoff_manifest(
     *,
     config_path: str | Path,
@@ -307,6 +395,7 @@ def build_generate_handoff_manifest(
         generated_dir=generated_dir,
         expected_datasets=int(generated_datasets),
     )
+    provenance = _load_generated_provenance(generated_dir=generated_dir)
     payload: dict[str, Any] = {
         "schema_name": GENERATE_HANDOFF_SCHEMA_NAME,
         "schema_version": GENERATE_HANDOFF_SCHEMA_VERSION,
@@ -337,6 +426,7 @@ def build_generate_handoff_manifest(
         "summary": {
             "generated_datasets": int(generated_datasets),
         },
+        "provenance": provenance,
         "throughput": {
             "generation_stage": {
                 "generated_datasets": int(generated_datasets),
@@ -473,6 +563,19 @@ def validate_generate_handoff_manifest(payload: Mapping[str, Any]) -> None:
     summary = _require_mapping(root.get("summary"), path="handoff_manifest.summary")
     _require_int(
         summary.get("generated_datasets"), path="handoff_manifest.summary.generated_datasets"
+    )
+    provenance = _require_mapping(root.get("provenance"), path="handoff_manifest.provenance")
+    _require_non_empty_string(
+        provenance.get("posterior_predictive_factorization"),
+        path="handoff_manifest.provenance.posterior_predictive_factorization",
+    )
+    _require_bool(
+        provenance.get("teacher_conditional_export"),
+        path="handoff_manifest.provenance.teacher_conditional_export",
+    )
+    _require_optional_string(
+        provenance.get("teacher_conditional_metric_definition"),
+        path="handoff_manifest.provenance.teacher_conditional_metric_definition",
     )
 
     throughput = _require_mapping(root.get("throughput"), path="handoff_manifest.throughput")

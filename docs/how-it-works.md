@@ -6,8 +6,7 @@ about behavior without needing to jump between many documents.
 ## Who this is for
 
 - End users running `dagzoo generate` and `dagzoo benchmark`
-- Contributors building a mental model before reading implementation
-  files
+- Users who want a deeper mental model of runtime behavior and outputs
 
 ## Mental model in 90 seconds
 
@@ -67,7 +66,7 @@ flowchart LR
         F1[feature_0 num]
         F2[feature_1 cat]
         F3[feature_2 num]
-        H[target head y|X_complete]
+        H["target head y|X_complete"]
         T[target]
     end
 
@@ -95,12 +94,10 @@ named semantic subtrees.
 
 - One run seed fans out into deterministic run, dataset, layout, split,
   missingness, noise, and benchmark subtrees.
-- Canonical bundle replay uses `seed` together with
-  `dataset_index`/`run_num_datasets`, while exact internal subtree replay
-  uses `metadata.keyed_replay`.
-- `dataset_seed` remains a stable child-seed identifier for deferred
-  filter and diagnostics compatibility; it is not the exact keyed runtime
-  root.
+- Public metadata exposes stable replay identifiers such as `seed`,
+  `dataset_index`, `run_num_datasets`, and `dataset_seed`.
+- Some canonical outputs also include detailed replay metadata such as
+  `metadata.keyed_replay` when exact internal replay is needed.
 - Changing one component path should not perturb unrelated component
   randomness.
 
@@ -287,18 +284,18 @@ flowchart TB
 
 ## Generation pipeline walkthrough
 
-This section maps the runtime to module boundaries and data flow.
+This section maps the runtime to the main execution phases and data flow.
 
 ### 1) Entry points and orchestration boundaries {#1-entry-points-and-orchestration-boundaries}
 
-- Public generation APIs live in `src/dagzoo/core/dataset.py`.
-- `dataset.py` is a façade over focused internals:
-  - `generation_context.py`: seed/split/device/dtype helpers
-  - `generation_runtime.py`: shared finalization, stratified split, and postprocess helpers
-  - `noise_runtime.py`: per-dataset noise runtime selection
-  - `fixed_layout/runtime.py`: internal canonical run preparation,
-    classification replay validation, and batched execution orchestration
-  - `fixed_layout/metadata.py`: shared fixed-layout metadata helpers and layout signatures
+- `dagzoo generate` and `build_dataloader(...)` use the same canonical
+  generation flow.
+- Generation resolves config and hardware context, derives deterministic seeds,
+  samples layout and structure, executes the latent graph, then finalizes
+  outputs and metadata.
+- `dagzoo filter` is a later acceptance/replay stage over emitted shards.
+- `dagzoo benchmark` runs preset or custom suites over the same public
+  generation surface.
 
 ### 2) Layout and structure sampling {#2-layout-and-structure-sampling}
 
@@ -330,16 +327,12 @@ This section maps the runtime to module boundaries and data flow.
 - Split, target postprocess, and optional missingness run in-generation.
 - Classification split validity is enforced before bundle emission.
 
-Theory note:
+Current public prior behavior:
 
-- This default prior is factorized in the sense of Nagler section 2.2 when
-  `X` is interpreted as complete covariates.
-- The emitted observed-data task is induced later by an observation model
-  that can mask features after `y` has already been sampled from
-  `X_complete`.
-- `dagzoo` does not currently implement localization or an explicit
-  `n`-adaptive prior family, so it should not be read as guaranteeing any
-  monotone variance or bias behavior as a function of `n`.
+- The shipped generator samples complete features first, then samples the
+  target from that complete feature table.
+- Optional missingness is applied afterward as an observation process over
+  the emitted feature table.
 
 Canonical postprocess behavior:
 
@@ -444,7 +437,5 @@ These are related but distinct runtime surfaces.
 - Canonical transform equations and symbol definitions:
   `docs/transforms.md`
 - Output schema and metadata contract: `docs/output-format.md`
-- Config precedence and trace details:
-  `docs/development/config-resolution.md`
 - CLI workflow examples: `docs/usage-guide.md`
-- Architecture rationale: `docs/development/design-decisions.md`
+- Recipe catalog and citations: `docs/reference-packs.md`

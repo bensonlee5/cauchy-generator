@@ -1,32 +1,109 @@
-# Development Patterns
+# AGENTS
 
-## Environment
+`AGENTS.md` is the canonical operating contract for autonomous contributors in
+this repo. Keep agent-only workflow guidance here or in internal maintainer
+docs under `docs/development/`. Keep `README.md` and the user docs focused on
+how to install, run, and understand `dagzoo`.
+
+## Working Surface
 
 - Use `.venv/` for commands and tests in this repo.
+- Treat `recipe:<name>`, documented CLI/API behavior, and artifact contracts as
+  the stable public surface.
+- Repo-local `configs/`, internal Python APIs, and internal metadata details
+  may change faster than the named recipe surface.
+- If a change affects CLI flags, persisted metadata, or dataset artifact
+  contracts, treat it as user-facing and call it out explicitly.
 
-## Architecture and Code Organization
+## Bootstrap And Verification
 
-- Prefer breaking dependency cycles and centralizing shared wiring in `src/dagzoo/core`; avoid "legacy" pathways, duplicate pathways, and shims.
-- Do not introduce parallel implementations of the same logic in different layers of the codebase.
-- We prefer shared utility packages over hand-rolled helpers to keep invariants centralized.
+Bootstrap a fresh checkout with:
 
-## Compatibility and Change Scope
+```bash
+./scripts/dev bootstrap
+source .venv/bin/activate
+```
 
-- We optimize for iteration speed: internal Python APIs and internal config structure may change without backward-compat guarantees.
-- If CLI flags, persisted metadata schema, or dataset artifact contract changes, treat it as a user-facing break and call it out explicitly.
+Canonical verification commands:
 
-## Data Handling
+- `.venv/bin/nox -s quick`
+- `.venv/bin/nox -s docs`
+- `.venv/bin/nox -s full`
+- `.venv/bin/nox -s bench_smoke`
+- `./scripts/dev impact` for dependency-aware ripple checks before broader
+  refactors
 
-- We don’t probe data “YOLO-style”—we validate boundaries or rely on typed SDKs.
+Before declaring work ready for review:
 
-## Verification and Review
+- compare the branch against `main`
+- confirm all intended changes are present
+- confirm unrelated changes are not included
 
-- Canonical local verification is `.venv/bin/nox -s quick`; use `.venv/bin/nox -s full`, `.venv/bin/nox -s docs`, and `.venv/bin/nox -s bench_smoke` for broader validation, and use `./scripts/dev impact` when you need a dependency-aware ripple check before broader refactors.
-- Prior to declaring a branch ready for review, compare branch to main and verify that all intended changes are included and no unintended changes are included.
+## Architecture And Code Organization
 
-## Versioning and Changelog
+- Prefer breaking dependency cycles and centralizing shared wiring in
+  `src/dagzoo/core`.
+- Do not introduce long-lived "legacy" pathways, duplicate implementations, or
+  compatibility shims without an explicit reason.
+- Prefer shared utility packages over hand-rolled helpers so invariants stay
+  centralized.
+- Validate data boundaries; do not probe data "YOLO-style" when typed or
+  validated interfaces are available.
+- Preserve one canonical execution path whenever possible rather than building
+  parallel flows in different layers of the codebase.
 
-- For behavior/schema changes under `src/dagzoo`, bump version in `pyproject.toml` just before merging into main so that the version reflects the latest changes (patch by default; minor for intentionally broad user-facing breaks). Docs/tests-only changes do not require a bump.
-- On every version bump, update `CHANGELOG.md` in the same PR.
-- When `roadmap.md` is updated, update the associated GitHub issues with links to the relevant sections of `roadmap.md`, and link to the relevant GitHub issues from `roadmap.md`, to keep the web of context connected.
-- If a response would close a Github issue, please say so explicitly in the response, and link to the issue number, so that the user can verify that the issue is being closed as expected.
+## Docs Boundary
+
+- `README.md` and the public docs under `docs/` should stay user-facing.
+- Research framing, internal design rationale, tracker procedures, and
+  automation runbooks belong in `AGENTS.md` or `docs/development/`.
+- When a workflow change affects both humans and autonomous contributors, keep
+  `README.md`, `CONTRIBUTING.md`, public docs, and `AGENTS.md` aligned.
+- Do not surface maintainer-only runbooks from public doc entrypoints.
+
+## Change Classification
+
+- Internal Python APIs and internal config structure can change without
+  backward-compat guarantees.
+- Behavior or schema changes under `src/dagzoo` usually require a version bump
+  in `pyproject.toml` just before merging to `main`.
+- Patch bumps are the default; use a minor bump for intentionally broad
+  user-facing breaks.
+- Docs-only and tests-only changes do not require a version bump.
+- Every version bump must update `CHANGELOG.md` in the same PR.
+
+## Tracker And Issue Hygiene
+
+- Implementation-ready issues should include `Summary`, `Why`, `Scope`,
+  `Acceptance Criteria`, and `Validation`.
+- Keep one coherent behavior change or refactor seam per issue when possible.
+- If a change is user-facing, the issue should say so and include docs-update
+  expectations.
+- If `docs/development/roadmap.md` changes, update the linked GitHub issues and
+  keep roadmap section references aligned in both directions.
+- If your response would close a GitHub issue, say so explicitly and reference
+  the issue number.
+
+Canonical tracker states:
+
+- `Backlog`
+- `Todo`
+- `In Progress`
+- `Human Review`
+- `Rework`
+- `Merging`
+- `Done`
+
+Detailed tracker operations live in `docs/development/linear.md`.
+
+## Weekly Repo Audit
+
+The recurring repo audit should verify:
+
+- `README.md`, `AGENTS.md`, and active docs still describe the real workflow
+- public vs internal surfaces are clearly separated
+- canonical bootstrap and verification commands still work and are discoverable
+- architecture guidance still matches the actual module graph
+- stale docs, scripts, or local-output assumptions are removed or tracked
+- tracker remediation work is deduplicated and written with clear acceptance
+  criteria

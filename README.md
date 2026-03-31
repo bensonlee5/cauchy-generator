@@ -21,7 +21,7 @@ flowchart LR
     Layout --> Mechanisms[Random Functional Mechanisms]
     Mechanisms --> Converters[Feature Converters]
     Converters --> XComplete[Complete Features X_complete]
-    XComplete --> TargetHead[Conditional Target Head y|X_complete]
+    XComplete --> TargetHead["Conditional Target Head y|X_complete"]
     TargetHead --> Missingness[Observation Model / Missingness]
     Missingness --> Bundle[[DatasetBundle: X_obs, y, Metadata]]
 
@@ -72,12 +72,9 @@ flowchart LR
     style ObservableSpace fill:#fafafa,stroke:#212121
 ```
 
-This matches the factorized posterior-predictive story in Nagler section 2.2
-when `X` is interpreted as complete covariates. `dagzoo` does not currently
-implement localization or an explicit `n`-adaptive prior family, so Nagler's
-McDiarmid-style variance discussion and the non-monotone bias-versus-`n`
-discussion should be treated as downstream learner considerations, not as
-generator guarantees.
+In practice, that means the target is sampled from the complete feature table,
+while optional missingness only affects the observed features that are emitted
+afterward.
 
 ## Start
 
@@ -103,7 +100,7 @@ the codebase:
 ```bash
 ./scripts/dev bootstrap
 source .venv/bin/activate
-./.venv/bin/nox -s quick
+.venv/bin/nox -s quick
 ```
 
 For in-process training loops, use the same recipe references through the
@@ -138,8 +135,7 @@ purpose:
 `recipe:<name>` is the stable public config handle most users should reach for
 first. `recipes/*.yaml` are the published YAML files behind those names, so you
 can inspect exactly what a recipe contains. Repo-local `configs/*.yaml` are for
-custom authoring and internal iteration, and they move faster than the named
-recipe surface.
+custom local authoring and may change more often than the named recipe surface.
 
 For example, this command generates 25 datasets from the baseline recipe:
 
@@ -183,7 +179,6 @@ reproducible. The full artifact contract lives in `docs/output-format.md`.
 - [Artifacts & API](docs/output-format.md)
 - [How It Works](docs/how-it-works.md)
 - [Feature Guides](https://bensonlee5.github.io/dagzoo/docs/features/)
-- [Roadmap](docs/development/roadmap.md)
 
 ## Community
 

@@ -19,6 +19,8 @@ from dagzoo.core.identity import stable_blake2s_hex
 
 _UNIT_REQUEST_RUN_ID = "1" * 32
 _UNIT_DATASET_IDS = ("2" * 32, "3" * 32)
+_UNIT_FACTORIZATION = "independent_p_x_complete_and_p_y_given_x_complete"
+_UNIT_METRIC_DEFINITION = "label-target log loss per test cell"
 
 
 def _generate_overrides(handoff_root: str) -> dict[str, object]:
@@ -59,6 +61,15 @@ def _write_generate_run_artifacts(run_root: Path) -> None:
             "dataset_index": dataset_index,
             "metadata": {
                 "dataset_id": dataset_id,
+                "posterior_predictive": {
+                    "factorization": _UNIT_FACTORIZATION,
+                    "metric_definition": _UNIT_METRIC_DEFINITION,
+                    "teacher_conditional_export_enabled": False,
+                    "teacher_conditionals_available": False,
+                },
+                "prior": {
+                    "factorization": _UNIT_FACTORIZATION,
+                },
                 "split_groups": {"request_run": _UNIT_REQUEST_RUN_ID},
             },
         }
@@ -86,6 +97,15 @@ def _write_stub_generated_metadata(out_dir: Path, *, num_datasets: int) -> None:
                 "dataset_index": dataset_index,
                 "metadata": {
                     "dataset_id": dataset_id,
+                    "posterior_predictive": {
+                        "factorization": _UNIT_FACTORIZATION,
+                        "metric_definition": _UNIT_METRIC_DEFINITION,
+                        "teacher_conditional_export_enabled": False,
+                        "teacher_conditionals_available": False,
+                    },
+                    "prior": {
+                        "factorization": _UNIT_FACTORIZATION,
+                    },
                     "split_groups": {"request_run": _UNIT_REQUEST_RUN_ID},
                 },
             }
@@ -170,6 +190,11 @@ def test_build_generate_handoff_manifest_is_versioned_and_valid(tmp_path) -> Non
         "curation_policy": "none",
     }
     assert payload["summary"]["generated_datasets"] == 2
+    assert payload["provenance"] == {
+        "posterior_predictive_factorization": _UNIT_FACTORIZATION,
+        "teacher_conditional_export": False,
+        "teacher_conditional_metric_definition": _UNIT_METRIC_DEFINITION,
+    }
     assert payload["throughput"]["generation_stage"]["datasets_per_minute"] == pytest.approx(10.0)
     assert payload["diversity_artifacts"] == {
         "summary_json_path": None,

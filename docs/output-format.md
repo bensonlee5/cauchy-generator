@@ -422,10 +422,8 @@ conditional head over that complete feature matrix. Optional missingness is a
 later observation process that masks the emitted feature table without changing
 how `y` was generated.
 
-This matches Nagler section 2.2 when `X` is interpreted as complete
-covariates. The shipped prior does not currently implement localization or an
-explicit `n`-adaptive target family, so the artifact contract makes no direct
-variance-or-bias-versus-`n` claim.
+The `localization_mode` and `n_adaptation` fields describe additional prior
+axes. In the current shipped recipes they are both `none`.
 
 ### Missingness sub-object (optional)
 

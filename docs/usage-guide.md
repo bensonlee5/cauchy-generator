@@ -386,6 +386,6 @@ ______________________________________________________________________
   [noise](features/noise.md),
   [benchmark guardrails](features/benchmark-guardrails.md)
 - Output contract: [output-format.md](output-format.md)
-- Config precedence and trace artifacts: [development/config-resolution.md](development/config-resolution.md)
 - System guide and terminology: [how-it-works.md](how-it-works.md)
-- Architecture rationale and evolution policy: [development/design-decisions.md](development/design-decisions.md)
+- Quickstart: [start.md](start.md)
+- Recipe catalog and citations: [reference-packs.md](reference-packs.md)

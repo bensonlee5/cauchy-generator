@@ -1,7 +1,7 @@
-# Issue Authoring For Autonomous Execution
+# Issue Authoring Standard
 
-This document defines how `dagzoo` issues should be written so unattended
-agents can execute them safely without inventing missing scope.
+This document defines how `dagzoo` issues should be written so implementation
+work can proceed without inventing missing scope.
 
 ## Goals
 
@@ -49,7 +49,7 @@ Optional but recommended:
 ## Tracker Conventions
 
 - `Backlog`: not yet active
-- `Todo`: ready for unattended execution
+- `Todo`: ready for implementation
 - `In Progress`: actively being implemented
 - `Human Review`: waiting on a human decision
 - `Rework`: changes requested

@@ -10,6 +10,24 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.16.1] - 2026-03-31
+
+### Added
+
+- Classification generation can now optionally export teacher-conditional
+  test-split probabilities and optimal log-loss metadata when
+  `diagnostics.teacher_conditional_export` is enabled.
+- Generate handoff manifests now include posterior-predictive provenance
+  fields derived from emitted dataset metadata.
+
+### Changed
+
+- Diagnostics config normalization now validates
+  `diagnostics.teacher_conditional_export` as a boolean.
+- `README.md` and the published docs now stay user-facing, while autonomous
+  contributor workflow guidance is consolidated into `AGENTS.md` and internal
+  maintainer docs.
+
 ## [0.16.0] - 2026-03-31
 
 ### Changed

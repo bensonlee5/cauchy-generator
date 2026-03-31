@@ -24,6 +24,13 @@ Use `.venv/` for commands and tests in this repo.
 - If a CLI flag, persisted metadata field, or artifact schema changes, call it
   out explicitly as a user-facing change.
 
+## Docs boundaries
+
+- `README.md` and the public docs under `docs/` should stay user-facing.
+- `AGENTS.md` is the canonical operating contract for autonomous contributors.
+- Internal maintainer workflows, tracker operations, and deeper design notes
+  belong in `docs/development/`.
+
 ## Verification
 
 Canonical local verification:

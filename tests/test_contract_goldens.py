@@ -121,6 +121,8 @@ def _write_generated_metadata(run_root: Path) -> None:
     generated_dir = run_root / "generated"
     shard_dir = generated_dir / "shard_00000"
     shard_dir.mkdir(parents=True, exist_ok=True)
+    factorization = "independent_p_x_complete_and_p_y_given_x_complete"
+    metric_definition = "label-target log loss per test cell"
     (shard_dir / "metadata.ndjson").write_text(
         "\n".join(
             [
@@ -129,6 +131,15 @@ def _write_generated_metadata(run_root: Path) -> None:
                         "dataset_index": 0,
                         "metadata": {
                             "dataset_id": "2" * 32,
+                            "posterior_predictive": {
+                                "factorization": factorization,
+                                "metric_definition": metric_definition,
+                                "teacher_conditional_export_enabled": False,
+                                "teacher_conditionals_available": False,
+                            },
+                            "prior": {
+                                "factorization": factorization,
+                            },
                             "split_groups": {"request_run": "1" * 32},
                         },
                     },
@@ -139,6 +150,15 @@ def _write_generated_metadata(run_root: Path) -> None:
                         "dataset_index": 1,
                         "metadata": {
                             "dataset_id": "3" * 32,
+                            "posterior_predictive": {
+                                "factorization": factorization,
+                                "metric_definition": metric_definition,
+                                "teacher_conditional_export_enabled": False,
+                                "teacher_conditionals_available": False,
+                            },
+                            "prior": {
+                                "factorization": factorization,
+                            },
                             "split_groups": {"request_run": "1" * 32},
                         },
                     },

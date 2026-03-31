@@ -567,7 +567,20 @@ def _normalize_output_fields(_output: OutputConfig) -> None:
 
 
 def _normalize_diagnostics_fields(_diagnostics: DiagnosticsConfig) -> None:
-    """Stage 1: diagnostics section has no additional field normalization."""
+    """Stage 1: normalize diagnostics section boolean toggles."""
+
+    if not isinstance(_diagnostics.enabled, bool):
+        raise ValueError(f"diagnostics.enabled must be a boolean, got {_diagnostics.enabled!r}.")
+    if not isinstance(_diagnostics.include_spearman, bool):
+        raise ValueError(
+            "diagnostics.include_spearman must be a boolean, "
+            f"got {_diagnostics.include_spearman!r}."
+        )
+    if not isinstance(_diagnostics.teacher_conditional_export, bool):
+        raise ValueError(
+            "diagnostics.teacher_conditional_export must be a boolean, "
+            f"got {_diagnostics.teacher_conditional_export!r}."
+        )
 
 
 def _normalize_benchmark_fields(_benchmark: BenchmarkConfig) -> None:
@@ -1359,6 +1372,7 @@ class OutputConfig:
 class DiagnosticsConfig:
     enabled: bool = False
     include_spearman: bool = False
+    teacher_conditional_export: bool = False
     histogram_bins: int = 10
     quantiles: list[float] = field(default_factory=lambda: [0.05, 0.25, 0.50, 0.75, 0.95])
     underrepresented_threshold: float = 0.5

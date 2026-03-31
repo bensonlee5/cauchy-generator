@@ -55,6 +55,11 @@
     "generated_corpus_id": "<RUN_ID>",
     "source_family": "dagzoo.fixed_layout_scm"
   },
+  "provenance": {
+    "posterior_predictive_factorization": "independent_p_x_complete_and_p_y_given_x_complete",
+    "teacher_conditional_export": false,
+    "teacher_conditional_metric_definition": "label-target log loss per test cell"
+  },
   "schema_name": "dagzoo_generate_handoff_manifest",
   "schema_version": 1,
   "summary": {
