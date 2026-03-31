@@ -33,7 +33,7 @@ def test_run_throughput_benchmark_uses_streaming_generation(
     monkeypatch,
 ) -> None:
     warmup_calls: list[tuple[int, int, str | None]] = []
-    prepare_calls: list[tuple[int, int, str | None]] = []
+    prepare_calls: list[tuple[int, int, str | None, bool]] = []
     measure_calls: list[tuple[int, int]] = []
 
     def _stub_generate_batch_iter(
@@ -54,9 +54,12 @@ def test_run_throughput_benchmark_uses_streaming_generation(
         seed: int | None = None,
         device: str | None = None,
         batch_size: int | None = None,
+        precompute_classification_attempt_plan: bool = True,
     ):
         _ = batch_size
-        prepare_calls.append((num_datasets, int(seed or 0), device))
+        prepare_calls.append(
+            (num_datasets, int(seed or 0), device, bool(precompute_classification_attempt_plan))
+        )
         return SimpleNamespace(
             config=_config,
             plan=object(),
@@ -100,7 +103,7 @@ def test_run_throughput_benchmark_uses_streaming_generation(
         (2, KeyedRng(cfg.seed).child_seed("bench", "throughput", "warmup"), "cpu"),
     ]
     assert prepare_calls == [
-        (3, KeyedRng(cfg.seed).child_seed("bench", "throughput", "measure"), "cpu"),
+        (3, KeyedRng(cfg.seed).child_seed("bench", "throughput", "measure"), "cpu", False),
     ]
     assert measure_calls == [
         (KeyedRng(cfg.seed).child_seed("bench", "throughput", "measure"), 3),
@@ -134,8 +137,9 @@ def test_run_throughput_benchmark_updates_callback_on_measured_generation(
         seed: int | None = None,
         device: str | None = None,
         batch_size: int | None = None,
+        precompute_classification_attempt_plan: bool = True,
     ):
-        _ = batch_size
+        _ = (batch_size, precompute_classification_attempt_plan)
         return SimpleNamespace(
             config=_config,
             plan=object(),
@@ -180,7 +184,7 @@ def test_run_throughput_benchmark_uses_sequential_generation(
     monkeypatch,
 ) -> None:
     warmup_calls: list[tuple[int, int, str | None]] = []
-    prepare_calls: list[tuple[int, int, str | None]] = []
+    prepare_calls: list[tuple[int, int, str | None, bool]] = []
 
     def _stub_generate_batch_iter(
         _config,
@@ -199,9 +203,12 @@ def test_run_throughput_benchmark_uses_sequential_generation(
         seed: int | None = None,
         device: str | None = None,
         batch_size: int | None = None,
+        precompute_classification_attempt_plan: bool = True,
     ):
         _ = batch_size
-        prepare_calls.append((num_datasets, int(seed or 0), device))
+        prepare_calls.append(
+            (num_datasets, int(seed or 0), device, bool(precompute_classification_attempt_plan))
+        )
         return SimpleNamespace(
             config=_config,
             plan=object(),
@@ -245,7 +252,7 @@ def test_run_throughput_benchmark_uses_sequential_generation(
         (2, KeyedRng(cfg.seed).child_seed("bench", "throughput", "warmup"), "cpu"),
     ]
     assert prepare_calls == [
-        (4, KeyedRng(cfg.seed).child_seed("bench", "throughput", "measure"), "cpu"),
+        (4, KeyedRng(cfg.seed).child_seed("bench", "throughput", "measure"), "cpu", False),
     ]
     assert result["num_datasets"] == 4
 
@@ -273,8 +280,9 @@ def test_run_throughput_benchmark_synchronizes_accelerator_for_timed_cuda_path(
         seed: int | None = None,
         device: str | None = None,
         batch_size: int | None = None,
+        precompute_classification_attempt_plan: bool = True,
     ):
-        _ = batch_size
+        _ = (batch_size, precompute_classification_attempt_plan)
         return SimpleNamespace(
             config=_config,
             plan=object(),
@@ -341,8 +349,9 @@ def test_run_throughput_benchmark_reports_generation_cpu_time(
         seed: int | None = None,
         device: str | None = None,
         batch_size: int | None = None,
+        precompute_classification_attempt_plan: bool = True,
     ):
-        _ = batch_size
+        _ = (batch_size, precompute_classification_attempt_plan)
         return SimpleNamespace(
             config=_config,
             plan=object(),
@@ -415,8 +424,9 @@ def test_run_throughput_benchmark_aggregates_raw_batch_metrics(monkeypatch) -> N
         seed: int | None = None,
         device: str | None = None,
         batch_size: int | None = None,
+        precompute_classification_attempt_plan: bool = True,
     ):
-        _ = batch_size
+        _ = (batch_size, precompute_classification_attempt_plan)
         return SimpleNamespace(
             config=_config,
             plan=object(),

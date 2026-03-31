@@ -342,6 +342,7 @@ def prepare_canonical_fixed_layout_run(
     seed: int | None = None,
     device: str | None = None,
     batch_size: int | None = None,
+    precompute_classification_attempt_plan: bool = True,
 ) -> CanonicalFixedLayoutRun:
     """Prepare one internal fixed-layout run context for public generation APIs."""
 
@@ -376,7 +377,10 @@ def prepare_canonical_fixed_layout_run(
             batch_size_cap=realized_config.runtime.fixed_layout_batch_size_cap,
         )
         classification_attempt_plan: tuple[int, ...] | None = None
-        if str(realized_config.dataset.task) == "classification":
+        if (
+            precompute_classification_attempt_plan
+            and str(realized_config.dataset.task) == "classification"
+        ):
             classification_attempt_plan = _fixed_layout_plan_classification_attempt_plan(
                 realized_config,
                 plan=plan,

@@ -4495,14 +4495,13 @@ def test_prepare_canonical_fixed_layout_run_precomputes_run_wide_classification_
     assert prepared.classification_attempt_plan == tuple(0 for _ in range(10))
 
 
-def test_prepare_canonical_fixed_layout_run_routes_classification_validation_through_attempt_plan_helper(
+def test_prepare_canonical_fixed_layout_run_leaves_classification_attempt_plan_unset_when_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cfg = _tiny_config()
     cfg.dataset.task = "classification"
     cfg.filter.max_attempts = 2
     plan = _sample_fixed_layout(_tiny_regression_config(), seed=801, device="cpu")
-    attempt_plan_calls: list[tuple[int, int, int]] = []
 
     def _stub_sample_fixed_layout_candidate(
         _config: GeneratorConfig,
@@ -4530,29 +4529,24 @@ def test_prepare_canonical_fixed_layout_run_routes_classification_validation_thr
     )
     monkeypatch.setattr(
         "dagzoo.core.fixed_layout.runtime._fixed_layout_plan_classification_attempt_plan",
-        lambda _config, **kwargs: (
-            attempt_plan_calls.append(
-                (
-                    int(kwargs["num_datasets"]),
-                    int(kwargs["batch_size"]),
-                    int(kwargs["run_root"].child_seed()),
-                )
-            )
-            or (1, 0, 1, 0)
+        lambda *_args, **_kwargs: pytest.fail(
+            "canonical preparation should defer classification retry discovery to generation"
         ),
     )
 
-    prepared = prepare_canonical_fixed_layout_run(cfg, num_datasets=4, seed=17, device="cpu")
+    prepared = prepare_canonical_fixed_layout_run(
+        cfg,
+        num_datasets=4,
+        seed=17,
+        device="cpu",
+        precompute_classification_attempt_plan=False,
+    )
 
     assert int(prepared.plan.plan_seed) == int(plan.plan_seed)
-    assert attempt_plan_calls == [
-        (
-            4,
-            int(_resolve_fixed_layout_batch_size(plan, num_datasets=4, batch_size=None)),
-            int(KeyedRng(17).child_seed()),
-        )
-    ]
-    assert prepared.classification_attempt_plan == (1, 0, 1, 0)
+    assert int(prepared.batch_size) == int(
+        _resolve_fixed_layout_batch_size(plan, num_datasets=4, batch_size=None)
+    )
+    assert prepared.classification_attempt_plan is None
 
 
 def test_resolve_fixed_layout_batch_size_uses_configured_target_cells() -> None:

@@ -187,6 +187,7 @@ def iter_throughput_measure_bundles(
         num_datasets=num_datasets,
         seed=_throughput_measure_seed(config),
         device=device,
+        precompute_classification_attempt_plan=False,
     )
     yield from _iter_prepared_canonical_batch_iter(prepared, num_datasets=num_datasets)
 
@@ -219,6 +220,7 @@ def run_throughput_benchmark(
         num_datasets=num_datasets,
         seed=_throughput_measure_seed(config),
         device=device,
+        precompute_classification_attempt_plan=False,
     )
     _synchronize_accelerator(timing_device)
     prepare_elapsed_seconds = time.perf_counter() - start

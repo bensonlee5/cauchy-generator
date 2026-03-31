@@ -10,6 +10,14 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.16.2] - 2026-03-31
+
+### Changed
+
+- Throughput benchmark preparation now skips eager run-wide classification
+  attempt-plan precomputation while preserving the stricter default
+  classification replay validation used by canonical dataset generation.
+
 ## [0.16.1] - 2026-03-31
 
 ### Added
