@@ -10,6 +10,21 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.16.2] - 2026-03-31
+
+### Added
+
+- Dataset config now supports target-parent prior controls for lineage
+  sampling, including explicit count bounds and near-max mixture weights.
+- Emitted lineage metadata and generate-handoff manifests now record
+  target-parent selections, fractions, regimes, and prior provenance for
+  downstream adequacy checks.
+
+### Changed
+
+- Fixed-layout schema consistency checks now include target-parent feature
+  assignments when validating reused layouts and grouped batch outputs.
+
 ## [0.16.1] - 2026-03-31
 
 ### Added

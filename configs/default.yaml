@@ -5,6 +5,12 @@ dataset:
   n_test: 256
   n_features_min: 16
   n_features_max: 64
+  target_parent_prior: near_max_mixture
+  target_parent_count_min: 1
+  target_parent_count_max: null
+  target_parent_near_max_band_min_fraction: 0.75
+  target_parent_below_sqrt_prob: 0.05
+  target_parent_midrange_prob: 0.20
   n_classes_min: 2
   n_classes_max: 10
   categorical_ratio_min: 0.0

@@ -575,7 +575,7 @@ def _generate_batch_with_dynamic_steering_iter(
     run_seed = _resolve_run_seed(config, seed)
     run_root = KeyedRng(run_seed)
     dtype = _torch_dtype(config)
-    expected_schema: tuple[int, tuple[str, ...], tuple[int, ...]] | None = None
+    expected_schema: tuple[int, tuple[str, ...], tuple[int, ...], tuple[int, ...]] | None = None
     effective_batch_size = _resolve_fixed_layout_batch_size(
         base_plan,
         num_datasets=num_datasets,
@@ -1101,7 +1101,7 @@ def _generate_batch_with_plan_iter(
     run_root = KeyedRng(run_seed)
     dtype = _torch_dtype(config)
     shift_params = resolve_shift_runtime_params(config)
-    expected_schema: tuple[int, tuple[str, ...], tuple[int, ...]] | None = None
+    expected_schema: tuple[int, tuple[str, ...], tuple[int, ...], tuple[int, ...]] | None = None
     finalization_context = _build_fixed_schema_finalization_context(
         config,
         plan.layout,

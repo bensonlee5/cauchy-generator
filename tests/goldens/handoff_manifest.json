@@ -57,6 +57,22 @@
   },
   "provenance": {
     "posterior_predictive_factorization": "independent_p_x_complete_and_p_y_given_x_complete",
+    "target_parent_below_sqrt_prob": 0.05,
+    "target_parent_count_range": {
+      "max": 7,
+      "min": 6
+    },
+    "target_parent_fraction_range": {
+      "max": 0.8,
+      "min": 0.75
+    },
+    "target_parent_midrange_prob": 0.2,
+    "target_parent_near_max_band_min_fraction": 0.75,
+    "target_parent_prior": "near_max_mixture",
+    "target_parent_regimes_present": [
+      "midrange",
+      "near_max"
+    ],
     "teacher_conditional_export": false,
     "teacher_conditional_metric_definition": "label-target log loss per test cell"
   },

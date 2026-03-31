@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import string
 from collections.abc import Mapping
 from typing import Any, NoReturn, TypeGuard, cast
@@ -34,8 +35,22 @@ _ADJACENCY_REF_REQUIRED_KEYS = frozenset(
     }
 )
 _ASSIGNMENTS_REQUIRED_KEYS = frozenset({"feature_to_node"})
-_ASSIGNMENTS_ALLOWED_KEYS = frozenset({"feature_to_node", "target_to_node", "target_mode"})
+_ASSIGNMENTS_ALLOWED_KEYS = frozenset(
+    {
+        "feature_to_node",
+        "target_to_node",
+        "target_mode",
+        "target_parent_features",
+        "target_parent_count",
+        "target_parent_fraction",
+        "target_parent_prior",
+        "target_parent_regime",
+        "target_parent_sqrt_threshold",
+    }
+)
 _TARGET_MODE_VALUES = frozenset({"observed_x_conditional", "latent_complete_x_conditional"})
+_TARGET_PARENT_PRIOR_VALUES = frozenset({"all_features", "near_max_mixture"})
+_TARGET_PARENT_REGIME_VALUES = frozenset({"all_features", "sparse_tail", "midrange", "near_max"})
 
 
 class LineageValidationError(ValueError):
@@ -313,6 +328,115 @@ def _validate_lineage_payload(payload: object, *, root_path: str) -> None:
         if target_mode not in _TARGET_MODE_VALUES:
             allowed = ", ".join(sorted(_TARGET_MODE_VALUES))
             _raise(target_mode_path, f"must be one of: {allowed}")
+
+    feature_count = len(feature_to_node)
+    target_parent_features = assignments.get("target_parent_features")
+    target_parent_count = assignments.get("target_parent_count")
+    target_parent_fraction = assignments.get("target_parent_fraction")
+    target_parent_prior = assignments.get("target_parent_prior")
+    target_parent_regime = assignments.get("target_parent_regime")
+    target_parent_sqrt_threshold = assignments.get("target_parent_sqrt_threshold")
+    has_target_parent_fields = any(
+        value is not None
+        for value in (
+            target_parent_features,
+            target_parent_count,
+            target_parent_fraction,
+            target_parent_prior,
+            target_parent_regime,
+            target_parent_sqrt_threshold,
+        )
+    )
+    if has_target_parent_fields:
+        required_target_parent_fields = {
+            "target_parent_features",
+            "target_parent_count",
+            "target_parent_fraction",
+            "target_parent_prior",
+            "target_parent_regime",
+            "target_parent_sqrt_threshold",
+        }
+        missing_target_parent_fields = sorted(
+            name for name in required_target_parent_fields if assignments.get(name) is None
+        )
+        if missing_target_parent_fields:
+            _raise(
+                assignments_path,
+                "missing required target-parent field(s): "
+                + ", ".join(missing_target_parent_fields),
+            )
+        target_parent_features_path = f"{assignments_path}.target_parent_features"
+        if not isinstance(target_parent_features, list):
+            _raise(target_parent_features_path, "must be a list of feature indices")
+        last_index = -1
+        for index, feature_index in enumerate(target_parent_features):
+            feature_index_path = f"{target_parent_features_path}[{index}]"
+            if not _is_int(feature_index):
+                _raise(feature_index_path, "must be an integer feature index")
+            if feature_index < 0 or feature_index >= feature_count:
+                _raise(feature_index_path, f"must be in range [0, {feature_count - 1}]")
+            if feature_index <= last_index:
+                _raise(feature_index_path, "must be strictly increasing and unique")
+            last_index = feature_index
+
+        target_parent_count_path = f"{assignments_path}.target_parent_count"
+        if not _is_int(target_parent_count):
+            _raise(target_parent_count_path, "must be an integer")
+        if target_parent_count != len(target_parent_features):
+            _raise(
+                target_parent_count_path,
+                "must equal len(target_parent_features)",
+            )
+
+        target_parent_fraction_path = f"{assignments_path}.target_parent_fraction"
+        if isinstance(target_parent_fraction, bool) or not isinstance(
+            target_parent_fraction,
+            (int, float),
+        ):
+            _raise(target_parent_fraction_path, "must be a finite ratio in [0, 1]")
+        target_parent_fraction_value = float(target_parent_fraction)
+        if not math.isfinite(target_parent_fraction_value) or not (
+            0.0 <= target_parent_fraction_value <= 1.0
+        ):
+            _raise(target_parent_fraction_path, "must be a finite ratio in [0, 1]")
+        expected_fraction = (
+            float(len(target_parent_features)) / float(feature_count) if feature_count > 0 else 0.0
+        )
+        if not math.isclose(
+            target_parent_fraction_value,
+            expected_fraction,
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        ):
+            _raise(
+                target_parent_fraction_path,
+                "must equal target_parent_count / len(feature_to_node)",
+            )
+
+        target_parent_prior_path = f"{assignments_path}.target_parent_prior"
+        if not isinstance(target_parent_prior, str):
+            _raise(target_parent_prior_path, "must be a string")
+        if target_parent_prior not in _TARGET_PARENT_PRIOR_VALUES:
+            allowed = ", ".join(sorted(_TARGET_PARENT_PRIOR_VALUES))
+            _raise(target_parent_prior_path, f"must be one of: {allowed}")
+
+        target_parent_regime_path = f"{assignments_path}.target_parent_regime"
+        if not isinstance(target_parent_regime, str):
+            _raise(target_parent_regime_path, "must be a string")
+        if target_parent_regime not in _TARGET_PARENT_REGIME_VALUES:
+            allowed = ", ".join(sorted(_TARGET_PARENT_REGIME_VALUES))
+            _raise(target_parent_regime_path, f"must be one of: {allowed}")
+
+        target_parent_sqrt_threshold_path = f"{assignments_path}.target_parent_sqrt_threshold"
+        if not _is_int(target_parent_sqrt_threshold):
+            _raise(target_parent_sqrt_threshold_path, "must be an integer")
+        if feature_count > 0 and (
+            target_parent_sqrt_threshold < 1 or target_parent_sqrt_threshold > feature_count
+        ):
+            _raise(
+                target_parent_sqrt_threshold_path,
+                f"must be in range [1, {feature_count}]",
+            )
 
 
 def validate_lineage_payload(payload: Mapping[str, Any]) -> None:

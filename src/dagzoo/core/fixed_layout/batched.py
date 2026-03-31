@@ -116,7 +116,7 @@ def build_fixed_layout_execution_plan(
     target_head_plan = _with_compiled_converter_groups(
         sample_node_plan(
             node_index=int(layout.graph_nodes),
-            parent_indices=tuple(range(int(layout.n_features))),
+            parent_indices=tuple(int(index) for index in layout.target_parent_features),
             converter_specs=_build_target_specs(layout, task),
             keyed_rng=plan_root.keyed("target_head"),
             device="cpu",
@@ -127,7 +127,7 @@ def build_fixed_layout_execution_plan(
     return FixedLayoutExecutionPlan(
         node_plans=tuple(node_plans),
         target_head_plan=FixedLayoutTargetHeadPlan(
-            parent_feature_indices=tuple(range(int(layout.n_features))),
+            parent_feature_indices=tuple(int(index) for index in layout.target_parent_features),
             node_plan=target_head_plan,
         ),
         execution_contract=_FIXED_LAYOUT_EXECUTION_CONTRACT,

@@ -326,6 +326,25 @@ def _build_bundle_metadata(
         metadata["class_structure"] = class_structure
     if teacher_conditionals_metadata is not None:
         metadata["teacher_conditionals"] = teacher_conditionals_metadata
+    assignments = metadata.get("lineage", {}).get("assignments")
+    if isinstance(assignments, dict):
+        target_parent_features = assignments.get("target_parent_features")
+        raw_feature_to_node = assignments.get("feature_to_node")
+        if isinstance(target_parent_features, list) and isinstance(raw_feature_to_node, list):
+            metadata["target_parent_summary"] = {
+                "count": int(assignments.get("target_parent_count", len(target_parent_features))),
+                "fraction": float(
+                    assignments.get(
+                        "target_parent_fraction",
+                        float(len(target_parent_features))
+                        / float(max(1, len(raw_feature_to_node))),
+                    )
+                ),
+                "prior": assignments.get("target_parent_prior"),
+                "regime": assignments.get("target_parent_regime"),
+                "sqrt_threshold": assignments.get("target_parent_sqrt_threshold"),
+                "features": [int(value) for value in target_parent_features],
+            }
     return metadata
 
 

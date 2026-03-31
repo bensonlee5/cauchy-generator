@@ -142,6 +142,30 @@ def canonical_request_run_provenance(metadata: Mapping[str, Any]) -> dict[str, A
                 dataset.get("n_test"),
                 path="metadata.config.dataset.n_test",
             ),
+            "target_parent_prior": _require_string(
+                dataset.get("target_parent_prior"),
+                path="metadata.config.dataset.target_parent_prior",
+            ),
+            "target_parent_count_min": _require_int(
+                dataset.get("target_parent_count_min"),
+                path="metadata.config.dataset.target_parent_count_min",
+            ),
+            "target_parent_count_max": _require_optional_int(
+                dataset.get("target_parent_count_max"),
+                path="metadata.config.dataset.target_parent_count_max",
+            ),
+            "target_parent_near_max_band_min_fraction": _require_number(
+                dataset.get("target_parent_near_max_band_min_fraction"),
+                path="metadata.config.dataset.target_parent_near_max_band_min_fraction",
+            ),
+            "target_parent_below_sqrt_prob": _require_number(
+                dataset.get("target_parent_below_sqrt_prob"),
+                path="metadata.config.dataset.target_parent_below_sqrt_prob",
+            ),
+            "target_parent_midrange_prob": _require_number(
+                dataset.get("target_parent_midrange_prob"),
+                path="metadata.config.dataset.target_parent_midrange_prob",
+            ),
             "missingness": missingness_payload,
         },
         "noise": noise_payload,

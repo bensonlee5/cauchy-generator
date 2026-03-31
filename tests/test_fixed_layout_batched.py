@@ -365,6 +365,10 @@ def test_build_fixed_layout_execution_plan_uses_keyed_node_roots(
         graph_edge_density=0.5,
         adjacency=torch.tensor([[False, True], [False, False]], dtype=torch.bool),
         feature_node_assignment=[0],
+        target_parent_features=[0],
+        target_parent_prior="all_features",
+        target_parent_regime="all_features",
+        target_parent_sqrt_threshold=1,
     )
     observed_spec_roots: list[tuple[int, int]] = []
     observed_plan_roots: list[tuple[int, int]] = []
@@ -799,6 +803,10 @@ def test_generate_fixed_layout_raw_batch_keys_seeded_batch_rng_per_node(
         graph_edge_density=0.0,
         adjacency=torch.zeros((2, 2), dtype=torch.bool),
         feature_node_assignment=[],
+        target_parent_features=[],
+        target_parent_prior="all_features",
+        target_parent_regime="all_features",
+        target_parent_sqrt_threshold=1,
     )
     node_plan = FixedLayoutNodePlan(
         node_index=0,
@@ -889,6 +897,10 @@ def test_generate_fixed_layout_raw_batch_reports_runtime_metrics(
         graph_edge_density=0.0,
         adjacency=torch.zeros((1, 1), dtype=torch.bool),
         feature_node_assignment=[0],
+        target_parent_features=[0],
+        target_parent_prior="all_features",
+        target_parent_regime="all_features",
+        target_parent_sqrt_threshold=1,
     )
     typed_specs = typed_converter_specs([ConverterSpec(key="feature_0", kind="num", dim=1)])
     node_plan = FixedLayoutNodePlan(

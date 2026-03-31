@@ -181,6 +181,42 @@ def test_validate_lineage_payload_accepts_conditional_target_modes(target_mode: 
     validate_lineage_payload(payload)
 
 
+def test_validate_lineage_payload_accepts_target_parent_metadata() -> None:
+    payload = _valid_lineage_payload()
+    payload["assignments"].update(
+        {
+            "target_parent_features": [1, 2, 4],
+            "target_parent_count": 3,
+            "target_parent_fraction": 3 / 5,
+            "target_parent_prior": "near_max_mixture",
+            "target_parent_regime": "near_max",
+            "target_parent_sqrt_threshold": 2,
+        }
+    )
+
+    validate_lineage_payload(payload)
+
+
+def test_validate_lineage_payload_rejects_inconsistent_target_parent_fraction() -> None:
+    payload = _valid_lineage_payload()
+    payload["assignments"].update(
+        {
+            "target_parent_features": [1, 2, 4],
+            "target_parent_count": 3,
+            "target_parent_fraction": 0.2,
+            "target_parent_prior": "near_max_mixture",
+            "target_parent_regime": "near_max",
+            "target_parent_sqrt_threshold": 2,
+        }
+    )
+
+    with pytest.raises(
+        LineageValidationError,
+        match=r"lineage\.assignments\.target_parent_fraction: must equal target_parent_count / len\(feature_to_node\)",
+    ):
+        validate_lineage_payload(payload)
+
+
 def test_validate_metadata_lineage_accepts_absent_payload_when_optional() -> None:
     validate_metadata_lineage({"seed": 1}, required=False)
 

@@ -131,6 +131,21 @@ def _write_generated_metadata(run_root: Path) -> None:
                         "dataset_index": 0,
                         "metadata": {
                             "dataset_id": "2" * 32,
+                            "config": {
+                                "dataset": {
+                                    "target_parent_prior": "near_max_mixture",
+                                    "target_parent_near_max_band_min_fraction": 0.75,
+                                    "target_parent_below_sqrt_prob": 0.05,
+                                    "target_parent_midrange_prob": 0.20,
+                                }
+                            },
+                            "lineage": {
+                                "assignments": {
+                                    "target_parent_count": 6,
+                                    "target_parent_fraction": 0.75,
+                                    "target_parent_regime": "near_max",
+                                }
+                            },
                             "posterior_predictive": {
                                 "factorization": factorization,
                                 "metric_definition": metric_definition,
@@ -150,6 +165,21 @@ def _write_generated_metadata(run_root: Path) -> None:
                         "dataset_index": 1,
                         "metadata": {
                             "dataset_id": "3" * 32,
+                            "config": {
+                                "dataset": {
+                                    "target_parent_prior": "near_max_mixture",
+                                    "target_parent_near_max_band_min_fraction": 0.75,
+                                    "target_parent_below_sqrt_prob": 0.05,
+                                    "target_parent_midrange_prob": 0.20,
+                                }
+                            },
+                            "lineage": {
+                                "assignments": {
+                                    "target_parent_count": 7,
+                                    "target_parent_fraction": 0.8,
+                                    "target_parent_regime": "midrange",
+                                }
+                            },
                             "posterior_predictive": {
                                 "factorization": factorization,
                                 "metric_definition": metric_definition,

@@ -61,6 +61,21 @@ def _write_generate_run_artifacts(run_root: Path) -> None:
             "dataset_index": dataset_index,
             "metadata": {
                 "dataset_id": dataset_id,
+                "config": {
+                    "dataset": {
+                        "target_parent_prior": "near_max_mixture",
+                        "target_parent_near_max_band_min_fraction": 0.75,
+                        "target_parent_below_sqrt_prob": 0.05,
+                        "target_parent_midrange_prob": 0.20,
+                    }
+                },
+                "lineage": {
+                    "assignments": {
+                        "target_parent_count": 6 + dataset_index,
+                        "target_parent_fraction": 0.75 + (0.05 * dataset_index),
+                        "target_parent_regime": "near_max" if dataset_index == 0 else "midrange",
+                    }
+                },
                 "posterior_predictive": {
                     "factorization": _UNIT_FACTORIZATION,
                     "metric_definition": _UNIT_METRIC_DEFINITION,
@@ -97,6 +112,23 @@ def _write_stub_generated_metadata(out_dir: Path, *, num_datasets: int) -> None:
                 "dataset_index": dataset_index,
                 "metadata": {
                     "dataset_id": dataset_id,
+                    "config": {
+                        "dataset": {
+                            "target_parent_prior": "near_max_mixture",
+                            "target_parent_near_max_band_min_fraction": 0.75,
+                            "target_parent_below_sqrt_prob": 0.05,
+                            "target_parent_midrange_prob": 0.20,
+                        }
+                    },
+                    "lineage": {
+                        "assignments": {
+                            "target_parent_count": 6 + dataset_index,
+                            "target_parent_fraction": 0.75 + (0.05 * dataset_index),
+                            "target_parent_regime": "near_max"
+                            if dataset_index == 0
+                            else "midrange",
+                        }
+                    },
                     "posterior_predictive": {
                         "factorization": _UNIT_FACTORIZATION,
                         "metric_definition": _UNIT_METRIC_DEFINITION,
@@ -194,6 +226,13 @@ def test_build_generate_handoff_manifest_is_versioned_and_valid(tmp_path) -> Non
         "posterior_predictive_factorization": _UNIT_FACTORIZATION,
         "teacher_conditional_export": False,
         "teacher_conditional_metric_definition": _UNIT_METRIC_DEFINITION,
+        "target_parent_prior": "near_max_mixture",
+        "target_parent_count_range": {"min": 6, "max": 7},
+        "target_parent_fraction_range": {"min": 0.75, "max": 0.8},
+        "target_parent_regimes_present": ["midrange", "near_max"],
+        "target_parent_near_max_band_min_fraction": 0.75,
+        "target_parent_below_sqrt_prob": 0.05,
+        "target_parent_midrange_prob": 0.20,
     }
     assert payload["throughput"]["generation_stage"]["datasets_per_minute"] == pytest.approx(10.0)
     assert payload["diversity_artifacts"] == {

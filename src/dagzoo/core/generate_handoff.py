@@ -286,6 +286,13 @@ def _load_generated_provenance(
     factorization: str | None = None
     teacher_conditional_export: bool | None = None
     metric_definition: str | None = None
+    target_parent_prior: str | None = None
+    target_parent_near_max_band_min_fraction: float | None = None
+    target_parent_below_sqrt_prob: float | None = None
+    target_parent_midrange_prob: float | None = None
+    target_parent_counts: list[int] = []
+    target_parent_fractions: list[float] = []
+    target_parent_regimes: set[str] = set()
     for metadata_path in metadata_paths:
         with metadata_path.open("r", encoding="utf-8") as handle:
             for line_number, raw_line in enumerate(handle, start=1):
@@ -351,13 +358,141 @@ def _load_generated_provenance(
                         str(metadata_path),
                         "contains mixed posterior predictive metric definitions; expected one",
                     )
+                config = _require_mapping(
+                    metadata.get("config"),
+                    path=f"{metadata_path}:{line_number}.metadata.config",
+                )
+                dataset = _require_mapping(
+                    config.get("dataset"),
+                    path=f"{metadata_path}:{line_number}.metadata.config.dataset",
+                )
+                current_target_parent_prior = _require_non_empty_string(
+                    dataset.get("target_parent_prior"),
+                    path=f"{metadata_path}:{line_number}.metadata.config.dataset.target_parent_prior",
+                )
+                current_near_max_band_min_fraction = _require_non_negative_float(
+                    dataset.get("target_parent_near_max_band_min_fraction"),
+                    path=(
+                        f"{metadata_path}:{line_number}."
+                        "metadata.config.dataset.target_parent_near_max_band_min_fraction"
+                    ),
+                )
+                current_below_sqrt_prob = _require_non_negative_float(
+                    dataset.get("target_parent_below_sqrt_prob"),
+                    path=(
+                        f"{metadata_path}:{line_number}."
+                        "metadata.config.dataset.target_parent_below_sqrt_prob"
+                    ),
+                )
+                current_midrange_prob = _require_non_negative_float(
+                    dataset.get("target_parent_midrange_prob"),
+                    path=(
+                        f"{metadata_path}:{line_number}."
+                        "metadata.config.dataset.target_parent_midrange_prob"
+                    ),
+                )
+                lineage = _require_mapping(
+                    metadata.get("lineage"),
+                    path=f"{metadata_path}:{line_number}.metadata.lineage",
+                )
+                assignments = _require_mapping(
+                    lineage.get("assignments"),
+                    path=f"{metadata_path}:{line_number}.metadata.lineage.assignments",
+                )
+                current_target_parent_count = _require_int(
+                    assignments.get("target_parent_count"),
+                    path=(
+                        f"{metadata_path}:{line_number}."
+                        "metadata.lineage.assignments.target_parent_count"
+                    ),
+                )
+                current_target_parent_fraction = _require_non_negative_float(
+                    assignments.get("target_parent_fraction"),
+                    path=(
+                        f"{metadata_path}:{line_number}."
+                        "metadata.lineage.assignments.target_parent_fraction"
+                    ),
+                )
+                current_target_parent_regime = _require_non_empty_string(
+                    assignments.get("target_parent_regime"),
+                    path=(
+                        f"{metadata_path}:{line_number}."
+                        "metadata.lineage.assignments.target_parent_regime"
+                    ),
+                )
+                if target_parent_prior is None:
+                    target_parent_prior = current_target_parent_prior
+                elif target_parent_prior != current_target_parent_prior:
+                    _raise(str(metadata_path), "contains mixed target-parent priors; expected one")
+                if target_parent_near_max_band_min_fraction is None:
+                    target_parent_near_max_band_min_fraction = current_near_max_band_min_fraction
+                elif not math.isclose(
+                    target_parent_near_max_band_min_fraction,
+                    current_near_max_band_min_fraction,
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                ):
+                    _raise(
+                        str(metadata_path),
+                        "contains mixed target-parent near-max band minimum fractions; expected one",
+                    )
+                if target_parent_below_sqrt_prob is None:
+                    target_parent_below_sqrt_prob = current_below_sqrt_prob
+                elif not math.isclose(
+                    target_parent_below_sqrt_prob,
+                    current_below_sqrt_prob,
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                ):
+                    _raise(
+                        str(metadata_path),
+                        "contains mixed target-parent below-sqrt probabilities; expected one",
+                    )
+                if target_parent_midrange_prob is None:
+                    target_parent_midrange_prob = current_midrange_prob
+                elif not math.isclose(
+                    target_parent_midrange_prob,
+                    current_midrange_prob,
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                ):
+                    _raise(
+                        str(metadata_path),
+                        "contains mixed target-parent midrange probabilities; expected one",
+                    )
+                target_parent_counts.append(int(current_target_parent_count))
+                target_parent_fractions.append(float(current_target_parent_fraction))
+                target_parent_regimes.add(str(current_target_parent_regime))
 
-    if factorization is None or teacher_conditional_export is None or metric_definition is None:
+    if (
+        factorization is None
+        or teacher_conditional_export is None
+        or metric_definition is None
+        or target_parent_prior is None
+        or target_parent_near_max_band_min_fraction is None
+        or target_parent_below_sqrt_prob is None
+        or target_parent_midrange_prob is None
+        or not target_parent_counts
+        or not target_parent_fractions
+    ):
         _raise("generated_dir", "must contain posterior predictive provenance metadata")
     return {
         "posterior_predictive_factorization": factorization,
         "teacher_conditional_export": teacher_conditional_export,
         "teacher_conditional_metric_definition": metric_definition,
+        "target_parent_prior": target_parent_prior,
+        "target_parent_count_range": {
+            "min": int(min(target_parent_counts)),
+            "max": int(max(target_parent_counts)),
+        },
+        "target_parent_fraction_range": {
+            "min": float(min(target_parent_fractions)),
+            "max": float(max(target_parent_fractions)),
+        },
+        "target_parent_regimes_present": sorted(target_parent_regimes),
+        "target_parent_near_max_band_min_fraction": float(target_parent_near_max_band_min_fraction),
+        "target_parent_below_sqrt_prob": float(target_parent_below_sqrt_prob),
+        "target_parent_midrange_prob": float(target_parent_midrange_prob),
     }
 
 
@@ -576,6 +711,62 @@ def validate_generate_handoff_manifest(payload: Mapping[str, Any]) -> None:
     _require_optional_string(
         provenance.get("teacher_conditional_metric_definition"),
         path="handoff_manifest.provenance.teacher_conditional_metric_definition",
+    )
+    _require_optional_string(
+        provenance.get("target_parent_prior"),
+        path="handoff_manifest.provenance.target_parent_prior",
+    )
+    target_parent_count_range = provenance.get("target_parent_count_range")
+    if target_parent_count_range is not None:
+        target_parent_count_range_mapping = _require_mapping(
+            target_parent_count_range,
+            path="handoff_manifest.provenance.target_parent_count_range",
+        )
+        _require_int(
+            target_parent_count_range_mapping.get("min"),
+            path="handoff_manifest.provenance.target_parent_count_range.min",
+        )
+        _require_int(
+            target_parent_count_range_mapping.get("max"),
+            path="handoff_manifest.provenance.target_parent_count_range.max",
+        )
+    target_parent_fraction_range = provenance.get("target_parent_fraction_range")
+    if target_parent_fraction_range is not None:
+        target_parent_fraction_range_mapping = _require_mapping(
+            target_parent_fraction_range,
+            path="handoff_manifest.provenance.target_parent_fraction_range",
+        )
+        _require_non_negative_float(
+            target_parent_fraction_range_mapping.get("min"),
+            path="handoff_manifest.provenance.target_parent_fraction_range.min",
+        )
+        _require_non_negative_float(
+            target_parent_fraction_range_mapping.get("max"),
+            path="handoff_manifest.provenance.target_parent_fraction_range.max",
+        )
+    target_parent_regimes_present = provenance.get("target_parent_regimes_present")
+    if target_parent_regimes_present is not None:
+        if not isinstance(target_parent_regimes_present, list):
+            _raise(
+                "handoff_manifest.provenance.target_parent_regimes_present",
+                "must be a list of strings",
+            )
+        for index, value in enumerate(target_parent_regimes_present):
+            _require_non_empty_string(
+                value,
+                path=f"handoff_manifest.provenance.target_parent_regimes_present[{index}]",
+            )
+    _require_optional_float(
+        provenance.get("target_parent_near_max_band_min_fraction"),
+        path="handoff_manifest.provenance.target_parent_near_max_band_min_fraction",
+    )
+    _require_optional_float(
+        provenance.get("target_parent_below_sqrt_prob"),
+        path="handoff_manifest.provenance.target_parent_below_sqrt_prob",
+    )
+    _require_optional_float(
+        provenance.get("target_parent_midrange_prob"),
+        path="handoff_manifest.provenance.target_parent_midrange_prob",
     )
 
     throughput = _require_mapping(root.get("throughput"), path="handoff_manifest.throughput")

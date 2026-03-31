@@ -124,6 +124,13 @@ def _layout_stub(
         graph_edge_density=graph_edge_density,
         adjacency=adjacency,
         feature_node_assignment=list(feature_node_assignment),
+        target_parent_features=list(range(n_features)),
+        target_parent_prior="all_features",
+        target_parent_regime="all_features",
+        target_parent_sqrt_threshold=max(
+            1,
+            min(n_features, int(math.floor(math.sqrt(max(1, n_features))))),
+        ),
     )
 
 
@@ -278,6 +285,12 @@ def test_generate_batch_with_plan_iter_batches_steering_missingness_changes(
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
+                        "target_parent_features": [0, 1],
+                        "target_parent_count": 2,
+                        "target_parent_fraction": 1.0,
+                        "target_parent_prior": "all_features",
+                        "target_parent_regime": "all_features",
+                        "target_parent_sqrt_threshold": 1,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -522,6 +535,12 @@ def test_generate_batch_with_plan_iter_batches_noise_only_steering_by_cohort(
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
+                        "target_parent_features": [0, 1],
+                        "target_parent_count": 2,
+                        "target_parent_fraction": 1.0,
+                        "target_parent_prior": "all_features",
+                        "target_parent_regime": "all_features",
+                        "target_parent_sqrt_threshold": 1,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -762,6 +781,12 @@ def test_generate_batch_with_plan_iter_batches_graph_steering_by_effective_plan(
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
+                        "target_parent_features": [0, 1],
+                        "target_parent_count": 2,
+                        "target_parent_fraction": 1.0,
+                        "target_parent_prior": "all_features",
+                        "target_parent_regime": "all_features",
+                        "target_parent_sqrt_threshold": 1,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -994,6 +1019,12 @@ def test_generate_batch_with_plan_iter_classification_steering_captures_split_fa
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
+                        "target_parent_features": [0, 1],
+                        "target_parent_count": 2,
+                        "target_parent_fraction": 1.0,
+                        "target_parent_prior": "all_features",
+                        "target_parent_regime": "all_features",
+                        "target_parent_sqrt_threshold": 1,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -1267,6 +1298,12 @@ def test_generate_batch_with_plan_iter_dynamic_steering_uses_retry_attempt_plan_
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
+                        "target_parent_features": [0, 1],
+                        "target_parent_count": 2,
+                        "target_parent_fraction": 1.0,
+                        "target_parent_prior": "all_features",
+                        "target_parent_regime": "all_features",
+                        "target_parent_sqrt_threshold": 1,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -1506,6 +1543,12 @@ def test_generate_batch_with_plan_iter_dynamic_steering_rejects_schema_mismatch(
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
+                        "target_parent_features": [0, 1],
+                        "target_parent_count": 2,
+                        "target_parent_fraction": 1.0,
+                        "target_parent_prior": "all_features",
+                        "target_parent_regime": "all_features",
+                        "target_parent_sqrt_threshold": 1,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -1725,6 +1768,12 @@ def test_generate_batch_with_plan_iter_dynamic_steering_requires_all_grouped_off
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
+                        "target_parent_features": [0, 1],
+                        "target_parent_count": 2,
+                        "target_parent_fraction": 1.0,
+                        "target_parent_prior": "all_features",
+                        "target_parent_regime": "all_features",
+                        "target_parent_sqrt_threshold": 1,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -1970,8 +2019,39 @@ def test_generate_one_lineage_assignment_lengths_and_bounds() -> None:
     feature_to_node = assignments["feature_to_node"]
     assert len(feature_to_node) == int(bundle.metadata["n_features"])
     assert assignments["target_mode"] == "latent_complete_x_conditional"
+    target_parent_features = assignments["target_parent_features"]
+    assert assignments["target_parent_count"] == len(target_parent_features)
+    assert assignments["target_parent_prior"] == "near_max_mixture"
+    assert assignments["target_parent_regime"] in {
+        "all_features",
+        "sparse_tail",
+        "midrange",
+        "near_max",
+    }
+    assert target_parent_features == sorted(target_parent_features)
+    assert assignments["target_parent_sqrt_threshold"] == int(
+        math.floor(math.sqrt(int(bundle.metadata["n_features"])))
+    )
+    assert assignments["target_parent_fraction"] == pytest.approx(
+        float(len(target_parent_features)) / float(len(feature_to_node))
+    )
     for node_index in feature_to_node:
         assert 0 <= int(node_index) < n_nodes
+
+
+def test_generate_one_emits_target_parent_summary_metadata() -> None:
+    cfg = _tiny_config()
+    bundle = generate_one(cfg, seed=2026, device="cpu")
+
+    lineage_assignments = bundle.metadata["lineage"]["assignments"]
+    summary = bundle.metadata["target_parent_summary"]
+
+    assert summary["count"] == lineage_assignments["target_parent_count"]
+    assert summary["fraction"] == pytest.approx(lineage_assignments["target_parent_fraction"])
+    assert summary["prior"] == lineage_assignments["target_parent_prior"]
+    assert summary["regime"] == lineage_assignments["target_parent_regime"]
+    assert summary["sqrt_threshold"] == lineage_assignments["target_parent_sqrt_threshold"]
+    assert summary["features"] == lineage_assignments["target_parent_features"]
 
 
 def test_generate_one_emits_latent_complete_prior_metadata() -> None:
@@ -2013,6 +2093,27 @@ def test_generate_one_can_export_teacher_conditionals() -> None:
     chosen = probs[np.arange(len(bundle.y_test)), np.asarray(bundle.y_test, dtype=np.int64)]
     expected = float((-np.log(np.clip(chosen, 1e-12, 1.0))).mean())
     assert teacher_conditionals["optimal_log_loss_per_test_cell"] == pytest.approx(expected)
+
+
+def test_sample_layout_near_dense_target_parent_prior_has_mode_at_max() -> None:
+    cfg = _tiny_config()
+    cfg.dataset.n_features_min = 20
+    cfg.dataset.n_features_max = 20
+
+    counts: list[int] = []
+    regimes: list[str] = []
+    for seed in range(512):
+        layout = _sample_layout(cfg, KeyedRng(seed), device="cpu")
+        counts.append(len(layout.target_parent_features))
+        regimes.append(layout.target_parent_regime)
+
+    assert max(set(counts), key=counts.count) == 20
+    assert sum(1 for count in counts if count >= 15) > int(0.60 * len(counts))
+    assert sum(1 for count in counts if count < int(math.floor(math.sqrt(20)))) == pytest.approx(
+        0.05 * len(counts),
+        rel=0.40,
+    )
+    assert "near_max" in regimes
 
 
 def test_generate_one_emits_graph_complexity_metadata() -> None:
@@ -3382,6 +3483,21 @@ def test_generate_batch_request_run_identity_changes_with_fixed_layout_target_ce
     assert batch_base[0].metadata["dataset_id"] != batch_drifted[0].metadata["dataset_id"]
 
 
+def test_generate_batch_request_run_identity_changes_with_target_parent_prior() -> None:
+    baseline = _tiny_regression_config()
+    drifted = deepcopy(baseline)
+    drifted.dataset.target_parent_prior = "all_features"
+
+    batch_base = generate_batch(baseline, num_datasets=3, seed=4242, device="cpu")
+    batch_drifted = generate_batch(drifted, num_datasets=3, seed=4242, device="cpu")
+
+    assert (
+        batch_base[0].metadata["split_groups"]["request_run"]
+        != batch_drifted[0].metadata["split_groups"]["request_run"]
+    )
+    assert batch_base[0].metadata["dataset_id"] != batch_drifted[0].metadata["dataset_id"]
+
+
 def test_generate_batch_request_run_identity_normalizes_default_fixed_layout_target_cells() -> None:
     baseline = _tiny_regression_config()
     explicit_default = deepcopy(baseline)
@@ -3639,6 +3755,12 @@ def test_generate_batch_with_plan_iter_groups_mixed_noise_runtime_subbatches(
                         "assignments": {
                             "feature_to_node": [0, 1],
                             "target_to_node": 1,
+                            "target_parent_features": [0, 1],
+                            "target_parent_count": 2,
+                            "target_parent_fraction": 1.0,
+                            "target_parent_prior": "all_features",
+                            "target_parent_regime": "all_features",
+                            "target_parent_sqrt_threshold": 1,
                         }
                     },
                 },
@@ -4547,6 +4669,12 @@ def test_generate_batch_with_plan_iter_allows_late_classification_failure_after_
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
+                        "target_parent_features": [0, 1],
+                        "target_parent_count": 2,
+                        "target_parent_fraction": 1.0,
+                        "target_parent_prior": "all_features",
+                        "target_parent_regime": "all_features",
+                        "target_parent_sqrt_threshold": 1,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -4751,6 +4879,12 @@ def test_generate_batch_with_plan_iter_uses_cached_classification_attempt_plan_f
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
+                        "target_parent_features": [0, 1],
+                        "target_parent_count": 2,
+                        "target_parent_fraction": 1.0,
+                        "target_parent_prior": "all_features",
+                        "target_parent_regime": "all_features",
+                        "target_parent_sqrt_threshold": 1,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -5029,6 +5163,12 @@ def test_generate_fixed_layout_bundle_with_retries_reuses_cached_finalization_co
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
+                        "target_parent_features": [0, 1],
+                        "target_parent_count": 2,
+                        "target_parent_fraction": 1.0,
+                        "target_parent_prior": "all_features",
+                        "target_parent_regime": "all_features",
+                        "target_parent_sqrt_threshold": 1,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -5210,7 +5350,7 @@ def test_generate_batch_graph_steering_preserves_base_replay_roots_and_replays_p
         "steering",
         "execution_plan",
     ]
-    assert int(steered_bundle.metadata["layout_plan_schema_version"]) == 9
+    assert int(steered_bundle.metadata["layout_plan_schema_version"]) == 10
     assert str(steered_bundle.metadata["layout_execution_contract"]) == "chunk_batched_v3"
     assert str(replayed_plan.layout_signature) == str(steered_bundle.metadata["layout_signature"])
     assert str(replayed_plan.plan_signature) == str(
