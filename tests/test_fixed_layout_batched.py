@@ -669,8 +669,9 @@ def test_apply_node_plan_batch_keeps_categorical_groups_batched(
         noise_sigma_multiplier: float,
         noise_spec,
         spec_indices: tuple[int, ...] | None = None,
+        class_probs_out: dict[str, torch.Tensor] | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        _ = (noise_sigma_multiplier, noise_spec)
+        _ = (noise_sigma_multiplier, noise_spec, class_probs_out)
         calls.append(
             {
                 "shape": tuple(int(dim) for dim in x.shape),
@@ -748,8 +749,9 @@ def test_apply_node_plan_batch_keeps_center_random_fn_groups_split(
         noise_sigma_multiplier: float,
         noise_spec,
         spec_indices: tuple[int, ...] | None = None,
+        class_probs_out: dict[str, torch.Tensor] | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        _ = (n_categories, noise_sigma_multiplier, noise_spec, spec_indices)
+        _ = (n_categories, noise_sigma_multiplier, noise_spec, spec_indices, class_probs_out)
         group_sizes.append(int(x.shape[2]))
         labels = torch.zeros(
             (x.shape[0], x.shape[1], x.shape[2]), dtype=torch.int64, device=x.device
@@ -830,6 +832,7 @@ def test_generate_fixed_layout_raw_batch_keys_seeded_batch_rng_per_node(
         noise_sigma_multiplier: float,
         noise_spec,
         runtime_metrics_out=None,
+        target_teacher_conditionals_out=None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         _ = (
             _config,
@@ -839,6 +842,7 @@ def test_generate_fixed_layout_raw_batch_keys_seeded_batch_rng_per_node(
             noise_sigma_multiplier,
             noise_spec,
             runtime_metrics_out,
+            target_teacher_conditionals_out,
         )
         assert rng.keyed_root is not None
         keyed_paths.append(rng.keyed_root.path)
@@ -931,8 +935,17 @@ def test_generate_fixed_layout_raw_batch_reports_runtime_metrics(
         noise_sigma_multiplier: float,
         noise_spec,
         runtime_metrics_out=None,
+        target_teacher_conditionals_out=None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        _ = (_config, _node_plan, _parent_data, device, noise_sigma_multiplier, noise_spec)
+        _ = (
+            _config,
+            _node_plan,
+            _parent_data,
+            device,
+            noise_sigma_multiplier,
+            noise_spec,
+            target_teacher_conditionals_out,
+        )
         if runtime_metrics_out is not None:
             runtime_metrics_out["node_apply_elapsed_seconds"] = (
                 float(runtime_metrics_out.get("node_apply_elapsed_seconds", 0.0)) + 1.25
