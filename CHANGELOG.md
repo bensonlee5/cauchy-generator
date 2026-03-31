@@ -10,6 +10,20 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.15.2] - 2026-03-30
+
+### Added
+
+- Added optional `runtime.fixed_layout_batch_size_cap` so fixed-layout
+  generation can cap automatically resolved batch sizes across canonical,
+  plan-backed, and steering execution paths.
+
+### Changed
+
+- Runtime config normalization now validates
+  `runtime.fixed_layout_batch_size_cap` as a positive integer, and emitted
+  metadata config payloads continue to omit the field when it is unset.
+
 ## [0.15.1] - 2026-03-27
 
 ### Changed

@@ -7,8 +7,8 @@ authors:
     given-names: Benson
 repository-code: https://github.com/bensonlee5/dagzoo
 url: https://github.com/bensonlee5/dagzoo
-version: 0.15.1
-date-released: 2026-03-27
+version: 0.15.2
+date-released: 2026-03-30
 license: Apache-2.0
 abstract: Reproducible synthetic tabular data generation with curated reference packs and stable artifact contracts.
 preferred-citation:
@@ -17,6 +17,6 @@ preferred-citation:
     - family-names: Lee
       given-names: Benson
   title: dagzoo
-  version: 0.15.1
-  date-released: 2026-03-27
+  version: 0.15.2
+  date-released: 2026-03-30
   url: https://github.com/bensonlee5/dagzoo

@@ -4425,6 +4425,28 @@ def test_h100_large_shape_reduces_auto_batch_size_relative_to_standard_h100() ->
     assert large_batch <= standard_batch
 
 
+def test_fixed_layout_batch_size_cap_limits_auto_batch_size() -> None:
+    cfg = _tiny_config()
+    cfg.runtime.fixed_layout_target_cells = 64_000_000
+    cfg.runtime.fixed_layout_batch_size_cap = 16
+
+    plan = SimpleNamespace(
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        layout=SimpleNamespace(n_features=cfg.dataset.n_features_max),
+    )
+
+    capped_batch = _resolve_fixed_layout_batch_size(
+        plan,
+        num_datasets=512,
+        batch_size=None,
+        target_cells=cfg.runtime.fixed_layout_target_cells,
+        batch_size_cap=cfg.runtime.fixed_layout_batch_size_cap,
+    )
+
+    assert capped_batch == 16
+
+
 def test_generate_batch_with_plan_iter_allows_late_classification_failure_after_partial_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

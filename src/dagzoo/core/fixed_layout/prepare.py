@@ -46,14 +46,18 @@ def _resolve_fixed_layout_batch_size(
     num_datasets: int,
     batch_size: int | None,
     target_cells: int | None = None,
+    batch_size_cap: int | None = None,
 ) -> int:
+    effective_cap = None if batch_size_cap is None else max(1, int(batch_size_cap))
     if batch_size is not None:
-        return max(1, min(int(batch_size), int(num_datasets)))
+        resolved = max(1, min(int(batch_size), int(num_datasets)))
+        return resolved if effective_cap is None else min(resolved, effective_cap)
     per_dataset_cells = max(
         1, int(plan.n_train + plan.n_test) * max(1, int(plan.layout.n_features))
     )
     auto_batch = max(1, int(target_cells or _FIXED_LAYOUT_TARGET_CELLS) // per_dataset_cells)
-    return max(1, min(int(num_datasets), int(auto_batch)))
+    resolved = max(1, min(int(num_datasets), int(auto_batch)))
+    return resolved if effective_cap is None else min(resolved, effective_cap)
 
 
 def realize_generation_config_for_run(

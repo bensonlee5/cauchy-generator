@@ -554,6 +554,12 @@ def _normalize_runtime_fields(runtime: RuntimeConfig) -> None:
             value=runtime.fixed_layout_target_cells,
             minimum=1,
         )
+    if runtime.fixed_layout_batch_size_cap is not None:
+        runtime.fixed_layout_batch_size_cap = _validate_int_field(
+            field_name="runtime.fixed_layout_batch_size_cap",
+            value=runtime.fixed_layout_batch_size_cap,
+            minimum=1,
+        )
 
 
 def _normalize_output_fields(_output: OutputConfig) -> None:
@@ -1339,6 +1345,7 @@ class RuntimeConfig:
     device: str = "auto"
     torch_dtype: str = "float32"
     fixed_layout_target_cells: int | None = None
+    fixed_layout_batch_size_cap: int | None = None
 
 
 @dataclass(slots=True)
