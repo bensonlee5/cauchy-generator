@@ -103,7 +103,7 @@ def test_run_throughput_benchmark_uses_streaming_generation(
         (2, KeyedRng(cfg.seed).child_seed("bench", "throughput", "warmup"), "cpu"),
     ]
     assert prepare_calls == [
-        (3, KeyedRng(cfg.seed).child_seed("bench", "throughput", "measure"), "cpu", False),
+        (3, KeyedRng(cfg.seed).child_seed("bench", "throughput", "measure"), "cpu", True),
     ]
     assert measure_calls == [
         (KeyedRng(cfg.seed).child_seed("bench", "throughput", "measure"), 3),
@@ -252,9 +252,56 @@ def test_run_throughput_benchmark_uses_sequential_generation(
         (2, KeyedRng(cfg.seed).child_seed("bench", "throughput", "warmup"), "cpu"),
     ]
     assert prepare_calls == [
-        (4, KeyedRng(cfg.seed).child_seed("bench", "throughput", "measure"), "cpu", False),
+        (4, KeyedRng(cfg.seed).child_seed("bench", "throughput", "measure"), "cpu", True),
     ]
     assert result["num_datasets"] == 4
+
+
+def test_run_throughput_benchmark_fast_prepare_still_skips_retry_plan_for_regression(
+    monkeypatch,
+) -> None:
+    prepare_calls: list[tuple[int, int, str | None, bool]] = []
+
+    def _stub_prepare_canonical_fixed_layout_run(
+        _config,
+        *,
+        num_datasets: int,
+        seed: int | None = None,
+        device: str | None = None,
+        batch_size: int | None = None,
+        precompute_classification_attempt_plan: bool = True,
+    ):
+        _ = batch_size
+        prepare_calls.append(
+            (num_datasets, int(seed or 0), device, bool(precompute_classification_attempt_plan))
+        )
+        return SimpleNamespace(
+            config=_config,
+            plan=object(),
+            run_seed=int(seed or 0),
+            batch_size=num_datasets,
+        )
+
+    monkeypatch.setattr(
+        "dagzoo.bench.throughput.prepare_canonical_fixed_layout_run",
+        _stub_prepare_canonical_fixed_layout_run,
+    )
+    monkeypatch.setattr(
+        "dagzoo.bench.throughput._iter_prepared_canonical_batch_iter",
+        lambda _prepared, *, num_datasets, on_raw_batch_metrics=None: iter(range(num_datasets)),
+    )
+
+    cfg = _tiny_parallel_config()
+    run_throughput_benchmark(
+        cfg,
+        num_datasets=4,
+        warmup_datasets=0,
+        device="cpu",
+    )
+
+    assert prepare_calls == [
+        (4, KeyedRng(cfg.seed).child_seed("bench", "throughput", "measure"), "cpu", False),
+    ]
 
 
 def test_run_throughput_benchmark_synchronizes_accelerator_for_timed_cuda_path(
@@ -512,6 +559,32 @@ def test_run_throughput_benchmark_callback_exception_does_not_hang_parallel_path
     error = result_queue.get_nowait()
     assert isinstance(error, RuntimeError)
     assert str(error) == "callback boom"
+
+
+def test_run_throughput_benchmark_fast_prepare_handles_classification_retries() -> None:
+    cfg = GeneratorConfig.from_yaml("configs/default.yaml")
+    cfg.seed = 1
+    cfg.dataset.task = "classification"
+    cfg.dataset.n_train = 24
+    cfg.dataset.n_test = 8
+    cfg.dataset.n_features_min = 4
+    cfg.dataset.n_features_max = 6
+    cfg.graph.n_nodes_min = 3
+    cfg.graph.n_nodes_max = 4
+    cfg.filter.enabled = False
+    cfg.filter.max_attempts = 2
+    cfg.runtime.device = "cpu"
+    cfg.runtime.fixed_layout_target_cells = 2000
+
+    result = run_throughput_benchmark(
+        cfg,
+        num_datasets=6,
+        warmup_datasets=0,
+        device="cpu",
+    )
+
+    assert result["num_datasets"] == 6
+    assert float(typing.cast(float, result["datasets_per_minute"])) > 0.0
 
 
 def test_run_fixed_layout_target_cells_sweep_uses_tier_defaults(monkeypatch) -> None:
