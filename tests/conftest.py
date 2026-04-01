@@ -119,16 +119,3 @@ def hardware_info_factory():
     """Return one helper that builds stable mock hardware profiles by tier."""
 
     return _build_mock_hardware
-
-
-@pytest.fixture
-def patch_detect_hardware(monkeypatch: pytest.MonkeyPatch, hardware_info_factory):
-    """Patch one or more detect_hardware call sites to one stable mock tier."""
-
-    def _patch(tier: str, *targets: str) -> HardwareInfo:
-        hw = hardware_info_factory(tier)
-        for target in targets:
-            monkeypatch.setattr(target, lambda _requested_device, hw=hw: hw)
-        return hw
-
-    return _patch

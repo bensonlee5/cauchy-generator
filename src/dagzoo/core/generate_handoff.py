@@ -11,7 +11,6 @@ from typing import Any, NoReturn, cast
 
 from dagzoo.core.identity import stable_blake2s_hex
 from dagzoo.core.staged_artifacts import cleanup_path, promote_staged_path, staged_output_path
-from dagzoo.io.lineage_artifact import sha256_hex
 from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME, iter_ndjson_records
 from dagzoo.math import sanitize_json
 
@@ -25,22 +24,6 @@ HANDOFF_SOURCE_FAMILIES = (
     HANDOFF_SOURCE_FAMILY_HETEROGENEOUS,
 )
 _BLAKE2S_HEX_LENGTH = 32
-_GENERATE_OVERRIDE_KEYS = (
-    "num_datasets",
-    "seed",
-    "rows",
-    "device",
-    "hardware_policy",
-    "missing_rate",
-    "missing_mechanism",
-    "missing_mar_observed_fraction",
-    "missing_mar_logit_scale",
-    "missing_mnar_logit_scale",
-    "diagnostics",
-    "diagnostics_out_dir",
-    "handoff_root",
-)
-_OPTIONAL_GENERATE_OVERRIDE_KEYS = ("set_overrides",)
 
 
 def _raise(path: str, message: str) -> NoReturn:
@@ -65,22 +48,10 @@ def _require_optional_string(value: object, *, path: str) -> str | None:
     return _require_non_empty_string(value, path=path)
 
 
-def _require_bool(value: object, *, path: str) -> bool:
-    if not isinstance(value, bool):
-        _raise(path, "must be a boolean")
-    return cast(bool, value)
-
-
 def _require_int(value: object, *, path: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         _raise(path, "must be an integer")
     return int(cast(int, value))
-
-
-def _require_optional_int(value: object, *, path: str) -> int | None:
-    if value is None:
-        return None
-    return _require_int(value, path=path)
 
 
 def _require_non_negative_float(value: object, *, path: str) -> float:
@@ -92,12 +63,6 @@ def _require_non_negative_float(value: object, *, path: str) -> float:
     return number
 
 
-def _require_optional_float(value: object, *, path: str) -> float | None:
-    if value is None:
-        return None
-    return _require_non_negative_float(value, path=path)
-
-
 def _require_hex_string(value: object, *, path: str, expected_length: int) -> str:
     text = _require_non_empty_string(value, path=path)
     if len(text) != expected_length or any(ch not in "0123456789abcdef" for ch in text):
@@ -105,100 +70,8 @@ def _require_hex_string(value: object, *, path: str, expected_length: int) -> st
     return text
 
 
-def _require_rows_override(value: object, *, path: str) -> str | int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        _raise(path, "must be a string, integer, or null")
-    if isinstance(value, int):
-        return int(value)
-    if isinstance(value, str) and value.strip():
-        return value
-    _raise(path, "must be a string, integer, or null")
-
-
-def _require_set_overrides(value: object, *, path: str) -> list[tuple[str, Any]]:
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        _raise(path, "must be a list of [path, value] pairs")
-
-    normalized: list[tuple[str, Any]] = []
-    for index, item in enumerate(value):
-        item_path = f"{path}[{index}]"
-        if not isinstance(item, (list, tuple)) or len(item) != 2:
-            _raise(item_path, "must be a [path, value] pair")
-        override_path = item[0]
-        if not isinstance(override_path, str) or not override_path.strip():
-            _raise(f"{item_path}[0]", "must be a non-empty string")
-        normalized.append((override_path, item[1]))
-    return normalized
-
-
-def _resolve_path_str(path: str | Path) -> str:
-    return str(Path(path).resolve())
-
-
-def _resolve_optional_path_str(path: str | Path | None) -> str | None:
-    if path is None:
-        return None
-    return _resolve_path_str(path)
-
-
-def _read_sha256(path: str | Path) -> str:
-    return sha256_hex(Path(path).read_bytes())
-
-
 def _relative_posix_path(path: str | Path, *, start: str | Path) -> str:
     return Path(path).resolve().relative_to(Path(start).resolve()).as_posix()
-
-
-def _datasets_per_minute(*, datasets: int, elapsed_seconds: float) -> float:
-    if elapsed_seconds <= 0.0:
-        return 0.0
-    return (float(datasets) / float(elapsed_seconds)) * 60.0
-
-
-def _validate_generate_overrides(overrides: Mapping[str, Any], *, path: str) -> None:
-    expected_keys = set(_GENERATE_OVERRIDE_KEYS)
-    optional_keys = set(_OPTIONAL_GENERATE_OVERRIDE_KEYS)
-    actual_keys = set(overrides)
-    unexpected_keys = sorted(actual_keys - expected_keys - optional_keys)
-    if unexpected_keys:
-        _raise(path, f"contains unknown keys: {', '.join(unexpected_keys)}")
-    missing_keys = sorted(expected_keys - actual_keys)
-    if missing_keys:
-        _raise(path, f"is missing required keys: {', '.join(missing_keys)}")
-
-    _require_int(overrides.get("num_datasets"), path=f"{path}.num_datasets")
-    _require_optional_int(overrides.get("seed"), path=f"{path}.seed")
-    _require_rows_override(overrides.get("rows"), path=f"{path}.rows")
-    _require_optional_string(overrides.get("device"), path=f"{path}.device")
-    _require_non_empty_string(overrides.get("hardware_policy"), path=f"{path}.hardware_policy")
-    _require_optional_float(overrides.get("missing_rate"), path=f"{path}.missing_rate")
-    _require_optional_string(
-        overrides.get("missing_mechanism"),
-        path=f"{path}.missing_mechanism",
-    )
-    _require_optional_float(
-        overrides.get("missing_mar_observed_fraction"),
-        path=f"{path}.missing_mar_observed_fraction",
-    )
-    _require_optional_float(
-        overrides.get("missing_mar_logit_scale"),
-        path=f"{path}.missing_mar_logit_scale",
-    )
-    _require_optional_float(
-        overrides.get("missing_mnar_logit_scale"),
-        path=f"{path}.missing_mnar_logit_scale",
-    )
-    _require_bool(overrides.get("diagnostics"), path=f"{path}.diagnostics")
-    _require_optional_string(
-        overrides.get("diagnostics_out_dir"),
-        path=f"{path}.diagnostics_out_dir",
-    )
-    _require_non_empty_string(overrides.get("handoff_root"), path=f"{path}.handoff_root")
-    _require_set_overrides(overrides.get("set_overrides"), path=f"{path}.set_overrides")
 
 
 def _generated_catalog_paths(generated_dir: str | Path) -> list[Path]:
