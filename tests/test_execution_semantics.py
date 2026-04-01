@@ -51,6 +51,7 @@ from dagzoo.core.fixed_layout.plan_types import (
 )
 from dagzoo.core.layout_types import MechanismFamily
 from dagzoo.core.node_pipeline import apply_node_pipeline
+from dagzoo.core.validation import RetryableDegeneracyError, validate_function_plan_nondegeneracy
 from dagzoo.functions.random_functions import apply_random_function
 from dagzoo.rng import KeyedRng
 from dagzoo.sampling.random_points import sample_random_points
@@ -366,6 +367,44 @@ def test_sample_function_plan_for_family_nn_fails_closed_on_width_incompatible_a
             function_family_mix=None,
             device="cpu",
         )
+
+
+def test_validate_function_plan_nondegeneracy_rejects_single_stump_tree() -> None:
+    with pytest.raises(RetryableDegeneracyError, match="structurally degenerate") as exc_info:
+        validate_function_plan_nondegeneracy(TreeFunctionPlan(n_trees=1, depths=(1,)))
+
+    assert exc_info.value.reason == "degenerate_tree_plan"
+
+
+def test_sample_function_plan_for_family_tree_resamples_single_stump(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    n_tree_iter = iter([1.0, 2.0])
+    depth_iter = iter([1, 2, 3])
+    monkeypatch.setattr(
+        execution_semantics_mod,
+        "_log_uniform",
+        lambda *_args, **_kwargs: next(n_tree_iter),
+    )
+    monkeypatch.setattr(
+        execution_semantics_mod,
+        "_randint_scalar",
+        lambda *_args, **_kwargs: next(depth_iter),
+    )
+
+    plan = execution_semantics_mod.sample_function_plan_for_family(
+        keyed_rng=KeyedRng(144),
+        family="tree",
+        input_dim=4,
+        out_dim=3,
+        mechanism_logit_tilt=0.0,
+        function_family_mix=None,
+        device="cpu",
+    )
+
+    assert isinstance(plan, TreeFunctionPlan)
+    assert plan.n_trees == 2
+    assert plan.depths == (2, 3)
 
 
 @pytest.mark.parametrize(

@@ -32,10 +32,13 @@ from dagzoo.core.noise_runtime import (
 from dagzoo.core.shift import ShiftRuntimeParams, resolve_shift_runtime_params
 from dagzoo.core.steering import resolve_steering
 from dagzoo.core.validation import (
+    RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE,
+    RECOVERABLE_RETRY_SCOPE_SAME_PLAN_ATTEMPT,
     InfeasibleStratifiedSplitError,
-    InvalidClassSplitError,
+    RecoverableGenerationFailure,
     _classification_split_valid,
     _stratified_split_indices,
+    classify_recoverable_generation_failure,
 )
 from dagzoo.filtering.structural_validity import (
     StructuralValidityConfig,
@@ -796,6 +799,14 @@ def _generate_heterogeneous_bundle_with_plan_candidates(
     raise ValueError("Failed to generate a heterogeneous dataset: no plan candidates were tried.")
 
 
+def _next_plan_candidate_attempt_for_descriptor(
+    descriptor: _ResolvedDatasetDescriptor,
+) -> int:
+    """Return the next plan-candidate attempt after one resolved descriptor."""
+
+    return int(descriptor.effective_plan.candidate_attempt) + 1
+
+
 def _generate_batch_with_dynamic_steering_iter(
     config: GeneratorConfig,
     *,
@@ -841,6 +852,9 @@ def _generate_batch_with_dynamic_steering_iter(
             else [0] * chunk_size
         )
         raw_batch_by_offset: list[DatasetBundle | None] = [None] * chunk_size
+        recoverable_failure_by_offset: list[RecoverableGenerationFailure | None] = [
+            None
+        ] * chunk_size
         finalized_offsets: set[int] = set()
         zero_attempt_offsets = [
             offset for offset, attempt in enumerate(chunk_attempts) if int(attempt) == 0
@@ -867,17 +881,28 @@ def _generate_batch_with_dynamic_steering_iter(
                 dataset_roots=[entry.dataset_root for entry in cohort_descriptors],
                 attempts=[0] * len(cohort_descriptors),
             )
-            grouped_raw_batches = _generate_grouped_raw_batches(
-                representative.effective_config,
-                representative.effective_plan.layout,
-                execution_plan=representative.effective_plan.execution_plan,
-                grouped_noise_runtime=grouped_noise_runtime,
-                requested_device=requested_device,
-                resolved_device=validated_resolved_device,
-                noise_sigma_multiplier=float(
-                    representative.effective_shift.variance_sigma_multiplier
-                ),
-            )
+            try:
+                grouped_raw_batches = _generate_grouped_raw_batches(
+                    representative.effective_config,
+                    representative.effective_plan.layout,
+                    execution_plan=representative.effective_plan.execution_plan,
+                    grouped_noise_runtime=grouped_noise_runtime,
+                    requested_device=requested_device,
+                    resolved_device=validated_resolved_device,
+                    noise_sigma_multiplier=float(
+                        representative.effective_shift.variance_sigma_multiplier
+                    ),
+                )
+            except ValueError as exc:
+                recoverable_failure = classify_recoverable_generation_failure(
+                    exc,
+                    degeneracy_retry_scope=RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE,
+                )
+                if recoverable_failure is None:
+                    raise
+                for offset in cohort_offsets:
+                    recoverable_failure_by_offset[offset] = recoverable_failure
+                continue
             for grouped_batch in grouped_raw_batches:
                 if on_raw_batch_metrics is not None:
                     on_raw_batch_metrics(dict(getattr(grouped_batch, "runtime_metrics", {})))
@@ -1070,6 +1095,9 @@ def _generate_batch_with_heterogeneous_layout_iter(
             for offset in range(chunk_size)
         ]
         raw_batch_by_offset: list[DatasetBundle | None] = [None] * chunk_size
+        recoverable_failure_by_offset: list[RecoverableGenerationFailure | None] = [
+            None
+        ] * chunk_size
         cohort_offsets_by_key: dict[tuple[object, ...], list[int]] = {}
         cohort_order: list[tuple[object, ...]] = []
         for offset, descriptor in enumerate(descriptors):
@@ -1088,17 +1116,25 @@ def _generate_batch_with_heterogeneous_layout_iter(
                 dataset_roots=[entry.dataset_root for entry in cohort_descriptors],
                 attempts=[0] * len(cohort_descriptors),
             )
-            grouped_raw_batches = _generate_grouped_raw_batches(
-                representative.effective_config,
-                representative.effective_plan.layout,
-                execution_plan=representative.effective_plan.execution_plan,
-                grouped_noise_runtime=grouped_noise_runtime,
-                requested_device=requested_device,
-                resolved_device=validated_resolved_device,
-                noise_sigma_multiplier=float(
-                    representative.effective_shift.variance_sigma_multiplier
-                ),
-            )
+            try:
+                grouped_raw_batches = _generate_grouped_raw_batches(
+                    representative.effective_config,
+                    representative.effective_plan.layout,
+                    execution_plan=representative.effective_plan.execution_plan,
+                    grouped_noise_runtime=grouped_noise_runtime,
+                    requested_device=requested_device,
+                    resolved_device=validated_resolved_device,
+                    noise_sigma_multiplier=float(
+                        representative.effective_shift.variance_sigma_multiplier
+                    ),
+                )
+            except ValueError as exc:
+                recoverable_failure = classify_recoverable_generation_failure(exc)
+                if recoverable_failure is None:
+                    raise
+                for offset in cohort_offsets:
+                    recoverable_failure_by_offset[offset] = recoverable_failure
+                continue
             for grouped_batch in grouped_raw_batches:
                 if on_raw_batch_metrics is not None:
                     on_raw_batch_metrics(dict(getattr(grouped_batch, "runtime_metrics", {})))
@@ -1131,25 +1167,56 @@ def _generate_batch_with_heterogeneous_layout_iter(
                             preserve_feature_schema=False,
                             finalization_context=descriptor.finalization_context,
                         )
-                    except InvalidClassSplitError:
+                    except ValueError as exc:
+                        recoverable_failure = classify_recoverable_generation_failure(
+                            exc,
+                            degeneracy_retry_scope=RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE,
+                        )
+                        if recoverable_failure is None:
+                            raise
+                        recoverable_failure_by_offset[offset] = recoverable_failure
                         raw_batch_by_offset[offset] = None
 
         for offset, descriptor in enumerate(descriptors):
             bundle = raw_batch_by_offset[offset]
             if bundle is None:
-                descriptor, bundle = _generate_heterogeneous_bundle_with_plan_candidates(
-                    realized_config,
-                    requested_device=requested_device,
-                    resolved_device=validated_resolved_device,
-                    rows_seed=rows_seed,
-                    dataset_index=int(descriptor.dataset_index),
-                    num_datasets=num_datasets,
-                    dataset_root=descriptor.dataset_root,
-                    initial_descriptor=descriptor,
-                    initial_start_attempt=1,
-                    start_candidate_attempt=1,
-                    on_raw_batch_metrics=on_raw_batch_metrics,
-                )
+                recoverable_failure = recoverable_failure_by_offset[offset]
+                if (
+                    recoverable_failure is not None
+                    and recoverable_failure.retry_scope
+                    == RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE
+                ):
+                    descriptor, bundle = _generate_heterogeneous_bundle_with_plan_candidates(
+                        realized_config,
+                        requested_device=requested_device,
+                        resolved_device=validated_resolved_device,
+                        rows_seed=rows_seed,
+                        dataset_index=int(descriptor.dataset_index),
+                        num_datasets=num_datasets,
+                        dataset_root=descriptor.dataset_root,
+                        initial_descriptor=None,
+                        initial_start_attempt=0,
+                        start_candidate_attempt=_next_plan_candidate_attempt_for_descriptor(
+                            descriptor
+                        ),
+                        on_raw_batch_metrics=on_raw_batch_metrics,
+                    )
+                else:
+                    descriptor, bundle = _generate_heterogeneous_bundle_with_plan_candidates(
+                        realized_config,
+                        requested_device=requested_device,
+                        resolved_device=validated_resolved_device,
+                        rows_seed=rows_seed,
+                        dataset_index=int(descriptor.dataset_index),
+                        num_datasets=num_datasets,
+                        dataset_root=descriptor.dataset_root,
+                        initial_descriptor=descriptor,
+                        initial_start_attempt=1,
+                        start_candidate_attempt=_next_plan_candidate_attempt_for_descriptor(
+                            descriptor
+                        ),
+                        on_raw_batch_metrics=on_raw_batch_metrics,
+                    )
                 descriptors[offset] = descriptor
             _annotate_fixed_layout_metadata(
                 bundle,
@@ -1418,23 +1485,25 @@ def _generate_fixed_layout_bundle_with_retries(
     last_error: str = "unknown"
 
     for attempt in range(initial_attempt, attempts):
-        runtime_metrics: dict[str, float] = {}
-        (
-            x_batch,
-            y_batch,
-            aux_meta_batch,
-        ) = _generate_fixed_layout_graph_batch_with_runtime_metrics(
-            config,
-            plan,
-            dataset_seeds=[dataset_root.keyed("attempt", attempt, "raw_generation").child_seed()],
-            resolved_device=resolved_device,
-            noise_sigma_multiplier=float(shift_params.variance_sigma_multiplier),
-            noise_spec=noise_spec,
-            runtime_metrics_out=runtime_metrics,
-        )
-        if on_raw_batch_metrics is not None:
-            on_raw_batch_metrics(dict(runtime_metrics))
         try:
+            runtime_metrics: dict[str, float] = {}
+            (
+                x_batch,
+                y_batch,
+                aux_meta_batch,
+            ) = _generate_fixed_layout_graph_batch_with_runtime_metrics(
+                config,
+                plan,
+                dataset_seeds=[
+                    dataset_root.keyed("attempt", attempt, "raw_generation").child_seed()
+                ],
+                resolved_device=resolved_device,
+                noise_sigma_multiplier=float(shift_params.variance_sigma_multiplier),
+                noise_spec=noise_spec,
+                runtime_metrics_out=runtime_metrics,
+            )
+            if on_raw_batch_metrics is not None:
+                on_raw_batch_metrics(dict(runtime_metrics))
             return _finalize_generated_tensors(
                 config,
                 plan.layout,
@@ -1457,9 +1526,14 @@ def _generate_fixed_layout_bundle_with_retries(
                 preserve_feature_schema=preserve_feature_schema,
                 finalization_context=finalization_context,
             )
-        except InvalidClassSplitError:
-            last_error = "invalid_class_split"
-            continue
+        except ValueError as exc:
+            recoverable_failure = classify_recoverable_generation_failure(exc)
+            if recoverable_failure is None:
+                raise
+            last_error = recoverable_failure.reason
+            if recoverable_failure.retry_scope == RECOVERABLE_RETRY_SCOPE_SAME_PLAN_ATTEMPT:
+                continue
+            break
 
     raise ValueError(
         "Failed to generate a valid fixed-layout dataset after "

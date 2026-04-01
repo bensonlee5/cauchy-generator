@@ -232,8 +232,9 @@ def _apply_function_plan_batch_core(
     noise_sigma_multiplier: float,
     noise_spec: NoiseSamplingSpec | None,
 ) -> torch.Tensor:
+    out: torch.Tensor
     if isinstance(plan, LinearFunctionPlan):
-        return _apply_linear_batch(
+        out = _apply_linear_batch(
             y,
             rng,
             plan,
@@ -241,8 +242,8 @@ def _apply_function_plan_batch_core(
             noise_sigma_multiplier=noise_sigma_multiplier,
             noise_spec=noise_spec,
         )
-    if isinstance(plan, QuadraticFunctionPlan):
-        return _apply_quadratic_batch(
+    elif isinstance(plan, QuadraticFunctionPlan):
+        out = _apply_quadratic_batch(
             y,
             rng,
             plan,
@@ -250,8 +251,8 @@ def _apply_function_plan_batch_core(
             noise_sigma_multiplier=noise_sigma_multiplier,
             noise_spec=noise_spec,
         )
-    if isinstance(plan, NeuralNetFunctionPlan):
-        return _apply_nn_batch(
+    elif isinstance(plan, NeuralNetFunctionPlan):
+        out = _apply_nn_batch(
             y,
             rng,
             plan,
@@ -259,10 +260,10 @@ def _apply_function_plan_batch_core(
             noise_sigma_multiplier=noise_sigma_multiplier,
             noise_spec=noise_spec,
         )
-    if isinstance(plan, TreeFunctionPlan):
-        return _apply_tree_batch(y, rng, plan, out_dim=out_dim, noise_spec=noise_spec)
-    if isinstance(plan, DiscretizationFunctionPlan):
-        return _apply_discretization_batch(
+    elif isinstance(plan, TreeFunctionPlan):
+        out = _apply_tree_batch(y, rng, plan, out_dim=out_dim, noise_spec=noise_spec)
+    elif isinstance(plan, DiscretizationFunctionPlan):
+        out = _apply_discretization_batch(
             y,
             rng,
             plan,
@@ -270,8 +271,8 @@ def _apply_function_plan_batch_core(
             noise_sigma_multiplier=noise_sigma_multiplier,
             noise_spec=noise_spec,
         )
-    if isinstance(plan, GpFunctionPlan):
-        return _apply_gp_batch(
+    elif isinstance(plan, GpFunctionPlan):
+        out = _apply_gp_batch(
             y,
             rng,
             plan,
@@ -279,8 +280,8 @@ def _apply_function_plan_batch_core(
             noise_sigma_multiplier=noise_sigma_multiplier,
             noise_spec=noise_spec,
         )
-    if isinstance(plan, EmFunctionPlan):
-        return _apply_em_batch(
+    elif isinstance(plan, EmFunctionPlan):
+        out = _apply_em_batch(
             y,
             rng,
             plan,
@@ -288,7 +289,7 @@ def _apply_function_plan_batch_core(
             noise_sigma_multiplier=noise_sigma_multiplier,
             noise_spec=noise_spec,
         )
-    if isinstance(plan, ProductFunctionPlan):
+    elif isinstance(plan, ProductFunctionPlan):
         branch_input = _batch_standardize(y)
         lhs = _apply_function_plan_batch_core(
             branch_input,
@@ -306,8 +307,8 @@ def _apply_function_plan_batch_core(
             noise_sigma_multiplier=noise_sigma_multiplier,
             noise_spec=noise_spec,
         )
-        return lhs * rhs
-    if isinstance(plan, PiecewiseFunctionPlan):
+        out = lhs * rhs
+    elif isinstance(plan, PiecewiseFunctionPlan):
         gate_matrix = _sample_random_matrix_from_plan_batch(
             plan.gate_matrix,
             out_dim=1,
@@ -337,8 +338,11 @@ def _apply_function_plan_batch_core(
             noise_sigma_multiplier=noise_sigma_multiplier,
             noise_spec=noise_spec,
         )
-        return gate * lhs + (1.0 - gate) * rhs
-    raise ValueError(f"Unsupported fixed-layout function plan: {plan!r}")
+        out = gate * lhs + (1.0 - gate) * rhs
+    else:
+        raise ValueError(f"Unsupported fixed-layout function plan: {plan!r}")
+    out = torch.nan_to_num(out.to(torch.float32), nan=0.0, posinf=1e6, neginf=-1e6)
+    return torch.clamp(out, -1e6, 1e6)
 
 
 def apply_function_plan_batch(

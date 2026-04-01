@@ -51,6 +51,12 @@ from dagzoo.core.shift import (
     MECHANISM_FAMILY_SUPPORTED_ORDER,
     mechanism_family_probabilities,
 )
+from dagzoo.core.validation import (
+    RetryableDegeneracyError,
+    validate_converter_plan_nondegeneracy,
+    validate_function_plan_nondegeneracy,
+    validate_node_plan_nondegeneracy,
+)
 from dagzoo.functions.activations import fixed_activation_names
 from dagzoo.math import log_uniform as _log_uniform
 from dagzoo.rng import KeyedRng
@@ -161,9 +167,12 @@ def _validate_activation_plan_width(
 ) -> None:
     if _activation_plan_is_width_compatible(plan, width=width):
         return
-    raise ValueError(
-        f"{context} activation {_activation_plan_label(plan)!r} is invalid for width=1 because "
-        "it deterministically collapses the channel dimension."
+    raise RetryableDegeneracyError(
+        "width_incompatible_activation",
+        message=(
+            f"{context} activation {_activation_plan_label(plan)!r} is invalid for width=1 "
+            "because it deterministically collapses the channel dimension."
+        ),
     )
 
 
@@ -423,6 +432,48 @@ def sample_function_plan_for_family(
         keyed_rng=keyed_rng,
         device=device,
         namespace="sample_function_plan_for_family",
+    )
+    last_error: RetryableDegeneracyError | None = None
+    for attempt in range(8):
+        attempt_root = keyed_rng if attempt == 0 else keyed_rng.keyed("retry", attempt)
+        try:
+            plan = _sample_function_plan_for_family_once(
+                keyed_rng=attempt_root,
+                family=family,
+                input_dim=input_dim,
+                out_dim=out_dim,
+                mechanism_logit_tilt=mechanism_logit_tilt,
+                function_family_mix=function_family_mix,
+                device=resolved_device,
+            )
+            validate_function_plan_nondegeneracy(plan)
+            return plan
+        except RetryableDegeneracyError as exc:
+            last_error = exc
+            continue
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Function-plan sampling exhausted without yielding or erroring.")
+
+
+def _sample_function_plan_for_family_once(
+    generator: torch.Generator | None = None,
+    *,
+    keyed_rng: KeyedRng | None = None,
+    family: MechanismFamily,
+    input_dim: int | None = None,
+    out_dim: int,
+    mechanism_logit_tilt: float,
+    function_family_mix: dict[MechanismFamily, float] | None,
+    device: str | None = None,
+) -> FixedLayoutFunctionPlan:
+    """Sample one typed function plan for an explicit family without retries."""
+
+    keyed_rng, resolved_device = _resolve_sampling_root(
+        generator=generator,
+        keyed_rng=keyed_rng,
+        device=device,
+        namespace="_sample_function_plan_for_family_once",
     )
     if family == "linear":
         return LinearFunctionPlan(
@@ -738,7 +789,7 @@ def sample_converter_plan(
         selected_method = cast(FixedLayoutConverterMethod, normalized_method)
     variant = cast(FixedLayoutConverterVariant, variant_raw)
     if variant == "center_random_fn":
-        return CategoricalConverterPlan(
+        plan = CategoricalConverterPlan(
             kind=cast(Literal["cat", "target_cls"], spec.kind),
             method=selected_method,
             variant=variant,
@@ -751,11 +802,15 @@ def sample_converter_plan(
                 device=resolved_device,
             ),
         )
-    return CategoricalConverterPlan(
+        validate_converter_plan_nondegeneracy(plan)
+        return plan
+    plan = CategoricalConverterPlan(
         kind=cast(Literal["cat", "target_cls"], spec.kind),
         method=selected_method,
         variant=variant,
     )
+    validate_converter_plan_nondegeneracy(plan)
+    return plan
 
 
 def typed_converter_specs(
@@ -979,7 +1034,7 @@ def sample_node_plan(
             function_family_mix=function_family_mix,
             device=resolved_device,
         )
-    return FixedLayoutNodePlan(
+    node_plan = FixedLayoutNodePlan(
         node_index=int(node_index),
         parent_indices=tuple(int(parent_index) for parent_index in parent_indices),
         converter_specs=typed_specs,
@@ -988,6 +1043,8 @@ def sample_node_plan(
         latent=latent,
         source=source,
     )
+    validate_node_plan_nondegeneracy(node_plan)
+    return node_plan
 
 
 __all__ = [

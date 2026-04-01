@@ -29,6 +29,7 @@ from dagzoo.core.fixed_layout.plan_types import FixedLayoutExecutionPlan
 from dagzoo.core.fixed_layout.runtime import (
     _fixed_layout_plan_classification_attempt_plan,
     _fixed_layout_plan_supports_classification_run,
+    _generate_batch_with_heterogeneous_layout_iter,
     _generate_batch_with_plan_iter,
     _generate_fixed_layout_bundle_with_retries,
     _replay_emitted_fixed_layout_plan,
@@ -53,9 +54,15 @@ from dagzoo.core.noise_runtime import (
 )
 from dagzoo.core.shift import mechanism_nonlinear_mass, resolve_shift_runtime_params
 from dagzoo.core.validation import (
+    RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE,
+    RECOVERABLE_RETRY_SCOPE_SAME_PLAN_ATTEMPT,
     InfeasibleStratifiedSplitError,
+    InvalidClassSplitError,
+    InvalidFeatureMatrixError,
+    RetryableDegeneracyError,
     _classification_split_valid,
     _stratified_split_indices,
+    classify_recoverable_generation_failure,
 )
 from dagzoo.io.lineage_schema import (
     LINEAGE_SCHEMA_NAME,
@@ -4683,6 +4690,617 @@ def test_generate_retries_when_stratified_split_is_infeasible(
         generate_one(cfg, seed=99, device="cpu")
 
 
+def test_classify_recoverable_generation_failure_routes_known_retry_scopes() -> None:
+    invalid_class_split = classify_recoverable_generation_failure(
+        InvalidClassSplitError("invalid_class_split")
+    )
+    assert invalid_class_split is not None
+    assert invalid_class_split.reason == "invalid_class_split"
+    assert invalid_class_split.retry_scope == RECOVERABLE_RETRY_SCOPE_SAME_PLAN_ATTEMPT
+
+    all_constant_features = classify_recoverable_generation_failure(
+        InvalidFeatureMatrixError("all_constant_features")
+    )
+    assert all_constant_features is not None
+    assert all_constant_features.reason == "all_constant_features"
+    assert all_constant_features.retry_scope == RECOVERABLE_RETRY_SCOPE_SAME_PLAN_ATTEMPT
+
+    hetero_all_constant_features = classify_recoverable_generation_failure(
+        InvalidFeatureMatrixError("all_constant_features"),
+        degeneracy_retry_scope=RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE,
+    )
+    assert hetero_all_constant_features is not None
+    assert hetero_all_constant_features.reason == "all_constant_features"
+    assert hetero_all_constant_features.retry_scope == RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE
+
+    constant_pathway_output = classify_recoverable_generation_failure(
+        RetryableDegeneracyError("constant_pathway_output")
+    )
+    assert constant_pathway_output is not None
+    assert constant_pathway_output.reason == "constant_pathway_output"
+    assert constant_pathway_output.retry_scope == RECOVERABLE_RETRY_SCOPE_SAME_PLAN_ATTEMPT
+
+    hetero_constant_pathway_output = classify_recoverable_generation_failure(
+        RetryableDegeneracyError("constant_pathway_output"),
+        degeneracy_retry_scope=RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE,
+    )
+    assert hetero_constant_pathway_output is not None
+    assert hetero_constant_pathway_output.reason == "constant_pathway_output"
+    assert hetero_constant_pathway_output.retry_scope == RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE
+
+    assert classify_recoverable_generation_failure(ValueError("unexpected")) is None
+
+
+def test_generate_fixed_layout_bundle_with_retries_retries_same_plan_on_all_constant_features(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_regression_config()
+    cfg.filter.max_attempts = 4
+    plan = _FixedLayoutPlan(
+        layout=_layout_stub(
+            feature_types=["num", "num"],
+            graph_nodes=2,
+            adjacency=torch.zeros((2, 2), dtype=torch.bool),
+            feature_node_assignment=[0, 1],
+            target_node_assignment=1,
+        ),
+        requested_device="cpu",
+        resolved_device="cpu",
+        plan_seed=911,
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        layout_signature="layout_sig",
+        execution_plan=FixedLayoutExecutionPlan(),
+        plan_signature="plan_sig",
+    )
+    n_rows = cfg.dataset.n_train + cfg.dataset.n_test
+    graph_batch_calls: list[int] = []
+    finalize_calls: list[int] = []
+
+    def _stub_generate_fixed_layout_graph_batch_with_runtime_metrics(
+        _config: GeneratorConfig,
+        _plan: _FixedLayoutPlan,
+        *,
+        dataset_seeds: list[int],
+        resolved_device: str,
+        noise_sigma_multiplier: float,
+        noise_spec,
+        runtime_metrics_out: dict[str, float],
+    ) -> tuple[torch.Tensor, torch.Tensor, list[dict[str, object]]]:
+        _ = dataset_seeds
+        _ = resolved_device
+        _ = noise_sigma_multiplier
+        _ = noise_spec
+        runtime_metrics_out["stub"] = 1.0
+        graph_batch_calls.append(1)
+        return (
+            torch.zeros((1, n_rows, 2), dtype=torch.float32),
+            torch.zeros((1, n_rows), dtype=torch.float32),
+            [{}],
+        )
+
+    def _stub_finalize_generated_tensors(*_args, **_kwargs) -> DatasetBundle:
+        finalize_calls.append(1)
+        if len(finalize_calls) == 1:
+            raise InvalidFeatureMatrixError("all_constant_features")
+        return DatasetBundle(
+            X_train=torch.zeros((cfg.dataset.n_train, 2), dtype=torch.float32),
+            y_train=torch.zeros(cfg.dataset.n_train, dtype=torch.float32),
+            X_test=torch.zeros((cfg.dataset.n_test, 2), dtype=torch.float32),
+            y_test=torch.zeros(cfg.dataset.n_test, dtype=torch.float32),
+            feature_types=["num", "num"],
+            metadata={"seed": 17},
+            runtime_metrics={},
+        )
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_fixed_layout_graph_batch_with_runtime_metrics",
+        _stub_generate_fixed_layout_graph_batch_with_runtime_metrics,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._finalize_generated_tensors",
+        _stub_finalize_generated_tensors,
+    )
+
+    bundle = _generate_fixed_layout_bundle_with_retries(
+        cfg,
+        plan=plan,
+        dataset_root=KeyedRng(17),
+        requested_device="cpu",
+        resolved_device="cpu",
+        preserve_feature_schema=False,
+    )
+
+    assert tuple(bundle.X_train.shape) == (cfg.dataset.n_train, 2)
+    assert graph_batch_calls == [1, 1]
+    assert finalize_calls == [1, 1]
+
+
+def test_generate_fixed_layout_bundle_with_retries_retries_same_plan_on_constant_pathway_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_regression_config()
+    cfg.filter.max_attempts = 4
+    plan = _FixedLayoutPlan(
+        layout=_layout_stub(
+            feature_types=["num", "num"],
+            graph_nodes=2,
+            adjacency=torch.zeros((2, 2), dtype=torch.bool),
+            feature_node_assignment=[0, 1],
+            target_node_assignment=1,
+        ),
+        requested_device="cpu",
+        resolved_device="cpu",
+        plan_seed=912,
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        layout_signature="layout_sig",
+        execution_plan=FixedLayoutExecutionPlan(),
+        plan_signature="plan_sig",
+    )
+    n_rows = cfg.dataset.n_train + cfg.dataset.n_test
+    graph_batch_calls: list[int] = []
+    finalize_calls = 0
+
+    def _stub_generate_fixed_layout_graph_batch_with_runtime_metrics(
+        _config: GeneratorConfig,
+        _plan: _FixedLayoutPlan,
+        *,
+        dataset_seeds: list[int],
+        resolved_device: str,
+        noise_sigma_multiplier: float,
+        noise_spec,
+        runtime_metrics_out: dict[str, float],
+    ) -> tuple[torch.Tensor, torch.Tensor, list[dict[str, object]]]:
+        _ = dataset_seeds
+        _ = resolved_device
+        _ = noise_sigma_multiplier
+        _ = noise_spec
+        runtime_metrics_out["stub"] = 1.0
+        graph_batch_calls.append(1)
+        return (
+            torch.zeros((1, n_rows, 2), dtype=torch.float32),
+            torch.zeros((1, n_rows), dtype=torch.float32),
+            [{}],
+        )
+
+    def _stub_finalize_generated_tensors(*_args, **_kwargs) -> DatasetBundle:
+        nonlocal finalize_calls
+        finalize_calls += 1
+        if finalize_calls == 1:
+            raise RetryableDegeneracyError("constant_pathway_output")
+        return DatasetBundle(
+            X_train=torch.zeros((cfg.dataset.n_train, 2), dtype=torch.float32),
+            y_train=torch.zeros(cfg.dataset.n_train, dtype=torch.float32),
+            X_test=torch.zeros((cfg.dataset.n_test, 2), dtype=torch.float32),
+            y_test=torch.zeros(cfg.dataset.n_test, dtype=torch.float32),
+            feature_types=["num", "num"],
+            metadata={"filter": {"mode": "deferred", "status": "not_run"}},
+            runtime_metrics={},
+        )
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_fixed_layout_graph_batch_with_runtime_metrics",
+        _stub_generate_fixed_layout_graph_batch_with_runtime_metrics,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._finalize_generated_tensors",
+        _stub_finalize_generated_tensors,
+    )
+
+    bundle = _generate_fixed_layout_bundle_with_retries(
+        cfg,
+        plan=plan,
+        dataset_root=KeyedRng(18),
+        requested_device="cpu",
+        resolved_device="cpu",
+        preserve_feature_schema=False,
+    )
+
+    assert bundle.X_train.shape == (cfg.dataset.n_train, 2)
+    assert finalize_calls == 2
+    assert graph_batch_calls == [1, 1]
+
+
+def test_heterogeneous_runtime_skips_to_next_candidate_on_all_constant_features(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_heterogeneous_regression_config()
+    cfg.dataset.task = "classification"
+    cfg.dataset.n_train = 4
+    cfg.dataset.n_test = 2
+    cfg.dataset.n_features_min = 2
+    cfg.dataset.n_features_max = 2
+    cfg.dataset.n_classes_min = 2
+    cfg.dataset.n_classes_max = 2
+    cfg.filter.max_attempts = 4
+    plan = _FixedLayoutPlan(
+        layout=_layout_stub(
+            feature_types=["num", "num"],
+            graph_nodes=2,
+            adjacency=torch.zeros((2, 2), dtype=torch.bool),
+            feature_node_assignment=[0, 1],
+            target_node_assignment=1,
+        ),
+        requested_device="cpu",
+        resolved_device="cpu",
+        plan_seed=921,
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        layout_signature="layout_sig",
+        execution_plan=FixedLayoutExecutionPlan(),
+        plan_signature="plan_sig",
+        candidate_attempt=3,
+    )
+    descriptor = SimpleNamespace(
+        dataset_index=0,
+        dataset_root=KeyedRng(44).keyed("dataset", 0),
+        effective_config=cfg,
+        effective_plan=plan,
+        effective_shift=resolve_shift_runtime_params(cfg),
+        finalization_context=_build_fixed_schema_finalization_context(
+            cfg,
+            plan.layout,
+            n_train=cfg.dataset.n_train,
+            n_test=cfg.dataset.n_test,
+            shift_params=resolve_shift_runtime_params(cfg),
+        ),
+    )
+    selection = NoiseRuntimeSelection(
+        family_requested="gaussian",
+        family_sampled="gaussian",
+        sampling_strategy="dataset_level",
+        base_scale=1.0,
+        student_t_df=5.0,
+        mixture_weights=None,
+    )
+    fallback_calls: list[dict[str, object]] = []
+
+    def _make_bundle(seed: int) -> DatasetBundle:
+        return DatasetBundle(
+            X_train=torch.zeros((cfg.dataset.n_train, 2), dtype=torch.float32),
+            y_train=torch.zeros(cfg.dataset.n_train, dtype=torch.int64),
+            X_test=torch.zeros((cfg.dataset.n_test, 2), dtype=torch.float32),
+            y_test=torch.zeros(cfg.dataset.n_test, dtype=torch.int64),
+            feature_types=["num", "num"],
+            metadata={"seed": int(seed), "filter": {"mode": "deferred", "status": "not_run"}},
+            runtime_metrics={},
+        )
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._resolve_heterogeneous_batch_size",
+        lambda *_args, **_kwargs: 1,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._resolve_heterogeneous_dataset_descriptor",
+        lambda *_args, **_kwargs: descriptor,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._group_noise_runtime_chunk",
+        lambda *_args, **_kwargs: [
+            SimpleNamespace(chunk_offsets=[0], selection=selection, attempt=0)
+        ],
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_grouped_raw_batches",
+        lambda *_args, **_kwargs: [
+            SimpleNamespace(
+                chunk_offsets=[0],
+                selection=selection,
+                attempt=0,
+                x_batch=torch.zeros((1, 6, 2), dtype=torch.float32),
+                y_batch=torch.zeros((1, 6), dtype=torch.int64),
+                aux_meta_batch=[{}],
+                effective_resolved_device="cpu",
+                device_fallback_reason=None,
+                runtime_metrics={},
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._finalize_generated_tensors",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            InvalidFeatureMatrixError("all_constant_features")
+        ),
+    )
+
+    def _stub_generate_heterogeneous_bundle_with_plan_candidates(*_args, **kwargs):
+        fallback_calls.append(kwargs)
+        return descriptor, _make_bundle(descriptor.dataset_root.child_seed())
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_heterogeneous_bundle_with_plan_candidates",
+        _stub_generate_heterogeneous_bundle_with_plan_candidates,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._annotate_fixed_layout_metadata",
+        lambda *_args, **_kwargs: None,
+    )
+
+    bundles = list(
+        _generate_batch_with_heterogeneous_layout_iter(
+            cfg,
+            num_datasets=1,
+            seed=44,
+            device="cpu",
+            batch_size=1,
+        )
+    )
+
+    assert len(bundles) == 1
+    assert len(fallback_calls) == 1
+    fallback = fallback_calls[0]
+    assert fallback["initial_descriptor"] is None
+    assert int(fallback["initial_start_attempt"]) == 0
+    assert int(fallback["start_candidate_attempt"]) == int(plan.candidate_attempt) + 1
+
+
+def test_heterogeneous_runtime_skips_to_next_candidate_on_constant_pathway_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_heterogeneous_regression_config()
+    cfg.dataset.task = "classification"
+    cfg.dataset.n_train = 4
+    cfg.dataset.n_test = 2
+    cfg.dataset.n_features_min = 2
+    cfg.dataset.n_features_max = 2
+    cfg.dataset.n_classes_min = 2
+    cfg.dataset.n_classes_max = 2
+    cfg.filter.max_attempts = 4
+    plan = _FixedLayoutPlan(
+        layout=_layout_stub(
+            feature_types=["num", "num"],
+            graph_nodes=2,
+            adjacency=torch.zeros((2, 2), dtype=torch.bool),
+            feature_node_assignment=[0, 1],
+            target_node_assignment=1,
+        ),
+        requested_device="cpu",
+        resolved_device="cpu",
+        plan_seed=923,
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        layout_signature="layout_sig",
+        execution_plan=FixedLayoutExecutionPlan(),
+        plan_signature="plan_sig",
+        candidate_attempt=3,
+    )
+    descriptor = SimpleNamespace(
+        dataset_index=0,
+        dataset_root=KeyedRng(46).keyed("dataset", 0),
+        effective_config=cfg,
+        effective_plan=plan,
+        effective_shift=resolve_shift_runtime_params(cfg),
+        finalization_context=_build_fixed_schema_finalization_context(
+            cfg,
+            plan.layout,
+            n_train=cfg.dataset.n_train,
+            n_test=cfg.dataset.n_test,
+            shift_params=resolve_shift_runtime_params(cfg),
+        ),
+    )
+    selection = NoiseRuntimeSelection(
+        family_requested="gaussian",
+        family_sampled="gaussian",
+        sampling_strategy="dataset_level",
+        base_scale=1.0,
+        student_t_df=5.0,
+        mixture_weights=None,
+    )
+    fallback_calls: list[dict[str, object]] = []
+
+    def _make_bundle(seed: int) -> DatasetBundle:
+        return DatasetBundle(
+            X_train=torch.zeros((cfg.dataset.n_train, 2), dtype=torch.float32),
+            y_train=torch.zeros(cfg.dataset.n_train, dtype=torch.int64),
+            X_test=torch.zeros((cfg.dataset.n_test, 2), dtype=torch.float32),
+            y_test=torch.zeros(cfg.dataset.n_test, dtype=torch.int64),
+            feature_types=["num", "num"],
+            metadata={"seed": int(seed), "filter": {"mode": "deferred", "status": "not_run"}},
+            runtime_metrics={},
+        )
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._resolve_heterogeneous_batch_size",
+        lambda *_args, **_kwargs: 1,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._resolve_heterogeneous_dataset_descriptor",
+        lambda *_args, **_kwargs: descriptor,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._group_noise_runtime_chunk",
+        lambda *_args, **_kwargs: [
+            SimpleNamespace(chunk_offsets=[0], selection=selection, attempt=0)
+        ],
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_grouped_raw_batches",
+        lambda *_args, **_kwargs: [
+            SimpleNamespace(
+                chunk_offsets=[0],
+                selection=selection,
+                attempt=0,
+                x_batch=torch.zeros((1, 6, 2), dtype=torch.float32),
+                y_batch=torch.zeros((1, 6), dtype=torch.int64),
+                aux_meta_batch=[{}],
+                effective_resolved_device="cpu",
+                device_fallback_reason=None,
+                runtime_metrics={},
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._finalize_generated_tensors",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RetryableDegeneracyError("constant_pathway_output")
+        ),
+    )
+
+    def _stub_generate_heterogeneous_bundle_with_plan_candidates(*_args, **kwargs):
+        fallback_calls.append(kwargs)
+        return descriptor, _make_bundle(descriptor.dataset_root.child_seed())
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_heterogeneous_bundle_with_plan_candidates",
+        _stub_generate_heterogeneous_bundle_with_plan_candidates,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._annotate_fixed_layout_metadata",
+        lambda *_args, **_kwargs: None,
+    )
+
+    bundles = list(
+        _generate_batch_with_heterogeneous_layout_iter(
+            cfg,
+            num_datasets=1,
+            seed=46,
+            device="cpu",
+            batch_size=1,
+        )
+    )
+
+    assert len(bundles) == 1
+    assert len(fallback_calls) == 1
+    fallback = fallback_calls[0]
+    assert fallback["initial_descriptor"] is None
+    assert int(fallback["initial_start_attempt"]) == 0
+    assert int(fallback["start_candidate_attempt"]) == int(plan.candidate_attempt) + 1
+
+
+def test_heterogeneous_runtime_keeps_same_plan_retries_for_invalid_class_split(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_heterogeneous_regression_config()
+    cfg.dataset.task = "classification"
+    cfg.dataset.n_train = 4
+    cfg.dataset.n_test = 2
+    cfg.dataset.n_features_min = 2
+    cfg.dataset.n_features_max = 2
+    cfg.dataset.n_classes_min = 2
+    cfg.dataset.n_classes_max = 2
+    cfg.filter.max_attempts = 4
+    plan = _FixedLayoutPlan(
+        layout=_layout_stub(
+            feature_types=["num", "num"],
+            graph_nodes=2,
+            adjacency=torch.zeros((2, 2), dtype=torch.bool),
+            feature_node_assignment=[0, 1],
+            target_node_assignment=1,
+        ),
+        requested_device="cpu",
+        resolved_device="cpu",
+        plan_seed=922,
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        layout_signature="layout_sig",
+        execution_plan=FixedLayoutExecutionPlan(),
+        plan_signature="plan_sig",
+        candidate_attempt=3,
+    )
+    descriptor = SimpleNamespace(
+        dataset_index=0,
+        dataset_root=KeyedRng(45).keyed("dataset", 0),
+        effective_config=cfg,
+        effective_plan=plan,
+        effective_shift=resolve_shift_runtime_params(cfg),
+        finalization_context=_build_fixed_schema_finalization_context(
+            cfg,
+            plan.layout,
+            n_train=cfg.dataset.n_train,
+            n_test=cfg.dataset.n_test,
+            shift_params=resolve_shift_runtime_params(cfg),
+        ),
+    )
+    selection = NoiseRuntimeSelection(
+        family_requested="gaussian",
+        family_sampled="gaussian",
+        sampling_strategy="dataset_level",
+        base_scale=1.0,
+        student_t_df=5.0,
+        mixture_weights=None,
+    )
+    fallback_calls: list[dict[str, object]] = []
+
+    def _make_bundle(seed: int) -> DatasetBundle:
+        return DatasetBundle(
+            X_train=torch.zeros((cfg.dataset.n_train, 2), dtype=torch.float32),
+            y_train=torch.zeros(cfg.dataset.n_train, dtype=torch.int64),
+            X_test=torch.zeros((cfg.dataset.n_test, 2), dtype=torch.float32),
+            y_test=torch.zeros(cfg.dataset.n_test, dtype=torch.int64),
+            feature_types=["num", "num"],
+            metadata={"seed": int(seed), "filter": {"mode": "deferred", "status": "not_run"}},
+            runtime_metrics={},
+        )
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._resolve_heterogeneous_batch_size",
+        lambda *_args, **_kwargs: 1,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._resolve_heterogeneous_dataset_descriptor",
+        lambda *_args, **_kwargs: descriptor,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._group_noise_runtime_chunk",
+        lambda *_args, **_kwargs: [
+            SimpleNamespace(chunk_offsets=[0], selection=selection, attempt=0)
+        ],
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_grouped_raw_batches",
+        lambda *_args, **_kwargs: [
+            SimpleNamespace(
+                chunk_offsets=[0],
+                selection=selection,
+                attempt=0,
+                x_batch=torch.zeros((1, 6, 2), dtype=torch.float32),
+                y_batch=torch.zeros((1, 6), dtype=torch.int64),
+                aux_meta_batch=[{}],
+                effective_resolved_device="cpu",
+                device_fallback_reason=None,
+                runtime_metrics={},
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._finalize_generated_tensors",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            InvalidClassSplitError("invalid_class_split")
+        ),
+    )
+
+    def _stub_generate_heterogeneous_bundle_with_plan_candidates(*_args, **kwargs):
+        fallback_calls.append(kwargs)
+        return descriptor, _make_bundle(descriptor.dataset_root.child_seed())
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_heterogeneous_bundle_with_plan_candidates",
+        _stub_generate_heterogeneous_bundle_with_plan_candidates,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._annotate_fixed_layout_metadata",
+        lambda *_args, **_kwargs: None,
+    )
+
+    bundles = list(
+        _generate_batch_with_heterogeneous_layout_iter(
+            cfg,
+            num_datasets=1,
+            seed=45,
+            device="cpu",
+            batch_size=1,
+        )
+    )
+
+    assert len(bundles) == 1
+    assert len(fallback_calls) == 1
+    fallback = fallback_calls[0]
+    assert fallback["initial_descriptor"] is descriptor
+    assert int(fallback["initial_start_attempt"]) == 1
+    assert int(fallback["start_candidate_attempt"]) == int(plan.candidate_attempt) + 1
+
+
 def test_heterogeneous_canary_batch_seed_10602_avoids_all_constant_feature_collapse() -> None:
     cfg = load_repo_config()
     cfg.dataset.task = "classification"
@@ -4703,6 +5321,32 @@ def test_heterogeneous_canary_batch_seed_10602_avoids_all_constant_feature_colla
     bundles = list(generate_batch_iter(cfg, num_datasets=32, seed=10602, device="cpu"))
 
     assert len(bundles) == 32
+    for bundle in bundles:
+        assert int(bundle.X_train.shape[1]) > 0
+        combined = torch.cat([bundle.X_train, bundle.X_test], dim=0)
+        assert bool(torch.any(torch.std(combined, dim=0, correction=0) > 0.0))
+
+
+def test_heterogeneous_control_batch_seed_10604_resamples_all_constant_feature_candidate() -> None:
+    cfg = load_repo_config()
+    cfg.dataset.task = "classification"
+    cfg.dataset.n_train = 96
+    cfg.dataset.n_test = 32
+    cfg.dataset.n_features_min = 6
+    cfg.dataset.n_features_max = 6
+    cfg.dataset.n_classes_min = 4
+    cfg.dataset.n_classes_max = 4
+    cfg.dataset.categorical_ratio_min = 0.0
+    cfg.dataset.categorical_ratio_max = 0.0
+    cfg.dataset.max_categorical_cardinality = 12
+    cfg.graph.n_nodes_min = 2
+    cfg.graph.n_nodes_max = 12
+    cfg.filter.max_attempts = 256
+    cfg.runtime.layout_mode = "heterogeneous"
+
+    bundles = list(generate_batch_iter(cfg, num_datasets=128, seed=10604, device="cpu"))
+
+    assert len(bundles) == 128
     for bundle in bundles:
         assert int(bundle.X_train.shape[1]) > 0
         combined = torch.cat([bundle.X_train, bundle.X_test], dim=0)

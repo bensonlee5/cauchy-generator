@@ -21,8 +21,10 @@ from dagzoo.core.shift import ShiftRuntimeParams
 from dagzoo.core.validation import (
     InfeasibleStratifiedSplitError,
     InvalidClassSplitError,
+    RetryableDegeneracyError,
     _classification_split_valid,
     _stratified_split_indices,
+    validate_pathway_output,
 )
 from dagzoo.postprocess.postprocess import (
     inject_missingness,
@@ -335,6 +337,10 @@ def _finalize_processed_bundle(
 ) -> DatasetBundle:
     """Finalize one already-postprocessed dataset into the emitted bundle contract."""
 
+    validate_pathway_output(
+        torch.cat([x_train.to(torch.float32), x_test.to(torch.float32)], dim=0),
+        context="_finalize_processed_bundle.features",
+    )
     if context.missingness_enabled:
         x_train, x_test, missingness_summary = inject_missingness(
             x_train,
@@ -510,7 +516,7 @@ def _finalize_generated_chunk_preserve_schema(
                 noise_runtime_selection=noise_runtime_selection,
                 dtype=dtype,
             )
-        except InvalidClassSplitError:
+        except (InvalidClassSplitError, RetryableDegeneracyError):
             continue
 
     return results

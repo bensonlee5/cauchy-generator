@@ -5,6 +5,7 @@ from conftest import make_generator as _make_generator
 import dagzoo.functions.random_functions as random_functions_mod
 from dagzoo.core.execution_semantics import sample_function_family
 from dagzoo.core.fixed_layout.plan_types import GaussianMatrixPlan, LinearFunctionPlan
+from dagzoo.core.validation import RetryableDegeneracyError
 from dagzoo.functions.random_functions import (
     MechanismFamily,
     _sample_function_family,
@@ -291,3 +292,29 @@ def test_random_functions_module_retains_family_sampling_patch_point() -> None:
         function_family_mix={"linear": 1.0},  # type: ignore[arg-type]
     )
     assert sampled == "linear"
+
+
+def test_apply_random_function_retries_retryable_degeneracy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    call_count = 0
+
+    def _stub_sample_function_plan_for_family(*_args, **_kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RetryableDegeneracyError("degenerate_tree_plan")
+        return LinearFunctionPlan(matrix=GaussianMatrixPlan())
+
+    monkeypatch.setattr(
+        random_functions_mod,
+        "sample_function_plan_for_family",
+        _stub_sample_function_plan_for_family,
+    )
+
+    x = torch.randn(32, 4, generator=_make_generator(22))
+    y = apply_random_function(x, _make_generator(23), out_dim=3, function_type="linear")
+
+    assert call_count == 2
+    assert y.shape == (32, 3)
+    assert torch.all(torch.isfinite(y))
