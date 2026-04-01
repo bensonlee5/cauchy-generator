@@ -44,6 +44,7 @@ def apply_random_function(
     if function_type is None:
         plan = sample_function_plan(
             keyed_rng=root.keyed("plan"),
+            input_dim=int(y.shape[1]),
             out_dim=int(dout),
             mechanism_logit_tilt=mechanism_logit_tilt,
             function_family_mix=function_family_mix,
@@ -58,6 +59,7 @@ def apply_random_function(
             plan = sample_function_plan_for_family(
                 keyed_rng=root.keyed("plan"),
                 family=function_type,
+                input_dim=int(y.shape[1]),
                 out_dim=int(dout),
                 mechanism_logit_tilt=mechanism_logit_tilt,
                 function_family_mix=function_family_mix,

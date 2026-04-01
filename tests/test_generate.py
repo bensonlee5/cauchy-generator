@@ -4683,6 +4683,32 @@ def test_generate_retries_when_stratified_split_is_infeasible(
         generate_one(cfg, seed=99, device="cpu")
 
 
+def test_heterogeneous_canary_batch_seed_10602_avoids_all_constant_feature_collapse() -> None:
+    cfg = load_repo_config()
+    cfg.dataset.task = "classification"
+    cfg.dataset.n_train = 96
+    cfg.dataset.n_test = 32
+    cfg.dataset.n_features_min = 6
+    cfg.dataset.n_features_max = 6
+    cfg.dataset.n_classes_min = 2
+    cfg.dataset.n_classes_max = 2
+    cfg.dataset.categorical_ratio_min = 0.0
+    cfg.dataset.categorical_ratio_max = 0.0
+    cfg.dataset.max_categorical_cardinality = 12
+    cfg.graph.n_nodes_min = 2
+    cfg.graph.n_nodes_max = 6
+    cfg.filter.max_attempts = 64
+    cfg.runtime.layout_mode = "heterogeneous"
+
+    bundles = list(generate_batch_iter(cfg, num_datasets=32, seed=10602, device="cpu"))
+
+    assert len(bundles) == 32
+    for bundle in bundles:
+        assert int(bundle.X_train.shape[1]) > 0
+        combined = torch.cat([bundle.X_train, bundle.X_test], dim=0)
+        assert bool(torch.any(torch.std(combined, dim=0, correction=0) > 0.0))
+
+
 def test_prepare_canonical_fixed_layout_run_precomputes_run_wide_classification_attempt_plan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4808,8 +4834,8 @@ def test_resolve_fixed_layout_batch_size_uses_configured_target_cells() -> None:
 
 
 def test_h100_large_shape_reduces_auto_batch_size_relative_to_standard_h100() -> None:
-    standard_cfg = GeneratorConfig.from_yaml("configs/benchmark_cuda_h100.yaml")
-    large_cfg = GeneratorConfig.from_yaml("configs/benchmark_cuda_h100_large_shape.yaml")
+    standard_cfg = load_repo_config("benchmark_cuda_h100.yaml")
+    large_cfg = load_repo_config("benchmark_cuda_h100_large_shape.yaml")
 
     standard_plan = SimpleNamespace(
         n_train=standard_cfg.dataset.n_train,

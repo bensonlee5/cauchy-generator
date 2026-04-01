@@ -64,6 +64,7 @@ def apply_node_pipeline(
     node_plan = sample_node_plan(
         node_index=0,
         parent_indices=tuple(range(len(parent_data))),
+        parent_output_dims=tuple(int(parent.shape[-1]) for parent in parent_data),
         converter_specs=converter_specs,
         keyed_rng=root.keyed("plan"),
         device=str(generator.device),

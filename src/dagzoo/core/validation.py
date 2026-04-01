@@ -15,6 +15,14 @@ class InvalidClassSplitError(ValueError):
     """Raised when a classification split violates emitted bundle invariants."""
 
 
+class InvalidFeatureMatrixError(ValueError):
+    """Raised when emitted features violate non-classification bundle invariants."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = str(reason)
+
+
 def _stratified_split_indices(
     y: torch.Tensor,
     n_train: int,

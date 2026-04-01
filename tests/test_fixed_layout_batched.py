@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 import torch
+from conftest import load_repo_config
 
-from dagzoo.config import GeneratorConfig
 from dagzoo.core.execution_semantics import typed_converter_specs
 from dagzoo.core.fixed_layout.batched import (
     FixedLayoutBatchRng,
@@ -347,7 +347,7 @@ def test_fixed_layout_batch_rng_seed_matches_manual_seed_root_stream() -> None:
 def test_build_fixed_layout_execution_plan_uses_keyed_node_roots(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = GeneratorConfig.from_yaml("configs/default.yaml")
+    config = load_repo_config()
     config.dataset.task = "regression"
 
     layout = LayoutPlan(
@@ -381,6 +381,7 @@ def test_build_fixed_layout_execution_plan_uses_keyed_node_roots(
         *,
         node_index: int,
         parent_indices: tuple[int, ...] | list[int],
+        parent_output_dims: tuple[int, ...] | list[int] | None = None,
         converter_specs: list[ConverterSpec],
         generator: torch.Generator | None = None,
         keyed_rng: KeyedRng | None = None,
@@ -388,7 +389,7 @@ def test_build_fixed_layout_execution_plan_uses_keyed_node_roots(
         mechanism_logit_tilt: float,
         function_family_mix: dict[str, float] | None,
     ) -> FixedLayoutNodePlan:
-        del device, mechanism_logit_tilt, function_family_mix
+        del parent_output_dims, device, mechanism_logit_tilt, function_family_mix
         assert generator is None
         assert keyed_rng is not None
         observed_plan_roots.append((node_index, keyed_rng.child_seed("probe")))
@@ -784,7 +785,7 @@ def test_apply_node_plan_batch_keeps_center_random_fn_groups_split(
 def test_generate_fixed_layout_raw_batch_keys_seeded_batch_rng_per_node(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cfg = GeneratorConfig.from_yaml("configs/default.yaml")
+    cfg = load_repo_config()
     cfg.dataset.task = "regression"
     cfg.dataset.n_train = 4
     cfg.dataset.n_test = 2
@@ -884,7 +885,7 @@ def test_generate_fixed_layout_raw_batch_keys_seeded_batch_rng_per_node(
 def test_generate_fixed_layout_raw_batch_reports_runtime_metrics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cfg = GeneratorConfig.from_yaml("configs/default.yaml")
+    cfg = load_repo_config()
     cfg.dataset.task = "regression"
     cfg.dataset.n_train = 4
     cfg.dataset.n_test = 2
@@ -1035,7 +1036,7 @@ def test_lp_distances_to_centers_matches_dense_reference() -> None:
 
 
 def test_generate_fixed_layout_label_batch_matches_graph_batch_targets() -> None:
-    cfg = GeneratorConfig.from_yaml("configs/default.yaml")
+    cfg = load_repo_config()
     cfg.dataset.task = "classification"
     cfg.dataset.n_train = 6
     cfg.dataset.n_test = 4

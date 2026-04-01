@@ -101,11 +101,15 @@ def build_fixed_layout_execution_plan(
         converter_specs = _build_node_specs(node_index, layout, spec_root)
         if int(node_index) == int(layout.target_to_node):
             converter_specs = [*converter_specs, *_build_target_specs(layout, task)]
+        parent_output_dims = [
+            int(node_plans[parent_index].latent.total_dim) for parent_index in parent_indices
+        ]
         node_plans.append(
             _with_compiled_converter_groups(
                 sample_node_plan(
                     node_index=int(node_index),
                     parent_indices=parent_indices,
+                    parent_output_dims=parent_output_dims,
                     converter_specs=converter_specs,
                     keyed_rng=node_root,
                     device="cpu",
