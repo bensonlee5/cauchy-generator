@@ -339,8 +339,8 @@ ______________________________________________________________________
 
 ## 13. Generate handoff workflows
 
-Use `dagzoo generate --handoff-root` when a downstream repo such as
-`tab-foundry` needs a stable handoff root. There is no separate request-file
+Use `dagzoo generate --handoff-root` when a downstream consumer needs a stable
+handoff root. There is no separate request-file
 contract now; the handoff workflow uses the normal internal config plus CLI
 overrides.
 
@@ -349,7 +349,7 @@ Example one-way handoff run:
 ```bash
 dagzoo generate \
   --config configs/default.yaml \
-  --handoff-root handoffs/tab_foundry_smoke \
+  --handoff-root handoffs/smoke_run \
   --num-datasets 2 \
   --rows 1024 \
   --seed 7 \
@@ -359,15 +359,16 @@ dagzoo generate \
 
 That command writes:
 
-- `handoffs/tab_foundry_smoke/handoff_manifest.json`
-- `handoffs/tab_foundry_smoke/generated/`
+- `handoffs/smoke_run/handoff_manifest.json`
+- `handoffs/smoke_run/generated/`
+- `handoffs/smoke_run/internal/`
 
 Downstream consumption should start from `handoff_manifest.json`. The manifest
-surfaces the generated corpus path, effective-config artifacts, and invocation
-metadata in one versioned JSON file:
+surfaces the generated corpus path and stable corpus identity in one versioned
+JSON file:
 
 ```bash
-./.venv/bin/python -c "import json; from pathlib import Path; payload=json.loads(Path('handoffs/tab_foundry_smoke/handoff_manifest.json').read_text()); print(payload['artifacts']['generated_dir']); print(payload['summary']['generated_datasets'])"
+./.venv/bin/python -c "import json; from pathlib import Path; payload=json.loads(Path('handoffs/smoke_run/handoff_manifest.json').read_text()); print(payload['artifacts_relative']['generated_dir']); print(payload['summary']['generated_datasets'])"
 ```
 
 Closed-loop feedback from downstream predictions is still out of scope for this

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import Iterator
+from dataclasses import asdict
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -28,6 +30,7 @@ from dagzoo.diagnostics import (
 from dagzoo.diagnostics_targets import build_diagnostics_aggregation_config
 from dagzoo.filtering.deferred_filter import MANIFEST_FILENAME, SUMMARY_FILENAME
 from dagzoo.io.parquet_writer import write_packed_parquet_shards_stream
+from dagzoo.io.shard_contract import RUN_CONTEXT_FILENAME
 
 from ..common import load_config_or_usage_error, raise_usage_error
 from ..effective_config import (
@@ -66,7 +69,8 @@ def _ensure_generate_handoff_output_safe(run_root: Path) -> Path:
     generated_dir = _generate_handoff_dir(run_root)
     filter_dir = run_root / "filter"
     curated_dir = run_root / "curated"
-    for path in (generated_dir, filter_dir, curated_dir):
+    internal_dir = run_root / "internal"
+    for path in (generated_dir, filter_dir, curated_dir, internal_dir):
         if path.exists() and not path.is_dir():
             raise RuntimeError(f"Generate handoff artifact path must be a directory: {path}")
 
@@ -90,6 +94,12 @@ def _ensure_generate_handoff_output_safe(run_root: Path) -> Path:
         raise RuntimeError(
             "Generate handoff root already contains curated shard data: "
             f"{curated_dir}. Remove existing shard_* folders or choose a new handoff root."
+        )
+    stale_internal = next(internal_dir.glob("shard_*"), None) if internal_dir.exists() else None
+    if stale_internal is not None or (internal_dir / RUN_CONTEXT_FILENAME).exists():
+        raise RuntimeError(
+            "Generate handoff root already contains prior internal sidecars: "
+            f"{internal_dir}. Remove existing internal artifacts or choose a new handoff root."
         )
 
     handoff_manifest_path = run_root / HANDOFF_MANIFEST_FILENAME
@@ -185,6 +195,7 @@ def run_generate_command(args: argparse.Namespace) -> int:
     )
     out_dir: str | Path | None = args.out or config.output.out_dir
     effective_config_root: str | Path | None = out_dir
+    internal_root: Path | None = None
     if handoff_root is not None:
         assert generated_dir is not None
         pre_handoff_config = clone_generator_config(config, revalidate=False)
@@ -196,7 +207,8 @@ def run_generate_command(args: argparse.Namespace) -> int:
             events=trace_events,
         )
         out_dir = generated_dir
-        effective_config_root = generated_dir
+        internal_root = handoff_root / "internal"
+        effective_config_root = internal_root
     elif effective_config_root is None:
         effective_config_root = (
             args.diagnostics_out_dir or config.diagnostics.out_dir or "effective_config_artifacts"
@@ -223,7 +235,11 @@ def run_generate_command(args: argparse.Namespace) -> int:
     diagnostics_out_dir: Path | None = None
     diagnostics_aggregator: CoverageAggregator | None = None
     if diagnostics_enabled:
-        diagnostics_root = args.diagnostics_out_dir or config.diagnostics.out_dir or out_dir
+        diagnostics_root = args.diagnostics_out_dir or config.diagnostics.out_dir
+        if diagnostics_root is None:
+            diagnostics_root = (
+                (internal_root / "diagnostics_artifacts") if internal_root is not None else out_dir
+            )
         if diagnostics_root is None:
             diagnostics_root = "diagnostics_artifacts"
         diagnostics_out_dir = Path(diagnostics_root)
@@ -272,6 +288,7 @@ def run_generate_command(args: argparse.Namespace) -> int:
         out_dir=resolved_out_dir,
         shard_size=config.output.shard_size,
         compression=config.output.compression,
+        internal_root=internal_root,
     )
     generation_elapsed_seconds = perf_counter() - generation_started_at
     if diagnostics_aggregator is not None:
@@ -281,6 +298,36 @@ def run_generate_command(args: argparse.Namespace) -> int:
         )
     if handoff_root is not None:
         assert generated_dir is not None
+        assert internal_root is not None
+        internal_root.mkdir(parents=True, exist_ok=True)
+        (internal_root / RUN_CONTEXT_FILENAME).write_text(
+            json.dumps(
+                {
+                    "config_path": str(args.config),
+                    "resolved_config_path": str(effective_config_path.resolve()),
+                    "resolved_config_trace_path": str(trace_path.resolve()),
+                    "generate_invocation_overrides": _build_generate_invocation_overrides(
+                        args,
+                        handoff_root=handoff_root,
+                    ),
+                    "effective_config": asdict(config),
+                    "resolution_trace": trace_payload,
+                    "hardware": {
+                        "requested_device": str(requested_device),
+                        "resolved_device": str(resolved_device),
+                        "backend": str(hw.backend),
+                        "device_name": str(hw.device_name),
+                        "tier": str(hw.tier),
+                        "hardware_policy": str(args.hardware_policy),
+                    },
+                },
+                indent=2,
+                sort_keys=True,
+                allow_nan=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         handoff_manifest_path = write_generate_handoff_manifest(
             config_path=args.config,
             generate_invocation_overrides=_build_generate_invocation_overrides(

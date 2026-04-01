@@ -56,7 +56,6 @@ from .plan_types import (
     FixedLayoutExecutionPlan,
     FixedLayoutFunctionPlan,
     FixedLayoutNodePlan,
-    FixedLayoutTargetHeadPlan,
     GpFunctionPlan,
     LinearFunctionPlan,
     NeuralNetFunctionPlan,
@@ -100,6 +99,8 @@ def build_fixed_layout_execution_plan(
         spec_root = plan_root.keyed("node_spec", node_index)
         node_root = plan_root.keyed("node_plan", node_index)
         converter_specs = _build_node_specs(node_index, layout, spec_root)
+        if int(node_index) == int(layout.target_to_node):
+            converter_specs = [*converter_specs, *_build_target_specs(layout, task)]
         node_plans.append(
             _with_compiled_converter_groups(
                 sample_node_plan(
@@ -113,23 +114,8 @@ def build_fixed_layout_execution_plan(
                 )
             )
         )
-    target_head_plan = _with_compiled_converter_groups(
-        sample_node_plan(
-            node_index=int(layout.graph_nodes),
-            parent_indices=tuple(int(index) for index in layout.target_parent_features),
-            converter_specs=_build_target_specs(layout, task),
-            keyed_rng=plan_root.keyed("target_head"),
-            device="cpu",
-            mechanism_logit_tilt=mechanism_logit_tilt,
-            function_family_mix=config.mechanism.function_family_mix,
-        )
-    )
     return FixedLayoutExecutionPlan(
         node_plans=tuple(node_plans),
-        target_head_plan=FixedLayoutTargetHeadPlan(
-            parent_feature_indices=tuple(int(index) for index in layout.target_parent_features),
-            node_plan=target_head_plan,
-        ),
         execution_contract=_FIXED_LAYOUT_EXECUTION_CONTRACT,
     )
 
@@ -699,7 +685,6 @@ def _apply_node_plan_batch(
     noise_sigma_multiplier: float,
     noise_spec: NoiseSamplingSpec | None,
     runtime_metrics_out: dict[str, float] | None = None,
-    target_teacher_conditionals_out: dict[str, torch.Tensor] | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     _ = config
     _ = device
@@ -853,9 +838,6 @@ def _apply_node_plan_batch(
             continue
 
         if not group.uses_center_random_fn:
-            class_probs_payload: dict[str, torch.Tensor] | None = (
-                {} if target_teacher_conditionals_out is not None else None
-            )
             x_prime, values = _apply_categorical_group_batch(
                 _categorical_group_input_views(latent, group.slices),
                 rng,
@@ -864,7 +846,6 @@ def _apply_node_plan_batch(
                 noise_sigma_multiplier=noise_sigma_multiplier,
                 noise_spec=noise_spec,
                 spec_indices=group.spec_indices,
-                class_probs_out=class_probs_payload,
             )
             for local_index, spec in enumerate(group.slices):
                 start = int(spec.column_start)
@@ -879,23 +860,11 @@ def _apply_node_plan_batch(
                         )
                 latent[:, :, start:end] = spec_out
                 extracted[str(spec.key)] = values[:, :, local_index]
-                if (
-                    target_teacher_conditionals_out is not None
-                    and str(spec.key) == "target"
-                    and class_probs_payload is not None
-                    and "probs" in class_probs_payload
-                ):
-                    target_teacher_conditionals_out["probs"] = class_probs_payload["probs"][
-                        :, :, local_index, :
-                    ]
             continue
         for spec in group.slices:
             start = int(spec.column_start)
             end = int(spec.column_end)
             spec_view = latent[:, :, start:end].unsqueeze(2)
-            single_class_probs_payload: dict[str, torch.Tensor] | None = (
-                {} if target_teacher_conditionals_out is not None else None
-            )
             x_prime, values = _apply_categorical_group_batch(
                 spec_view,
                 rng.keyed("converter", spec.spec_index),
@@ -903,7 +872,6 @@ def _apply_node_plan_batch(
                 n_categories=max(2, int(spec.cardinality or 2)),
                 noise_sigma_multiplier=noise_sigma_multiplier,
                 noise_spec=noise_spec,
-                class_probs_out=single_class_probs_payload,
             )
             spec_out = x_prime[:, :, 0, :]
             if int(spec_out.shape[2]) != (end - start):
@@ -915,15 +883,6 @@ def _apply_node_plan_batch(
                     )
             latent[:, :, start:end] = spec_out
             extracted[str(spec.key)] = values[:, :, 0]
-            if (
-                target_teacher_conditionals_out is not None
-                and str(spec.key) == "target"
-                and single_class_probs_payload is not None
-                and "probs" in single_class_probs_payload
-            ):
-                target_teacher_conditionals_out["probs"] = single_class_probs_payload["probs"][
-                    :, :, 0, :
-                ]
 
     _accumulate_runtime_metric(
         runtime_metrics_out,
@@ -978,6 +937,7 @@ def _generate_fixed_layout_raw_batch(
 
     node_outputs: list[torch.Tensor | None] = [None] * int(layout.graph_nodes)
     feature_values: list[torch.Tensor | None] = [None] * num_features
+    target_values: torch.Tensor | None = None
     aux_meta_batch: list[dict[str, Any]] = [
         {"filter": {"mode": "deferred", "status": "not_run"}} for _ in dataset_seeds
     ]
@@ -1005,6 +965,12 @@ def _generate_fixed_layout_raw_batch(
             if key.startswith("feature_"):
                 feature_index = int(key.split("_", 1)[1])
                 feature_values[feature_index] = values
+            elif key == "target":
+                if target_values is not None:
+                    raise ValueError(
+                        "Fixed-layout node extraction produced multiple target values."
+                    )
+                target_values = values
             else:
                 raise ValueError(f"Unexpected extracted fixed-layout key {key!r}.")
 
@@ -1049,70 +1015,12 @@ def _generate_fixed_layout_raw_batch(
         time.process_time() - feature_start_cpu,
     )
 
-    target_head = execution_plan.target_head_plan
-    target_values: torch.Tensor | None
-    teacher_conditionals_payload: dict[str, torch.Tensor] | None = (
-        {}
-        if str(config.dataset.task) == "classification"
-        and config.diagnostics.teacher_conditional_export
-        else None
-    )
-    if target_head is None:
-        target_values = None
-    else:
-        target_start = time.perf_counter()
-        target_start_cpu = time.process_time()
-        target_parent_tensors = [
-            x_complete[:, :, int(feature_index) : int(feature_index) + 1]
-            for feature_index in target_head.parent_feature_indices
-        ]
-        _target_latent, extracted = _apply_node_plan_batch(
-            config,
-            target_head.node_plan,
-            target_parent_tensors,
-            n_rows=n_rows,
-            rng=rng.keyed("target_head"),
-            device=device,
-            noise_sigma_multiplier=noise_sigma_multiplier,
-            noise_spec=noise_spec,
-            runtime_metrics_out=runtime_metrics_out,
-            target_teacher_conditionals_out=teacher_conditionals_payload,
-        )
-        target_values = extracted.get("target")
-        _accumulate_runtime_metric(
-            runtime_metrics_out,
-            "target_materialization_elapsed_seconds",
-            time.perf_counter() - target_start,
-        )
-        _accumulate_runtime_metric(
-            runtime_metrics_out,
-            "target_materialization_cpu_time_seconds",
-            time.process_time() - target_start_cpu,
-        )
-
     if target_values is None:
-        if str(config.dataset.task) == "classification":
-            y = rng.randint(0, int(layout.n_classes), (batch_size, n_rows)).to(torch.int64)
-        else:
-            y = sample_noise_from_spec(
-                (batch_size, n_rows),
-                generator=rng.torch_generator,
-                device=device,
-                noise_spec=noise_spec,
-            ).to(dtype)
+        raise RuntimeError("Fixed-layout execution did not extract a latent target value.")
+    if str(config.dataset.task) == "classification":
+        y = target_values.to(torch.int64) % int(layout.n_classes)
     else:
-        if str(config.dataset.task) == "classification":
-            y = target_values.to(torch.int64) % int(layout.n_classes)
-        else:
-            y = target_values.to(dtype)
-    if teacher_conditionals_payload is not None and "probs" in teacher_conditionals_payload:
-        target_probs = teacher_conditionals_payload["probs"].detach().to(device="cpu")
-        class_labels = list(range(int(target_probs.shape[-1])))
-        for batch_index in range(batch_size):
-            aux_meta_batch[batch_index]["teacher_conditional_class_labels"] = list(class_labels)
-            aux_meta_batch[batch_index]["teacher_conditional_full_probs"] = target_probs[
-                batch_index
-            ].tolist()
+        y = target_values.to(dtype)
     _accumulate_runtime_metric(
         runtime_metrics_out,
         "raw_batch_elapsed_seconds",

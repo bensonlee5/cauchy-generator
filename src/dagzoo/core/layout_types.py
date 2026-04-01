@@ -40,10 +40,7 @@ class LayoutPlan:
     graph_edge_density: float
     adjacency: torch.Tensor
     feature_node_assignment: list[int]
-    target_parent_features: list[int]
-    target_parent_prior: str
-    target_parent_regime: str
-    target_parent_sqrt_threshold: int
+    target_to_node: int
 
 
 __all__ = [

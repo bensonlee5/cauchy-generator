@@ -15,6 +15,7 @@ from dagzoo.core.dataset import generate_batch
 from dagzoo.core.generate_handoff import build_generate_handoff_manifest
 from dagzoo.diagnostics.coverage import CoverageAggregationConfig, CoverageAggregator
 from dagzoo.io.parquet_writer import write_packed_parquet_shards_stream
+from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INVENTORY_PATH = REPO_ROOT / "reference" / "export_contract_inventory.yaml"
@@ -191,7 +192,6 @@ def _contract_sample_artifacts(tmp_path: Path) -> dict[str, Any]:
     cfg.dataset.n_features_max = 8
     cfg.graph.n_nodes_min = 2
     cfg.graph.n_nodes_max = 6
-    cfg.diagnostics.teacher_conditional_export = True
     cfg.dataset.missing_rate = 0.1
     cfg.dataset.missing_mechanism = "mcar"
 
@@ -208,16 +208,13 @@ def _contract_sample_artifacts(tmp_path: Path) -> dict[str, Any]:
     effective_config_path.write_text("seed: 123\n", encoding="utf-8")
     effective_trace_path.write_text("- source: unit-test\n", encoding="utf-8")
 
-    metadata_record = json.loads(
-        (generated_dir / "shard_00000" / "metadata.ndjson").read_text().splitlines()[0]
+    catalog_record = json.loads(
+        (generated_dir / "shard_00000" / DATASET_CATALOG_FILENAME).read_text().splitlines()[0]
     )
     train_row = (
         pyarrow_parquet.read_table(generated_dir / "shard_00000" / "train.parquet")
         .slice(0, 1)
         .to_pylist()[0]
-    )
-    lineage_index = json.loads(
-        (generated_dir / "shard_00000" / "lineage" / "adjacency.index.json").read_text()
     )
     manifest = build_generate_handoff_manifest(
         config_path="recipe:default-baseline",
@@ -259,37 +256,19 @@ def _contract_sample_artifacts(tmp_path: Path) -> dict[str, Any]:
     )
     aggregator.update_bundle(bundle)
     coverage_summary = aggregator.build_summary()
-
-    dataset_bundle_surface = {
-        "X_train": bundle.X_train,
-        "y_train": bundle.y_train,
-        "X_test": bundle.X_test,
-        "y_test": bundle.y_test,
-        "feature_types": bundle.feature_types,
-        "metadata": {},
-    }
-    metadata_record_surface = {
-        "dataset_index": metadata_record["dataset_index"],
-        "n_train": metadata_record["n_train"],
-        "n_test": metadata_record["n_test"],
-        "n_features": metadata_record["n_features"],
-        "feature_types": metadata_record["feature_types"],
-        "metadata": {},
-    }
-    common_metadata_surface = {
-        key: value for key, value in metadata_record["metadata"].items() if key != "lineage"
+    coverage_surface = {
+        "generated_at": coverage_summary["generated_at"],
+        "num_datasets": coverage_summary["num_datasets"],
+        "task_counts": coverage_summary["task_counts"],
+        "histogram_bins": coverage_summary["histogram_bins"],
+        "quantiles": coverage_summary["quantiles"],
     }
 
     return {
-        "dataset_bundle": dataset_bundle_surface,
-        "metadata_ndjson_record": metadata_record_surface,
-        "emitted_metadata_common": common_metadata_surface,
-        "emitted_metadata_dense_lineage": {"lineage": bundle.metadata["lineage"]},
-        "emitted_metadata_compact_lineage": {"lineage": metadata_record["metadata"]["lineage"]},
+        "dataset_catalog_record": catalog_record,
         "parquet_split_row": train_row,
-        "lineage_index_json": lineage_index,
         "generate_handoff_manifest": manifest,
-        "coverage_summary_json": coverage_summary,
+        "coverage_summary_json": coverage_surface,
     }
 
 

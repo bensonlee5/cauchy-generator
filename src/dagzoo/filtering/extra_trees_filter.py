@@ -329,10 +329,10 @@ def _lineage_has_feature_target_path(
         raise ValueError("metadata.lineage.assignments must be an object.")
 
     feature_nodes = [int(value) for value in list(assignments.get("feature_to_node", []))]
-    target_mode = assignments.get("target_mode")
-    if target_mode in {"observed_x_conditional", "latent_complete_x_conditional"}:
-        return True, True
-    target_node = int(assignments["target_to_node"])
+    target_node_raw = assignments.get("target_to_node")
+    if isinstance(target_node_raw, bool) or not isinstance(target_node_raw, int):
+        raise ValueError("metadata.lineage.assignments.target_to_node must be an integer.")
+    target_node = int(target_node_raw)
     if target_node in feature_nodes:
         return True, True
 

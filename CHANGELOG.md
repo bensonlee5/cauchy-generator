@@ -10,6 +10,24 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.17.0] - 2026-03-31
+
+### Changed
+
+- **BREAKING:** The repo now hard-cuts to latent-node target semantics. The
+  canonical generator derives `y` from one selected latent DAG node, and the
+  public docs no longer describe a separate `p(y | X_complete)` target head.
+- **BREAKING:** Lineage schema support is now limited to the current
+  `target_to_node` shape. Dense lineage payloads use schema version `1.4.0`,
+  compact persisted payloads use `1.5.0`, and legacy `target_mode` /
+  `target_parent_*` payloads are rejected.
+- **BREAKING:** Generated-corpus readers now require `dataset_catalog.ndjson`
+  plus the current replay sidecars; compatibility fallback to
+  `metadata.ndjson` has been removed from handoff and deferred-filter paths.
+- Public artifact docs now match the emitted shard layout: public shards write
+  `dataset_catalog.ndjson` and compact lineage artifacts, while replay sidecars
+  remain under `internal/`.
+
 ## [0.16.1] - 2026-03-31
 
 ### Added

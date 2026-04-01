@@ -1,11 +1,10 @@
 # dagzoo
 
 `dagzoo` generates reproducible synthetic tabular corpora from sampled causal
-structure. The default prior is factorized at the complete-data level: a latent
-DAG first emits complete features `X_complete`, then an independently sampled
-conditional head generates `y` from `X_complete`, and optional missingness acts
-afterward as an observation model that emits `X_obs`. The stable adoption layer
-is a small set of named
+structure. The default prior samples a latent DAG, assigns observable features
+to latent nodes, selects one latent node for the target, and only later applies
+optional missingness as an observation model over emitted features. The stable
+adoption layer is a small set of named
 `recipe:<name>` configs plus stable artifact contracts. Repo-local authoring
 under `configs/` remains available for advanced work, but it is not the
 primary public entrypoint.
@@ -20,25 +19,25 @@ flowchart LR
     RNG --> Layout[Layout & DAG Sampling]
     Layout --> Mechanisms[Random Functional Mechanisms]
     Mechanisms --> Converters[Feature Converters]
-    Converters --> XComplete[Complete Features X_complete]
-    XComplete --> TargetHead["Conditional Target Head y|X_complete"]
-    TargetHead --> Missingness[Observation Model / Missingness]
+    Converters --> XComplete[Complete Feature Columns]
+    Layout --> TargetNode["Selected Target Node"]
+    TargetNode --> Missingness[Observation Model / Missingness]
+    XComplete --> Missingness
     Missingness --> Bundle[[DatasetBundle: X_obs, y, Metadata]]
 
     class Seed,RNG setup
-    class Layout,Mechanisms,Converters core
+    class Layout,Mechanisms,Converters,TargetNode core
     class Bundle out
 ```
 
 ### From Latent DAG to Tabular Data
 
 Unlike generators that treat each column as independent noise, `dagzoo`
-generates complete features from a latent causal structure and then generates
-the target from that realized complete feature table. One node in the sampled
-graph can branch into multiple observable features, which preserves dependency
-patterns in the emitted table while keeping the target mechanism explicitly
-conditional on `X_complete`. Optional missingness can later censor the emitted
-feature table without changing how `y` was sampled.
+generates both features and target from a latent causal structure. One node in
+the sampled graph can branch into multiple observable features, and one
+selected latent node emits the target through its converter stack. Optional
+missingness can later censor the emitted feature table without changing how
+`y` was derived.
 
 ```mermaid
 flowchart LR
@@ -53,17 +52,13 @@ flowchart LR
         Feat1[Feature 1: Numeric]
         Feat2[Feature 2: Categorical]
         Feat3[Feature 3: Numeric]
-        Head[Complete-X Target Head]
         Target[Target Variable]
     end
 
     NodeA -. mapping .-> Feat1
     NodeA -. mapping .-> Feat2
     NodeB -. mapping .-> Feat3
-    Feat1 --> Head
-    Feat2 --> Head
-    Feat3 --> Head
-    Head --> Target
+    NodeB -. target mapping .-> Target
 
     class NodeA,NodeB latent
     class Feat1,Feat2,Feat3,Target observable
@@ -72,9 +67,8 @@ flowchart LR
     style ObservableSpace fill:#fafafa,stroke:#212121
 ```
 
-In practice, that means the target is sampled from the complete feature table,
-while optional missingness only affects the observed features that are emitted
-afterward.
+In practice, that means the target comes from one latent node, while optional
+missingness only affects the observed feature values emitted afterward.
 
 ## Start
 
@@ -165,14 +159,19 @@ data/default_baseline/
   shard_00000/
     train.parquet
     test.parquet
-    metadata.ndjson
-    lineage/
-      adjacency.bitpack.bin
-      adjacency.index.json
+    dataset_catalog.ndjson
+  internal/
+    shard_00000/
+      replay_catalog.ndjson
+      lineage/
+        adjacency.bitpack.bin
+        adjacency.index.json
 ```
 
-The `shard_*` directories hold the generated datasets. `effective_config.yaml`
-records the fully resolved config for the run, and
+The `shard_*` directories hold the stable public dataset artifacts. The
+`internal/` tree holds dagzoo-only replay and lineage sidecars used by tooling
+such as `dagzoo filter`; it is not the stable public contract.
+`effective_config.yaml` records the fully resolved config for the run, and
 `effective_config_trace.yaml` records where overrides came from so the run is
 reproducible. The full artifact contract lives in `docs/output-format.md`.
 The exhaustive field catalog lives in `docs/export-contract-fields.md`.

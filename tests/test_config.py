@@ -67,12 +67,9 @@ def test_load_default_config() -> None:
     assert cfg.dataset.n_train > 0
     assert cfg.dataset.rows is None
     assert cfg.dataset.n_features_min <= cfg.dataset.n_features_max
-    assert cfg.dataset.target_parent_prior == "near_max_mixture"
-    assert cfg.dataset.target_parent_count_min == 1
-    assert cfg.dataset.target_parent_count_max is None
-    assert cfg.dataset.target_parent_near_max_band_min_fraction == pytest.approx(0.75)
-    assert cfg.dataset.target_parent_below_sqrt_prob == pytest.approx(0.05)
-    assert cfg.dataset.target_parent_midrange_prob == pytest.approx(0.20)
+    assert not hasattr(cfg.dataset, "target_parent_prior")
+    assert not hasattr(cfg.dataset, "target_parent_count_min")
+    assert not hasattr(cfg.dataset, "target_parent_count_max")
     assert cfg.output.shard_size > 0
     assert cfg.diagnostics.enabled is False
     assert cfg.diagnostics.histogram_bins > 0
@@ -1214,50 +1211,40 @@ def test_unused_missingness_parameters_are_allowed_with_disabled_mechanism() -> 
 
 
 @pytest.mark.parametrize(
-    ("field_name", "bad_value", "pattern"),
+    ("section_name", "field_name", "value", "pattern"),
     [
-        ("target_parent_prior", "sparse", r"dataset\.target_parent_prior must be"),
-        ("target_parent_count_min", 0, r"dataset\.target_parent_count_min must be an integer >= 1"),
-        ("target_parent_count_max", 0, r"dataset\.target_parent_count_max must be an integer >= 1"),
+        ("dataset", "target_parent_prior", "near_max_mixture", r"unexpected keyword argument"),
+        ("dataset", "target_parent_count_min", 1, r"unexpected keyword argument"),
+        ("dataset", "target_parent_count_max", 4, r"unexpected keyword argument"),
         (
+            "dataset",
             "target_parent_near_max_band_min_fraction",
-            0.0,
-            r"dataset\.target_parent_near_max_band_min_fraction must be a finite value in \(0, 1\]",
+            0.75,
+            r"unexpected keyword argument",
         ),
         (
+            "dataset",
             "target_parent_below_sqrt_prob",
-            -0.1,
-            r"dataset\.target_parent_below_sqrt_prob must be a finite value in \[0, 1\]",
+            0.05,
+            r"unexpected keyword argument",
         ),
         (
+            "dataset",
             "target_parent_midrange_prob",
-            1.1,
-            r"dataset\.target_parent_midrange_prob must be a finite value in \[0, 1\]",
+            0.20,
+            r"unexpected keyword argument",
         ),
+        ("diagnostics", "teacher_conditional_export", True, r"unexpected keyword argument"),
     ],
 )
-def test_target_parent_fields_validate_individual_bounds(
+def test_removed_target_head_and_teacher_export_fields_are_rejected(
+    section_name: str,
     field_name: str,
-    bad_value: object,
+    value: object,
     pattern: str,
 ) -> None:
-    with pytest.raises(ValueError, match=pattern):
-        GeneratorConfig.from_dict({"dataset": {field_name: bad_value}})
-
-
-def test_target_parent_probability_mass_must_fit_within_one() -> None:
-    with pytest.raises(
-        ValueError,
-        match=r"dataset\.target_parent_below_sqrt_prob \+ dataset\.target_parent_midrange_prob must be <= 1.0",
-    ):
-        GeneratorConfig.from_dict(
-            {
-                "dataset": {
-                    "target_parent_below_sqrt_prob": 0.6,
-                    "target_parent_midrange_prob": 0.5,
-                }
-            }
-        )
+    with pytest.raises(TypeError, match=pattern):
+        GeneratorConfig.from_dict({section_name: {field_name: value}})
 
 
 @pytest.mark.parametrize(
@@ -1265,11 +1252,6 @@ def test_target_parent_probability_mass_must_fit_within_one() -> None:
     [
         ("enabled", "yes", r"diagnostics\.enabled must be a boolean"),
         ("include_spearman", 1, r"diagnostics\.include_spearman must be a boolean"),
-        (
-            "teacher_conditional_export",
-            "true",
-            r"diagnostics\.teacher_conditional_export must be a boolean",
-        ),
     ],
 )
 def test_diagnostics_boolean_toggles_reject_non_bool_values(
@@ -1279,21 +1261,6 @@ def test_diagnostics_boolean_toggles_reject_non_bool_values(
 ) -> None:
     with pytest.raises(ValueError, match=pattern):
         GeneratorConfig.from_dict({"diagnostics": {field_name: bad_value}})
-
-
-def test_target_parent_count_max_must_not_be_less_than_min() -> None:
-    with pytest.raises(
-        ValueError,
-        match=r"dataset\.target_parent_count_min must be <= target_parent_count_max",
-    ):
-        GeneratorConfig.from_dict(
-            {
-                "dataset": {
-                    "target_parent_count_min": 4,
-                    "target_parent_count_max": 3,
-                }
-            }
-        )
 
 
 def test_shift_defaults_are_backward_compatible_when_shift_block_is_absent() -> None:

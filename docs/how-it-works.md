@@ -18,12 +18,11 @@ quality and realism controls.
 1. Derive deterministic seeds for run, dataset, and component scopes.
 1. Sample a dataset layout (feature types, assignments, graph size
    bounds).
-1. Sample a feature-only latent DAG and feature-to-node assignments.
+1. Sample a latent DAG plus feature-to-node and target-to-node assignments.
 1. Execute node pipelines in topological order to produce latent
    feature outputs.
 1. Convert latent feature outputs into complete `X_complete`.
-1. Generate `y` from an independently sampled
-   `p(y | X_complete)` conditional head.
+1. Convert one selected latent node into the emitted target `y`.
 1. Apply split checks and target postprocess, then optionally apply
    missingness as a joint observation process before emission.
 1. Emit `DatasetBundle` outputs; optionally persist shards and
@@ -40,8 +39,8 @@ tabular projection of that latent graph.
 
 - Latent nodes represent abstract causal variables.
 - Feature columns are assigned to latent nodes by sampled layout state.
-- The target is generated after feature postprocess by a separate
-  latent-complete-data conditional head.
+- The target is assigned to one latent node and emitted from that node's
+  converter stack.
 - Multiple columns can map to one node, and one node can influence many
   columns.
 - This decoupling allows rich causal interactions while preserving a
@@ -66,7 +65,6 @@ flowchart LR
         F1[feature_0 num]
         F2[feature_1 cat]
         F3[feature_2 num]
-        H["target head y|X_complete"]
         T[target]
     end
 
@@ -74,10 +72,7 @@ flowchart LR
     A -. mapping .-> F1
     A -. mapping .-> F2
     B -. mapping .-> F3
-    A --> H
-    B --> H
-    C --> H
-    H --> T
+    C -. target mapping .-> T
 
     %% Assign Classes
     class A,B,C latent
@@ -315,8 +310,7 @@ This section maps the runtime to the main execution phases and data flow.
     `sum | product | max | logsumexp`
 - Converter specs slice latent columns and emit feature values.
 - Unassigned feature slots are filled with sampled noise.
-- A separate latent-complete-data target head then generates raw targets from
-  the postprocessed complete feature matrix.
+- The selected target node emits raw targets through its target converter.
 
 ### 4) Quality, shift/noise controls, and postprocessing {#4-quality-shiftnoise-controls-and-postprocessing}
 
@@ -329,8 +323,8 @@ This section maps the runtime to the main execution phases and data flow.
 
 Current public prior behavior:
 
-- The shipped generator samples complete features first, then samples the
-  target from that complete feature table.
+- The shipped generator samples a latent DAG, emits features from node-assigned
+  converters, and emits the target from one selected latent node.
 - Optional missingness is applied afterward as an observation process over
   the emitted feature table.
 
@@ -347,7 +341,7 @@ Each bundle includes runtime metadata for lineage, deferred-filter
 status, shift, noise distribution, and resolved config snapshot.
 
 - `lineage` aligns emitted feature columns with DAG node assignments and
-  records the latent-complete-data target mode.
+  records the selected latent target node plus emitted target-relevance summary.
 - `requested_device`, `resolved_device`, and the reserved
   `device_fallback_reason` field are emitted for runtime observability.
 - Canonical generation outputs add `layout_mode`, `layout_plan_seed`,
@@ -388,8 +382,8 @@ flowchart TB
     Emit --> Walk
     Emit --> Assemble[assemble raw feature matrix]
     Assemble --> PostX[feature postprocess]
-    PostX --> TargetHead[apply complete-data target head]
-    TargetHead --> Missing[apply optional observation missingness]
+    PostX --> TargetNode[convert selected target node]
+    TargetNode --> Missing[apply optional observation missingness]
     Missing --> Out[[return emitted X + raw y + deferred filter metadata]]
 
     %% Assign Classes
@@ -415,8 +409,7 @@ These are related but distinct runtime surfaces.
 - **DAG adjacency**: upper-triangular parent-child matrix, `src -> dst`.
 - **node pipeline**: per-node transform and converter execution path.
 - **converter spec**: instruction for extracting observable feature slices.
-- **target head**: separately sampled conditional generator that maps the
-  realized complete feature table to raw targets.
+- **target node**: the latent DAG node selected to emit the raw target column.
 - **deferred filter**: ExtraTrees-based post-generation gate that rejects
   trivial small-shot tasks, pure garbage tasks, and optional structural
   no-path cases.

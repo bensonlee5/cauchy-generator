@@ -374,51 +374,6 @@ def _normalize_dataset_fields(dataset: DatasetConfig) -> None:
         value=dataset.n_features_max,
         minimum=1,
     )
-    normalized_target_parent_prior = str(dataset.target_parent_prior).strip().lower()
-    if normalized_target_parent_prior not in {"all_features", "near_max_mixture"}:
-        raise ValueError(
-            "dataset.target_parent_prior must be 'all_features' or 'near_max_mixture', "
-            f"got {dataset.target_parent_prior!r}."
-        )
-    dataset.target_parent_prior = normalized_target_parent_prior
-    dataset.target_parent_count_min = _validate_int_field(
-        field_name="dataset.target_parent_count_min",
-        value=dataset.target_parent_count_min,
-        minimum=1,
-    )
-    if dataset.target_parent_count_max is not None:
-        dataset.target_parent_count_max = _validate_int_field(
-            field_name="dataset.target_parent_count_max",
-            value=dataset.target_parent_count_max,
-            minimum=1,
-        )
-    dataset.target_parent_near_max_band_min_fraction = _validate_finite_float_field(
-        field_name="dataset.target_parent_near_max_band_min_fraction",
-        value=dataset.target_parent_near_max_band_min_fraction,
-        lo=0.0,
-        hi=1.0,
-        lo_inclusive=False,
-        hi_inclusive=True,
-        expectation="a finite value in (0, 1]",
-    )
-    dataset.target_parent_below_sqrt_prob = _validate_finite_float_field(
-        field_name="dataset.target_parent_below_sqrt_prob",
-        value=dataset.target_parent_below_sqrt_prob,
-        lo=0.0,
-        hi=1.0,
-        lo_inclusive=True,
-        hi_inclusive=True,
-        expectation="a finite value in [0, 1]",
-    )
-    dataset.target_parent_midrange_prob = _validate_finite_float_field(
-        field_name="dataset.target_parent_midrange_prob",
-        value=dataset.target_parent_midrange_prob,
-        lo=0.0,
-        hi=1.0,
-        lo_inclusive=True,
-        hi_inclusive=True,
-        expectation="a finite value in [0, 1]",
-    )
     dataset.max_categorical_cardinality = _validate_int_field(
         field_name="dataset.max_categorical_cardinality",
         value=dataset.max_categorical_cardinality,
@@ -620,11 +575,6 @@ def _normalize_diagnostics_fields(_diagnostics: DiagnosticsConfig) -> None:
         raise ValueError(
             "diagnostics.include_spearman must be a boolean, "
             f"got {_diagnostics.include_spearman!r}."
-        )
-    if not isinstance(_diagnostics.teacher_conditional_export, bool):
-        raise ValueError(
-            "diagnostics.teacher_conditional_export must be a boolean, "
-            f"got {_diagnostics.teacher_conditional_export!r}."
         )
 
 
@@ -1016,21 +966,6 @@ def _stage2_validate_dataset_constraints(dataset: DatasetConfig) -> None:
         max_value=dataset.n_features_max,
         max_label="n_features_max",
     )
-    if dataset.target_parent_count_max is not None:
-        _validate_min_max_pair(
-            name="dataset.target_parent_count_min",
-            min_value=dataset.target_parent_count_min,
-            max_value=dataset.target_parent_count_max,
-            max_label="target_parent_count_max",
-        )
-    target_parent_non_near_max_prob = float(dataset.target_parent_below_sqrt_prob) + float(
-        dataset.target_parent_midrange_prob
-    )
-    if target_parent_non_near_max_prob > 1.0:
-        raise ValueError(
-            "dataset.target_parent_below_sqrt_prob + dataset.target_parent_midrange_prob must "
-            f"be <= 1.0, got {target_parent_non_near_max_prob:.6f}."
-        )
     if dataset.categorical_ratio_min > dataset.categorical_ratio_max:
         raise ValueError(
             "dataset.categorical_ratio_min must be <= categorical_ratio_max, "
@@ -1344,12 +1279,6 @@ class DatasetConfig:
     rows: DatasetRowsSpec | None = None
     n_features_min: int = 16
     n_features_max: int = 64
-    target_parent_prior: str = "near_max_mixture"
-    target_parent_count_min: int = 1
-    target_parent_count_max: int | None = None
-    target_parent_near_max_band_min_fraction: float = 0.75
-    target_parent_below_sqrt_prob: float = 0.05
-    target_parent_midrange_prob: float = 0.20
     n_classes_min: int = 2
     n_classes_max: int = 10
     categorical_ratio_min: float = 0.0
@@ -1438,7 +1367,6 @@ class OutputConfig:
 class DiagnosticsConfig:
     enabled: bool = False
     include_spearman: bool = False
-    teacher_conditional_export: bool = False
     histogram_bins: int = 10
     quantiles: list[float] = field(default_factory=lambda: [0.05, 0.25, 0.50, 0.75, 0.95])
     underrepresented_threshold: float = 0.5

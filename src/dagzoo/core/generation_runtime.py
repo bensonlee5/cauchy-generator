@@ -33,8 +33,6 @@ from dagzoo.postprocess.postprocess import (
 from dagzoo.rng import KeyedRng
 from dagzoo.types import DatasetBundle
 
-_LABEL_TARGET_LOG_LOSS_PER_TEST_CELL = "label-target log loss per test cell"
-
 
 @dataclass(slots=True)
 class _FixedSchemaFinalizationContext:
@@ -271,7 +269,6 @@ def _build_bundle_metadata(
     noise_runtime_selection: NoiseRuntimeSelection,
     missingness_summary: dict[str, Any] | None,
     class_structure: dict[str, Any] | None,
-    teacher_conditionals_metadata: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Build emitted dataset metadata for scalar and batched finalization paths."""
 
@@ -298,8 +295,7 @@ def _build_bundle_metadata(
                 "filter_rejection_rate": None,
             },
             "prior": {
-                "factorization": "independent_p_x_complete_and_p_y_given_x_complete",
-                "target_head": "latent_complete_x_conditional",
+                "target_derivation": "tabiclv2_latent_node",
                 "feature_generator": "latent_dag",
                 "missingness_stage": "post_target_observation",
                 "classification_validity_policy": "retry_only",
@@ -309,185 +305,11 @@ def _build_bundle_metadata(
             "config": copy.deepcopy(context.config_payload),
         }
     )
-    diagnostics_payload = context.config_payload.get("diagnostics")
-    teacher_export_enabled = bool(
-        isinstance(diagnostics_payload, dict)
-        and diagnostics_payload.get("teacher_conditional_export")
-    )
-    metadata["posterior_predictive"] = {
-        "factorization": metadata["prior"]["factorization"],
-        "teacher_conditional_export_enabled": teacher_export_enabled,
-        "teacher_conditionals_available": teacher_conditionals_metadata is not None,
-        "metric_definition": _LABEL_TARGET_LOG_LOSS_PER_TEST_CELL,
-    }
     if missingness_summary is not None:
         metadata["missingness"] = missingness_summary
     if class_structure is not None:
         metadata["class_structure"] = class_structure
-    if teacher_conditionals_metadata is not None:
-        metadata["teacher_conditionals"] = teacher_conditionals_metadata
-    assignments = metadata.get("lineage", {}).get("assignments")
-    if isinstance(assignments, dict):
-        target_parent_features = assignments.get("target_parent_features")
-        raw_feature_to_node = assignments.get("feature_to_node")
-        if isinstance(target_parent_features, list) and isinstance(raw_feature_to_node, list):
-            metadata["target_parent_summary"] = {
-                "count": int(assignments.get("target_parent_count", len(target_parent_features))),
-                "fraction": float(
-                    assignments.get(
-                        "target_parent_fraction",
-                        float(len(target_parent_features))
-                        / float(max(1, len(raw_feature_to_node))),
-                    )
-                ),
-                "prior": assignments.get("target_parent_prior"),
-                "regime": assignments.get("target_parent_regime"),
-                "sqrt_threshold": assignments.get("target_parent_sqrt_threshold"),
-                "features": [int(value) for value in target_parent_features],
-            }
     return metadata
-
-
-def _teacher_conditionals_metadata(
-    *,
-    y_test: torch.Tensor,
-    aux_meta: dict[str, Any],
-) -> dict[str, Any] | None:
-    raw_probs = aux_meta.get("teacher_conditional_test_probs")
-    raw_labels = aux_meta.get("teacher_conditional_class_labels")
-    if not isinstance(raw_probs, list) or not raw_probs:
-        return None
-    if not isinstance(raw_labels, list) or not raw_labels:
-        return None
-    probs = torch.as_tensor(raw_probs, dtype=torch.float32)
-    if probs.ndim != 2:
-        return None
-    if int(probs.shape[0]) != int(y_test.shape[0]):
-        return None
-    if int(probs.shape[1]) != len(raw_labels):
-        return None
-    labels = [int(label) for label in raw_labels]
-    if labels != list(range(len(labels))):
-        return None
-    y_test_cpu = y_test.to(device="cpu", dtype=torch.int64)
-    if y_test_cpu.numel() > 0 and (
-        int(torch.min(y_test_cpu).item()) < 0 or int(torch.max(y_test_cpu).item()) >= len(labels)
-    ):
-        return None
-    selected = probs.gather(1, y_test_cpu.unsqueeze(1)).squeeze(1).clamp_min(1e-12)
-    optimal_log_loss = float((-torch.log(selected)).mean().item())
-    return {
-        "schema_version": 1,
-        "target_split": "test",
-        "class_labels": labels,
-        "test_probs": probs.tolist(),
-        "optimal_log_loss_per_test_cell": optimal_log_loss,
-    }
-
-
-def _remap_teacher_conditionals_to_emitted_labels(
-    *,
-    aux_meta: dict[str, Any],
-    train_idx: torch.Tensor,
-    test_idx: torch.Tensor,
-    y_train_raw: torch.Tensor,
-    y_test_raw: torch.Tensor,
-    y_train_emitted: torch.Tensor,
-    y_test_emitted: torch.Tensor,
-) -> None:
-    """Align teacher-conditionals with emitted postprocessed classification labels."""
-
-    raw_probs = aux_meta.get("teacher_conditional_full_probs")
-    raw_labels = aux_meta.get("teacher_conditional_class_labels")
-    if not isinstance(raw_probs, list) or not raw_probs:
-        return
-    if not isinstance(raw_labels, list) or not raw_labels:
-        return
-
-    probs = torch.as_tensor(raw_probs, dtype=torch.float32)
-    if probs.ndim != 2:
-        raise ValueError("teacher_conditional_full_probs must be a rank-2 array.")
-
-    labels = [int(label) for label in raw_labels]
-    if int(probs.shape[1]) != len(labels):
-        raise ValueError(
-            "teacher_conditional_full_probs column count must match teacher_conditional_class_labels."
-        )
-
-    train_idx_cpu = train_idx.to(device="cpu", dtype=torch.int64)
-    test_idx_cpu = test_idx.to(device="cpu", dtype=torch.int64)
-    n_total = int(train_idx_cpu.numel() + test_idx_cpu.numel())
-    if int(probs.shape[0]) != n_total:
-        raise ValueError(
-            "teacher_conditional_full_probs row count must match the realized dataset row count."
-        )
-
-    raw_full = torch.empty(n_total, dtype=torch.int64)
-    emitted_full = torch.empty(n_total, dtype=torch.int64)
-    raw_full[train_idx_cpu] = y_train_raw.to(device="cpu", dtype=torch.int64)
-    raw_full[test_idx_cpu] = y_test_raw.to(device="cpu", dtype=torch.int64)
-    emitted_full[train_idx_cpu] = y_train_emitted.to(device="cpu", dtype=torch.int64)
-    emitted_full[test_idx_cpu] = y_test_emitted.to(device="cpu", dtype=torch.int64)
-
-    emitted_unique = torch.unique(emitted_full, sorted=True).tolist()
-    if emitted_unique != list(range(len(emitted_unique))):
-        raise ValueError("Emitted classification labels must be contiguous 0..K-1.")
-
-    raw_to_emitted: dict[int, int] = {}
-    for raw_label, emitted_label in zip(raw_full.tolist(), emitted_full.tolist(), strict=False):
-        existing = raw_to_emitted.get(raw_label)
-        if existing is not None and existing != emitted_label:
-            raise ValueError(
-                "One realized raw class mapped to multiple emitted labels during teacher export."
-            )
-        raw_to_emitted[raw_label] = emitted_label
-
-    raw_label_to_column = {label: index for index, label in enumerate(labels)}
-    raw_labels_by_emitted: list[int | None] = [None] * len(emitted_unique)
-    for raw_label, emitted_label in raw_to_emitted.items():
-        if raw_label not in raw_label_to_column:
-            raise ValueError(
-                "Teacher conditional metadata is missing a realized raw class label column."
-            )
-        raw_labels_by_emitted[emitted_label] = raw_label
-    resolved_raw_labels: list[int] = []
-    for raw_label in raw_labels_by_emitted:
-        if raw_label is None:
-            raise ValueError(
-                "Teacher conditional metadata is missing an emitted class label mapping."
-            )
-        resolved_raw_labels.append(raw_label)
-
-    selected_columns = torch.tensor(
-        [raw_label_to_column[raw_label] for raw_label in resolved_raw_labels],
-        dtype=torch.long,
-    )
-    remapped = probs.index_select(1, selected_columns)
-    if not torch.all(torch.isfinite(remapped)):
-        raise ValueError("Teacher conditional probabilities must be finite.")
-
-    row_sums = remapped.sum(dim=1, keepdim=True)
-    if not torch.all(torch.isfinite(row_sums)) or torch.any(row_sums <= 0):
-        raise ValueError(
-            "Teacher conditional probabilities must retain a positive finite mass after remap."
-        )
-
-    remapped = remapped / row_sums
-    aux_meta["teacher_conditional_full_probs"] = remapped.tolist()
-    aux_meta["teacher_conditional_class_labels"] = list(range(len(raw_labels_by_emitted)))
-
-
-def _attach_teacher_conditionals_for_test_split(
-    aux_meta: dict[str, Any],
-    *,
-    test_idx: torch.Tensor,
-) -> None:
-    raw_probs = aux_meta.get("teacher_conditional_full_probs")
-    if not isinstance(raw_probs, list) or not raw_probs:
-        return
-    probs = torch.as_tensor(raw_probs, dtype=torch.float32)
-    test_probs = probs.index_select(0, test_idx.to(device="cpu", dtype=torch.int64))
-    aux_meta["teacher_conditional_test_probs"] = test_probs.tolist()
 
 
 def _finalize_processed_bundle(
@@ -554,10 +376,6 @@ def _finalize_processed_bundle(
         noise_runtime_selection=noise_runtime_selection,
         missingness_summary=missingness_summary,
         class_structure=class_structure,
-        teacher_conditionals_metadata=_teacher_conditionals_metadata(
-            y_test=y_test,
-            aux_meta=aux_meta,
-        ),
     )
     return DatasetBundle(
         X_train=x_train,
@@ -631,10 +449,6 @@ def _finalize_generated_chunk_preserve_schema(
         train_idx_list.append(train_idx)
         test_idx_list.append(test_idx)
         postprocess_roots.append(dataset_root.keyed("attempt", attempt, "postprocess"))
-        _attach_teacher_conditionals_for_test_split(
-            aux_meta_batch[batch_index],
-            test_idx=test_idx,
-        )
 
     if not valid_positions:
         return results
@@ -795,17 +609,6 @@ def _finalize_generated_tensors(
             feature_types=feature_types,
             feature_index_map=feature_index_map,
         )
-    if config.dataset.task == "classification":
-        _remap_teacher_conditionals_to_emitted_labels(
-            aux_meta=aux_meta,
-            train_idx=train_idx,
-            test_idx=test_idx,
-            y_train_raw=y_train_t,
-            y_test_raw=y_test_t,
-            y_train_emitted=y_train,
-            y_test_emitted=y_test,
-        )
-    _attach_teacher_conditionals_for_test_split(aux_meta, test_idx=test_idx)
     return _finalize_processed_bundle(
         config,
         layout,

@@ -9,6 +9,7 @@ from dagzoo.filtering.extra_trees_filter import (
     _apply_extra_trees_filter_numpy,
     _lineage_has_feature_target_path,
 )
+from dagzoo.io.lineage_schema import LINEAGE_SCHEMA_VERSION_DENSE
 
 
 def _make_regression_split(
@@ -69,22 +70,39 @@ def _make_classification_split(
 def _dense_lineage(
     *,
     feature_to_node: list[int],
-    target_to_node: int | None = None,
-    target_mode: str | None = None,
+    target_to_node: int,
     adjacency: list[list[int]],
 ):
+    def _ancestor_nodes_for_target() -> set[int]:
+        ancestors = {int(target_to_node)}
+        frontier = [int(target_to_node)]
+        while frontier:
+            node_index = int(frontier.pop())
+            for parent_index, row in enumerate(adjacency):
+                if int(row[node_index]) == 0 or int(parent_index) in ancestors:
+                    continue
+                ancestors.add(int(parent_index))
+                frontier.append(int(parent_index))
+        return ancestors
+
+    relevant_nodes = _ancestor_nodes_for_target()
+    relevant_features = [
+        feature_index
+        for feature_index, node_index in enumerate(feature_to_node)
+        if int(node_index) in relevant_nodes
+    ]
     assignments: dict[str, object] = {
         "feature_to_node": feature_to_node,
+        "target_to_node": int(target_to_node),
+        "target_relevant_features": relevant_features,
+        "target_relevant_feature_count": len(relevant_features),
+        "target_relevant_feature_fraction": (
+            float(len(relevant_features)) / float(len(feature_to_node)) if feature_to_node else 0.0
+        ),
     }
-    if target_mode is not None:
-        assignments["target_mode"] = target_mode
-    elif target_to_node is not None:
-        assignments["target_to_node"] = target_to_node
-    else:
-        raise ValueError("Either target_to_node or target_mode must be provided.")
     return {
         "schema_name": "dagzoo.dag_lineage",
-        "schema_version": "1.0.0",
+        "schema_version": LINEAGE_SCHEMA_VERSION_DENSE,
         "graph": {
             "n_nodes": len(adjacency),
             "adjacency": adjacency,
@@ -355,10 +373,10 @@ def test_extra_trees_filter_rejects_lineage_without_feature_target_path(
     assert details["lineage_veto_applied"] is True
 
 
-def test_lineage_veto_accepts_latent_complete_conditional_target_mode() -> None:
+def test_lineage_veto_accepts_when_feature_nodes_reach_target_node() -> None:
     lineage = _dense_lineage(
         feature_to_node=[0, 1, 1],
-        target_mode="latent_complete_x_conditional",
+        target_to_node=2,
         adjacency=[
             [0, 1, 1],
             [0, 0, 1],

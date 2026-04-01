@@ -345,28 +345,27 @@ not the deployment source of truth.
 
 ______________________________________________________________________
 
-## 9. Factorized complete-data prior semantics
+## 9. Latent-node target semantics
 
 ### Context
 
-`dagzoo` now documents a default prior where the latent DAG generates complete
-features first, the target is sampled from that complete feature table, and
-optional missingness is applied later as an observation process. This is an
-important internal modeling choice, but the research framing around it is too
-deep for the first-read user path in `README.md` and the public docs.
+`dagzoo` now documents a default prior where the latent DAG emits both the
+feature table and the target: features come from node-assigned converters, the
+target comes from one selected latent node, and optional missingness is applied
+later as an observation process over emitted features. This is an important
+internal modeling choice, but the research framing around it is too deep for
+the first-read user path in `README.md` and the public docs.
 
 ### Decision
 
 Keep the public docs focused on the observable behavior of the shipped prior:
 
-- latent DAG -> complete features `X_complete`
-- separate target head samples `y | X_complete`
+- latent DAG -> emitted features
+- selected latent node -> emitted target
 - optional missingness masks the emitted feature table afterward
 
 Keep the deeper research framing in internal docs only:
 
-- the default prior is factorized in the sense of Nagler section 2.2 when `X`
-  is interpreted as complete covariates
 - `localization_mode` and `n_adaptation` remain `none` in the shipped recipes
 - the current implementation should not be read as making direct monotone
   variance-or-bias-versus-`n` claims
@@ -385,8 +384,8 @@ Keep the deeper research framing in internal docs only:
 
 ### Alternatives considered
 
-- **Keep the full theory note in user-facing docs** — rejected because it makes
-  the first-read path feel like maintainer commentary.
+- **Keep a separate observed-feature target-head story in user-facing docs** —
+  rejected because it no longer matches the actual generator.
 - **Delete the caveat entirely** — rejected because the distinction matters for
   future prior design and internal review.
 

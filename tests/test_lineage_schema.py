@@ -66,6 +66,16 @@ def _dense_lineage_payload_strategy(draw: st.DrawFn) -> dict[str, Any]:
             max_size=feature_count,
         )
     )
+    relevant_features = sorted(
+        draw(
+            st.lists(
+                st.integers(min_value=0, max_value=max(0, feature_count - 1)),
+                unique=True,
+                min_size=0,
+                max_size=feature_count,
+            )
+        )
+    )
     return {
         "schema_name": LINEAGE_SCHEMA_NAME,
         "schema_version": LINEAGE_SCHEMA_VERSION,
@@ -76,6 +86,11 @@ def _dense_lineage_payload_strategy(draw: st.DrawFn) -> dict[str, Any]:
         "assignments": {
             "feature_to_node": feature_to_node,
             "target_to_node": draw(st.integers(min_value=0, max_value=n_nodes - 1)),
+            "target_relevant_features": relevant_features,
+            "target_relevant_feature_count": len(relevant_features),
+            "target_relevant_feature_fraction": (
+                float(len(relevant_features)) / float(feature_count) if feature_count > 0 else 0.0
+            ),
         },
     }
 
@@ -90,6 +105,16 @@ def _compact_lineage_payload_strategy(draw: st.DrawFn) -> dict[str, Any]:
             st.integers(min_value=0, max_value=n_nodes - 1),
             min_size=feature_count,
             max_size=feature_count,
+        )
+    )
+    relevant_features = sorted(
+        draw(
+            st.lists(
+                st.integers(min_value=0, max_value=max(0, feature_count - 1)),
+                unique=True,
+                min_size=0,
+                max_size=feature_count,
+            )
         )
     )
     return {
@@ -111,6 +136,11 @@ def _compact_lineage_payload_strategy(draw: st.DrawFn) -> dict[str, Any]:
         "assignments": {
             "feature_to_node": feature_to_node,
             "target_to_node": draw(st.integers(min_value=0, max_value=n_nodes - 1)),
+            "target_relevant_features": relevant_features,
+            "target_relevant_feature_count": len(relevant_features),
+            "target_relevant_feature_fraction": (
+                float(len(relevant_features)) / float(feature_count) if feature_count > 0 else 0.0
+            ),
         },
     }
 
@@ -131,6 +161,9 @@ def _valid_lineage_payload() -> dict[str, Any]:
         "assignments": {
             "feature_to_node": [0, 1, 1, 2, 3],
             "target_to_node": 2,
+            "target_relevant_features": [0, 1, 2, 3],
+            "target_relevant_feature_count": 4,
+            "target_relevant_feature_fraction": 0.8,
         },
     }
 
@@ -155,23 +188,11 @@ def _valid_compact_lineage_payload() -> dict[str, Any]:
         "assignments": {
             "feature_to_node": [0, 1, 1, 2, 3],
             "target_to_node": 2,
+            "target_relevant_features": [0, 1, 2, 3],
+            "target_relevant_feature_count": 4,
+            "target_relevant_feature_fraction": 0.8,
         },
     }
-
-
-def _lineage_payload_with_target_parent_metadata() -> dict[str, Any]:
-    payload = _valid_lineage_payload()
-    payload["assignments"].update(
-        {
-            "target_parent_features": [1, 2, 4],
-            "target_parent_count": 3,
-            "target_parent_fraction": 3 / 5,
-            "target_parent_prior": "near_max_mixture",
-            "target_parent_regime": "near_max",
-            "target_parent_sqrt_threshold": 2,
-        }
-    )
-    return payload
 
 
 def test_validate_lineage_payload_accepts_valid_payload() -> None:
@@ -182,33 +203,60 @@ def test_validate_lineage_payload_accepts_valid_compact_payload() -> None:
     validate_lineage_payload(_valid_compact_lineage_payload())
 
 
-@pytest.mark.parametrize(
-    "target_mode",
-    ["observed_x_conditional", "latent_complete_x_conditional"],
-)
-def test_validate_lineage_payload_accepts_conditional_target_modes(target_mode: str) -> None:
+@pytest.mark.parametrize("schema_version", ["1.0.0", "1.1.0", "1.2.0", "1.3.0"])
+def test_validate_lineage_payload_rejects_unsupported_legacy_schema_versions(
+    schema_version: str,
+) -> None:
     payload = _valid_lineage_payload()
-    payload["assignments"] = {
-        "feature_to_node": [0, 1, 1, 2, 3],
-        "target_mode": target_mode,
-    }
-
-    validate_lineage_payload(payload)
-
-
-def test_validate_lineage_payload_accepts_target_parent_metadata() -> None:
-    payload = _lineage_payload_with_target_parent_metadata()
-
-    validate_lineage_payload(payload)
-
-
-def test_validate_lineage_payload_rejects_partial_target_parent_metadata() -> None:
-    payload = _valid_lineage_payload()
-    payload["assignments"]["target_parent_count"] = 1
+    payload["schema_version"] = schema_version
 
     with pytest.raises(
         LineageValidationError,
-        match=r"lineage\.assignments: missing required target-parent field\(s\):",
+        match=rf"lineage\.schema_version: unsupported version '{schema_version}'",
+    ):
+        validate_lineage_payload(payload)
+
+
+def test_validate_lineage_payload_rejects_missing_target_relevant_fields() -> None:
+    payload = _valid_lineage_payload()
+    del payload["assignments"]["target_relevant_feature_count"]
+
+    with pytest.raises(
+        LineageValidationError,
+        match=r"lineage\.assignments: missing required key\(s\): target_relevant_feature_count",
+    ):
+        validate_lineage_payload(payload)
+
+
+def test_validate_lineage_payload_rejects_legacy_target_parent_fields_in_current_schema() -> None:
+    payload = _valid_lineage_payload()
+    payload["assignments"]["target_parent_features"] = [1, 2, 4]
+
+    with pytest.raises(
+        LineageValidationError,
+        match=r"lineage\.assignments: unknown key\(s\): target_parent_features",
+    ):
+        validate_lineage_payload(payload)
+
+
+def test_validate_lineage_payload_rejects_legacy_target_mode_field() -> None:
+    payload = _valid_lineage_payload()
+    payload["assignments"]["target_mode"] = "latent_complete_x_conditional"
+
+    with pytest.raises(
+        LineageValidationError,
+        match=r"lineage\.assignments: unknown key\(s\): target_mode",
+    ):
+        validate_lineage_payload(payload)
+
+
+def test_validate_lineage_payload_rejects_inconsistent_target_relevant_fraction() -> None:
+    payload = _valid_lineage_payload()
+    payload["assignments"]["target_relevant_feature_fraction"] = 0.2
+
+    with pytest.raises(
+        LineageValidationError,
+        match=r"lineage\.assignments\.target_relevant_feature_fraction: must equal target_relevant_feature_count / len\(feature_to_node\)",
     ):
         validate_lineage_payload(payload)
 
@@ -217,88 +265,53 @@ def test_validate_lineage_payload_rejects_partial_target_parent_metadata() -> No
     ("field_updates", "pattern"),
     [
         (
-            {"target_parent_features": "bad"},
-            r"lineage\.assignments\.target_parent_features: must be a list of feature indices",
+            {"target_relevant_features": "bad"},
+            r"lineage\.assignments\.target_relevant_features: must be a list of feature indices",
         ),
         (
-            {"target_parent_features": [1, "two", 4]},
+            {"target_relevant_features": [1, "two", 4]},
             (
-                r"lineage\.assignments\.target_parent_features\[1\]: "
+                r"lineage\.assignments\.target_relevant_features\[1\]: "
                 r"must be an integer feature index"
             ),
         ),
         (
-            {"target_parent_features": [1, 5]},
-            r"lineage\.assignments\.target_parent_features\[1\]: must be in range \[0, 4\]",
+            {"target_relevant_features": [1, 5]},
+            r"lineage\.assignments\.target_relevant_features\[1\]: must be in range \[0, 4\]",
         ),
         (
-            {"target_parent_features": [1, 1, 4]},
+            {"target_relevant_features": [1, 1, 4]},
             (
-                r"lineage\.assignments\.target_parent_features\[1\]: "
+                r"lineage\.assignments\.target_relevant_features\[1\]: "
                 r"must be strictly increasing and unique"
             ),
         ),
         (
-            {"target_parent_count": "3"},
-            r"lineage\.assignments\.target_parent_count: must be an integer",
+            {"target_relevant_feature_count": "3"},
+            r"lineage\.assignments\.target_relevant_feature_count: must be an integer",
         ),
         (
-            {"target_parent_count": 2},
-            r"lineage\.assignments\.target_parent_count: must equal len\(target_parent_features\)",
+            {"target_relevant_feature_count": 2},
+            r"lineage\.assignments\.target_relevant_feature_count: must equal len\(target_relevant_features\)",
         ),
         (
-            {"target_parent_fraction": "0.6"},
-            r"lineage\.assignments\.target_parent_fraction: must be a finite ratio in \[0, 1\]",
+            {"target_relevant_feature_fraction": "0.8"},
+            r"lineage\.assignments\.target_relevant_feature_fraction: must be a finite ratio in \[0, 1\]",
         ),
         (
-            {"target_parent_fraction": 1.1},
-            r"lineage\.assignments\.target_parent_fraction: must be a finite ratio in \[0, 1\]",
-        ),
-        (
-            {"target_parent_prior": 7},
-            r"lineage\.assignments\.target_parent_prior: must be a string",
-        ),
-        (
-            {"target_parent_prior": "sparse"},
-            r"lineage\.assignments\.target_parent_prior: must be one of:",
-        ),
-        (
-            {"target_parent_regime": 7},
-            r"lineage\.assignments\.target_parent_regime: must be a string",
-        ),
-        (
-            {"target_parent_regime": "dense"},
-            r"lineage\.assignments\.target_parent_regime: must be one of:",
-        ),
-        (
-            {"target_parent_sqrt_threshold": "2"},
-            r"lineage\.assignments\.target_parent_sqrt_threshold: must be an integer",
-        ),
-        (
-            {"target_parent_sqrt_threshold": 0},
-            r"lineage\.assignments\.target_parent_sqrt_threshold: must be in range \[1, 5\]",
+            {"target_relevant_feature_fraction": 1.1},
+            r"lineage\.assignments\.target_relevant_feature_fraction: must be a finite ratio in \[0, 1\]",
         ),
     ],
 )
-def test_validate_lineage_payload_rejects_invalid_target_parent_metadata(
+def test_validate_lineage_payload_rejects_invalid_target_relevance_metadata(
     field_updates: dict[str, object],
     pattern: str,
 ) -> None:
-    payload = _lineage_payload_with_target_parent_metadata()
+    payload = _valid_lineage_payload()
     payload["assignments"].update(field_updates)
 
     with pytest.raises(LineageValidationError, match=pattern):
-        validate_lineage_payload(payload)
-
-
-def test_validate_lineage_payload_rejects_inconsistent_target_parent_fraction() -> None:
-    payload = _lineage_payload_with_target_parent_metadata()
-    payload["assignments"]["target_parent_fraction"] = 0.2
-
-    with pytest.raises(
-        LineageValidationError,
-        match=r"lineage\.assignments\.target_parent_fraction: must equal target_parent_count / len\(feature_to_node\)",
-    ):
         validate_lineage_payload(payload)
 
 

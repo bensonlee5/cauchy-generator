@@ -38,13 +38,10 @@ from dagzoo.core.fixed_layout.runtime import (
     prepare_canonical_fixed_layout_run,
 )
 from dagzoo.core.generation_runtime import (
-    _attach_teacher_conditionals_for_test_split,
     _build_fixed_schema_finalization_context,
     _finalize_generated_chunk_preserve_schema,
     _finalize_generated_tensors,
-    _remap_teacher_conditionals_to_emitted_labels,
     _resolve_split_indices,
-    _teacher_conditionals_metadata,
 )
 from dagzoo.core.layout import _sample_layout
 from dagzoo.core.layout_types import LayoutPlan
@@ -106,7 +103,6 @@ def _layout_stub(
     feature_node_assignment: list[int],
     target_node_assignment: int | None = None,
 ) -> LayoutPlan:
-    _ = target_node_assignment
     graph_edges = int(adjacency.to(dtype=torch.int64).sum().item())
     n_features = len(feature_types)
     cat_idx = [idx for idx, kind in enumerate(feature_types) if kind == "cat"]
@@ -127,13 +123,7 @@ def _layout_stub(
         graph_edge_density=graph_edge_density,
         adjacency=adjacency,
         feature_node_assignment=list(feature_node_assignment),
-        target_parent_features=list(range(n_features)),
-        target_parent_prior="all_features",
-        target_parent_regime="all_features",
-        target_parent_sqrt_threshold=max(
-            1,
-            min(n_features, int(math.floor(math.sqrt(max(1, n_features))))),
-        ),
+        target_to_node=0 if target_node_assignment is None else int(target_node_assignment),
     )
 
 
@@ -288,12 +278,9 @@ def test_generate_batch_with_plan_iter_batches_steering_missingness_changes(
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
-                        "target_parent_features": [0, 1],
-                        "target_parent_count": 2,
-                        "target_parent_fraction": 1.0,
-                        "target_parent_prior": "all_features",
-                        "target_parent_regime": "all_features",
-                        "target_parent_sqrt_threshold": 1,
+                        "target_relevant_features": [0, 1],
+                        "target_relevant_feature_count": 2,
+                        "target_relevant_feature_fraction": 1.0,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -538,12 +525,9 @@ def test_generate_batch_with_plan_iter_batches_noise_only_steering_by_cohort(
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
-                        "target_parent_features": [0, 1],
-                        "target_parent_count": 2,
-                        "target_parent_fraction": 1.0,
-                        "target_parent_prior": "all_features",
-                        "target_parent_regime": "all_features",
-                        "target_parent_sqrt_threshold": 1,
+                        "target_relevant_features": [0, 1],
+                        "target_relevant_feature_count": 2,
+                        "target_relevant_feature_fraction": 1.0,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -784,12 +768,9 @@ def test_generate_batch_with_plan_iter_batches_graph_steering_by_effective_plan(
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
-                        "target_parent_features": [0, 1],
-                        "target_parent_count": 2,
-                        "target_parent_fraction": 1.0,
-                        "target_parent_prior": "all_features",
-                        "target_parent_regime": "all_features",
-                        "target_parent_sqrt_threshold": 1,
+                        "target_relevant_features": [0, 1],
+                        "target_relevant_feature_count": 2,
+                        "target_relevant_feature_fraction": 1.0,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -1022,12 +1003,9 @@ def test_generate_batch_with_plan_iter_classification_steering_captures_split_fa
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
-                        "target_parent_features": [0, 1],
-                        "target_parent_count": 2,
-                        "target_parent_fraction": 1.0,
-                        "target_parent_prior": "all_features",
-                        "target_parent_regime": "all_features",
-                        "target_parent_sqrt_threshold": 1,
+                        "target_relevant_features": [0, 1],
+                        "target_relevant_feature_count": 2,
+                        "target_relevant_feature_fraction": 1.0,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -1301,12 +1279,9 @@ def test_generate_batch_with_plan_iter_dynamic_steering_uses_retry_attempt_plan_
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
-                        "target_parent_features": [0, 1],
-                        "target_parent_count": 2,
-                        "target_parent_fraction": 1.0,
-                        "target_parent_prior": "all_features",
-                        "target_parent_regime": "all_features",
-                        "target_parent_sqrt_threshold": 1,
+                        "target_relevant_features": [0, 1],
+                        "target_relevant_feature_count": 2,
+                        "target_relevant_feature_fraction": 1.0,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -1546,12 +1521,9 @@ def test_generate_batch_with_plan_iter_dynamic_steering_rejects_schema_mismatch(
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
-                        "target_parent_features": [0, 1],
-                        "target_parent_count": 2,
-                        "target_parent_fraction": 1.0,
-                        "target_parent_prior": "all_features",
-                        "target_parent_regime": "all_features",
-                        "target_parent_sqrt_threshold": 1,
+                        "target_relevant_features": [0, 1],
+                        "target_relevant_feature_count": 2,
+                        "target_relevant_feature_fraction": 1.0,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -1771,12 +1743,9 @@ def test_generate_batch_with_plan_iter_dynamic_steering_requires_all_grouped_off
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
-                        "target_parent_features": [0, 1],
-                        "target_parent_count": 2,
-                        "target_parent_fraction": 1.0,
-                        "target_parent_prior": "all_features",
-                        "target_parent_regime": "all_features",
-                        "target_parent_sqrt_threshold": 1,
+                        "target_relevant_features": [0, 1],
+                        "target_relevant_feature_count": 2,
+                        "target_relevant_feature_fraction": 1.0,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -2021,40 +1990,29 @@ def test_generate_one_lineage_assignment_lengths_and_bounds() -> None:
 
     feature_to_node = assignments["feature_to_node"]
     assert len(feature_to_node) == int(bundle.metadata["n_features"])
-    assert assignments["target_mode"] == "latent_complete_x_conditional"
-    target_parent_features = assignments["target_parent_features"]
-    assert assignments["target_parent_count"] == len(target_parent_features)
-    assert assignments["target_parent_prior"] == "near_max_mixture"
-    assert assignments["target_parent_regime"] in {
-        "all_features",
-        "sparse_tail",
-        "midrange",
-        "near_max",
-    }
-    assert target_parent_features == sorted(target_parent_features)
-    assert assignments["target_parent_sqrt_threshold"] == int(
-        math.floor(math.sqrt(int(bundle.metadata["n_features"])))
-    )
-    assert assignments["target_parent_fraction"] == pytest.approx(
-        float(len(target_parent_features)) / float(len(feature_to_node))
+    target_to_node = int(assignments["target_to_node"])
+    assert 0 <= target_to_node < n_nodes
+    target_relevant_features = assignments["target_relevant_features"]
+    assert target_relevant_features == sorted(target_relevant_features)
+    assert assignments["target_relevant_feature_count"] == len(target_relevant_features)
+    assert assignments["target_relevant_feature_fraction"] == pytest.approx(
+        float(len(target_relevant_features)) / float(len(feature_to_node))
+        if feature_to_node
+        else 0.0
     )
     for node_index in feature_to_node:
         assert 0 <= int(node_index) < n_nodes
 
 
-def test_generate_one_emits_target_parent_summary_metadata() -> None:
+def test_generate_one_emits_target_derivation_metadata() -> None:
     cfg = _tiny_config()
     bundle = generate_one(cfg, seed=2026, device="cpu")
 
-    lineage_assignments = bundle.metadata["lineage"]["assignments"]
-    summary = bundle.metadata["target_parent_summary"]
-
-    assert summary["count"] == lineage_assignments["target_parent_count"]
-    assert summary["fraction"] == pytest.approx(lineage_assignments["target_parent_fraction"])
-    assert summary["prior"] == lineage_assignments["target_parent_prior"]
-    assert summary["regime"] == lineage_assignments["target_parent_regime"]
-    assert summary["sqrt_threshold"] == lineage_assignments["target_parent_sqrt_threshold"]
-    assert summary["features"] == lineage_assignments["target_parent_features"]
+    prior = bundle.metadata["prior"]
+    assert prior["target_derivation"] == "tabiclv2_latent_node"
+    assert "posterior_predictive" not in bundle.metadata
+    assert "teacher_conditionals" not in bundle.metadata
+    assert "target_parent_summary" not in bundle.metadata
 
 
 def test_generate_one_emits_latent_complete_prior_metadata() -> None:
@@ -2063,211 +2021,13 @@ def test_generate_one_emits_latent_complete_prior_metadata() -> None:
     prior = bundle.metadata["prior"]
 
     assert prior == {
-        "factorization": "independent_p_x_complete_and_p_y_given_x_complete",
-        "target_head": "latent_complete_x_conditional",
+        "target_derivation": "tabiclv2_latent_node",
         "feature_generator": "latent_dag",
         "missingness_stage": "post_target_observation",
         "classification_validity_policy": "retry_only",
         "localization_mode": "none",
         "n_adaptation": "none",
     }
-
-
-def test_generate_one_can_export_teacher_conditionals() -> None:
-    cfg = _tiny_config()
-    cfg.diagnostics.teacher_conditional_export = True
-    bundle = generate_one(cfg, seed=1414, device="cpu")
-
-    posterior_predictive = bundle.metadata["posterior_predictive"]
-    teacher_conditionals = bundle.metadata["teacher_conditionals"]
-
-    assert posterior_predictive == {
-        "factorization": "independent_p_x_complete_and_p_y_given_x_complete",
-        "teacher_conditional_export_enabled": True,
-        "teacher_conditionals_available": True,
-        "metric_definition": "label-target log loss per test cell",
-    }
-    assert teacher_conditionals["schema_version"] == 1
-    assert teacher_conditionals["target_split"] == "test"
-    assert teacher_conditionals["class_labels"] == list(range(bundle.metadata["n_classes"]))
-    probs = np.asarray(teacher_conditionals["test_probs"], dtype=np.float64)
-    assert probs.shape == (len(bundle.y_test), bundle.metadata["n_classes"])
-    np.testing.assert_allclose(probs.sum(axis=1), 1.0, atol=1e-6, rtol=1e-6)
-    chosen = probs[np.arange(len(bundle.y_test)), np.asarray(bundle.y_test, dtype=np.int64)]
-    expected = float((-np.log(np.clip(chosen, 1e-12, 1.0))).mean())
-    assert teacher_conditionals["optimal_log_loss_per_test_cell"] == pytest.approx(expected)
-
-
-@pytest.mark.parametrize(
-    "aux_meta",
-    [
-        {
-            "teacher_conditional_test_probs": [[0.7, 0.3], [0.2, 0.8]],
-            "teacher_conditional_class_labels": [],
-        },
-        {
-            "teacher_conditional_test_probs": [0.7, 0.3],
-            "teacher_conditional_class_labels": [0, 1],
-        },
-        {
-            "teacher_conditional_test_probs": [[0.7, 0.3]],
-            "teacher_conditional_class_labels": [0, 1],
-        },
-        {
-            "teacher_conditional_test_probs": [[0.7], [0.3]],
-            "teacher_conditional_class_labels": [0, 1],
-        },
-    ],
-)
-def test_teacher_conditionals_metadata_rejects_malformed_aux_metadata(
-    aux_meta: dict[str, object],
-) -> None:
-    y_test = torch.tensor([0, 1], dtype=torch.int64)
-
-    assert _teacher_conditionals_metadata(y_test=y_test, aux_meta=aux_meta) is None
-
-
-def test_remap_teacher_conditionals_reorders_columns_for_emitted_label_permutation() -> None:
-    aux_meta = {
-        "teacher_conditional_class_labels": [0, 1],
-        "teacher_conditional_full_probs": [
-            [0.90, 0.10],
-            [0.20, 0.80],
-            [0.70, 0.30],
-            [0.40, 0.60],
-        ],
-    }
-    train_idx = torch.tensor([0, 1], dtype=torch.int64)
-    test_idx = torch.tensor([2, 3], dtype=torch.int64)
-
-    _remap_teacher_conditionals_to_emitted_labels(
-        aux_meta=aux_meta,
-        train_idx=train_idx,
-        test_idx=test_idx,
-        y_train_raw=torch.tensor([0, 1], dtype=torch.int64),
-        y_test_raw=torch.tensor([1, 0], dtype=torch.int64),
-        y_train_emitted=torch.tensor([1, 0], dtype=torch.int64),
-        y_test_emitted=torch.tensor([0, 1], dtype=torch.int64),
-    )
-    _attach_teacher_conditionals_for_test_split(aux_meta, test_idx=test_idx)
-    teacher_conditionals = _teacher_conditionals_metadata(
-        y_test=torch.tensor([0, 1], dtype=torch.int64),
-        aux_meta=aux_meta,
-    )
-
-    assert teacher_conditionals is not None
-    assert teacher_conditionals["class_labels"] == [0, 1]
-    np.testing.assert_allclose(
-        np.asarray(aux_meta["teacher_conditional_full_probs"], dtype=np.float64),
-        np.asarray(
-            [
-                [0.10, 0.90],
-                [0.80, 0.20],
-                [0.30, 0.70],
-                [0.60, 0.40],
-            ],
-            dtype=np.float64,
-        ),
-        atol=1e-6,
-        rtol=1e-6,
-    )
-    np.testing.assert_allclose(
-        np.asarray(teacher_conditionals["test_probs"], dtype=np.float64),
-        np.asarray([[0.30, 0.70], [0.60, 0.40]], dtype=np.float64),
-        atol=1e-6,
-        rtol=1e-6,
-    )
-    expected = float((-np.log(np.asarray([0.30, 0.40], dtype=np.float64).clip(1e-12, 1.0))).mean())
-    assert teacher_conditionals["optimal_log_loss_per_test_cell"] == pytest.approx(expected)
-
-
-def test_remap_teacher_conditionals_drops_absent_classes_and_renormalizes() -> None:
-    aux_meta = {
-        "teacher_conditional_class_labels": [0, 1, 2],
-        "teacher_conditional_full_probs": [
-            [0.10, 0.20, 0.70],
-            [0.20, 0.50, 0.30],
-            [0.70, 0.10, 0.20],
-            [0.25, 0.25, 0.50],
-        ],
-    }
-    train_idx = torch.tensor([0, 1], dtype=torch.int64)
-    test_idx = torch.tensor([2, 3], dtype=torch.int64)
-
-    _remap_teacher_conditionals_to_emitted_labels(
-        aux_meta=aux_meta,
-        train_idx=train_idx,
-        test_idx=test_idx,
-        y_train_raw=torch.tensor([0, 2], dtype=torch.int64),
-        y_test_raw=torch.tensor([2, 0], dtype=torch.int64),
-        y_train_emitted=torch.tensor([1, 0], dtype=torch.int64),
-        y_test_emitted=torch.tensor([0, 1], dtype=torch.int64),
-    )
-    _attach_teacher_conditionals_for_test_split(aux_meta, test_idx=test_idx)
-    teacher_conditionals = _teacher_conditionals_metadata(
-        y_test=torch.tensor([0, 1], dtype=torch.int64),
-        aux_meta=aux_meta,
-    )
-
-    assert teacher_conditionals is not None
-    assert aux_meta["teacher_conditional_class_labels"] == [0, 1]
-    full_probs = np.asarray(aux_meta["teacher_conditional_full_probs"], dtype=np.float64)
-    np.testing.assert_allclose(full_probs.sum(axis=1), 1.0, atol=1e-6, rtol=1e-6)
-    np.testing.assert_allclose(
-        full_probs,
-        np.asarray(
-            [
-                [0.875, 0.125],
-                [0.600, 0.400],
-                [0.2222222222, 0.7777777778],
-                [0.6666666667, 0.3333333333],
-            ],
-            dtype=np.float64,
-        ),
-        atol=1e-6,
-        rtol=1e-6,
-    )
-    np.testing.assert_allclose(
-        np.asarray(teacher_conditionals["test_probs"], dtype=np.float64),
-        full_probs[2:],
-        atol=1e-6,
-        rtol=1e-6,
-    )
-    expected = float(
-        (
-            -np.log(
-                np.asarray(
-                    [
-                        full_probs[2, 0],
-                        full_probs[3, 1],
-                    ],
-                    dtype=np.float64,
-                ).clip(1e-12, 1.0)
-            )
-        ).mean()
-    )
-    assert teacher_conditionals["optimal_log_loss_per_test_cell"] == pytest.approx(expected)
-
-
-def test_sample_layout_near_dense_target_parent_prior_has_mode_at_max() -> None:
-    cfg = _tiny_config()
-    cfg.dataset.n_features_min = 20
-    cfg.dataset.n_features_max = 20
-
-    counts: list[int] = []
-    regimes: list[str] = []
-    for seed in range(512):
-        layout = _sample_layout(cfg, KeyedRng(seed), device="cpu")
-        counts.append(len(layout.target_parent_features))
-        regimes.append(layout.target_parent_regime)
-
-    assert max(set(counts), key=counts.count) == 20
-    assert sum(1 for count in counts if count >= 15) > int(0.60 * len(counts))
-    assert sum(1 for count in counts if count < int(math.floor(math.sqrt(20)))) == pytest.approx(
-        0.05 * len(counts),
-        rel=0.40,
-    )
-    assert "near_max" in regimes
 
 
 def test_generate_one_emits_graph_complexity_metadata() -> None:
@@ -3637,21 +3397,6 @@ def test_generate_batch_request_run_identity_changes_with_fixed_layout_target_ce
     assert batch_base[0].metadata["dataset_id"] != batch_drifted[0].metadata["dataset_id"]
 
 
-def test_generate_batch_request_run_identity_changes_with_target_parent_prior() -> None:
-    baseline = _tiny_regression_config()
-    drifted = deepcopy(baseline)
-    drifted.dataset.target_parent_prior = "all_features"
-
-    batch_base = generate_batch(baseline, num_datasets=3, seed=4242, device="cpu")
-    batch_drifted = generate_batch(drifted, num_datasets=3, seed=4242, device="cpu")
-
-    assert (
-        batch_base[0].metadata["split_groups"]["request_run"]
-        != batch_drifted[0].metadata["split_groups"]["request_run"]
-    )
-    assert batch_base[0].metadata["dataset_id"] != batch_drifted[0].metadata["dataset_id"]
-
-
 def test_generate_batch_request_run_identity_normalizes_default_fixed_layout_target_cells() -> None:
     baseline = _tiny_regression_config()
     explicit_default = deepcopy(baseline)
@@ -3909,12 +3654,9 @@ def test_generate_batch_with_plan_iter_groups_mixed_noise_runtime_subbatches(
                         "assignments": {
                             "feature_to_node": [0, 1],
                             "target_to_node": 1,
-                            "target_parent_features": [0, 1],
-                            "target_parent_count": 2,
-                            "target_parent_fraction": 1.0,
-                            "target_parent_prior": "all_features",
-                            "target_parent_regime": "all_features",
-                            "target_parent_sqrt_threshold": 1,
+                            "target_relevant_features": [0, 1],
+                            "target_relevant_feature_count": 2,
+                            "target_relevant_feature_fraction": 1.0,
                         }
                     },
                 },
@@ -4817,12 +4559,9 @@ def test_generate_batch_with_plan_iter_allows_late_classification_failure_after_
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
-                        "target_parent_features": [0, 1],
-                        "target_parent_count": 2,
-                        "target_parent_fraction": 1.0,
-                        "target_parent_prior": "all_features",
-                        "target_parent_regime": "all_features",
-                        "target_parent_sqrt_threshold": 1,
+                        "target_relevant_features": [0, 1],
+                        "target_relevant_feature_count": 2,
+                        "target_relevant_feature_fraction": 1.0,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -5027,12 +4766,9 @@ def test_generate_batch_with_plan_iter_uses_cached_classification_attempt_plan_f
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
-                        "target_parent_features": [0, 1],
-                        "target_parent_count": 2,
-                        "target_parent_fraction": 1.0,
-                        "target_parent_prior": "all_features",
-                        "target_parent_regime": "all_features",
-                        "target_parent_sqrt_threshold": 1,
+                        "target_relevant_features": [0, 1],
+                        "target_relevant_feature_count": 2,
+                        "target_relevant_feature_fraction": 1.0,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
@@ -5311,12 +5047,9 @@ def test_generate_fixed_layout_bundle_with_retries_reuses_cached_finalization_co
                     "assignments": {
                         "feature_to_node": [0, 1],
                         "target_to_node": 1,
-                        "target_parent_features": [0, 1],
-                        "target_parent_count": 2,
-                        "target_parent_fraction": 1.0,
-                        "target_parent_prior": "all_features",
-                        "target_parent_regime": "all_features",
-                        "target_parent_sqrt_threshold": 1,
+                        "target_relevant_features": [0, 1],
+                        "target_relevant_feature_count": 2,
+                        "target_relevant_feature_fraction": 1.0,
                     }
                 },
                 "filter": {"mode": "deferred", "status": "not_run"},
