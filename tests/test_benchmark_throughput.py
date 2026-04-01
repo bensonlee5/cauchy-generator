@@ -713,7 +713,7 @@ def test_run_microbenchmarks_emits_heterogeneous_generate_one_metric(
 
     assert result["micro_generate_one_ms"] == pytest.approx(1.0)
     assert result["micro_generate_one_heterogeneous_ms"] == pytest.approx(1.0)
-    assert observed_layout_modes.count("fixed") == 1
+    assert observed_layout_modes.count("stratified") == 1
     assert observed_layout_modes.count("heterogeneous") == 1
 
 

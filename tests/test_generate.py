@@ -77,7 +77,7 @@ from dagzoo.types import DatasetBundle
 
 def _tiny_config() -> GeneratorConfig:
     cfg = load_repo_config()
-    cfg.runtime.layout_mode = "fixed"
+    cfg.runtime.layout_mode = "stratified"
     cfg.dataset.n_features_min = 8
     cfg.dataset.n_features_max = 8
     cfg.graph.n_nodes_min = 2
@@ -256,6 +256,7 @@ def test_generate_batch_stratified_matches_heterogeneous_outputs_for_same_seed()
 
 def test_generate_batch_rejects_removed_public_fixed_layout_mode() -> None:
     cfg = _tiny_regression_config()
+    cfg.runtime.layout_mode = "fixed"
 
     with pytest.raises(ValueError, match="runtime\\.layout_mode: stratified"):
         list(generate_batch_iter(cfg, num_datasets=2, seed=5, device="cpu"))
@@ -385,29 +386,6 @@ def test_generate_batch_dynamic_steering_changes_metadata_over_dataset_order() -
         "laplace": pytest.approx(0.3),
         "student_t": pytest.approx(0.2),
     }
-
-
-def test_generate_batch_dynamic_steering_graph_stage_preserves_fixed_layout_schema() -> None:
-    cfg = _tiny_regression_config()
-    cfg.steering.enabled = True
-    cfg.steering.preset = "anti_memorization_piecewise_v1"
-    cfg.validate_generation_constraints()
-
-    batch = generate_batch(cfg, num_datasets=5, seed=1, device="cpu")
-
-    layout_signatures = [str(bundle.metadata["layout_signature"]) for bundle in batch]
-    feature_type_signatures = [
-        tuple(str(value) for value in bundle.feature_types) for bundle in batch
-    ]
-    feature_counts = [int(bundle.metadata["n_features"]) for bundle in batch]
-    steering_layout_roots = [
-        bundle.metadata["keyed_replay"].get("steering_layout_root_path") for bundle in batch
-    ]
-
-    assert any(root is not None for root in steering_layout_roots)
-    assert len(set(layout_signatures)) >= 1
-    assert len(set(feature_type_signatures)) == 1
-    assert len(set(feature_counts)) == 1
 
 
 def test_generate_batch_with_plan_iter_batches_steering_missingness_changes(
@@ -2125,12 +2103,7 @@ def test_generate_batch_rows_range_is_seed_reproducible() -> None:
         assert int(bundle_a.X_test.shape[0]) == 256
         assert int(bundle_b.X_test.shape[0]) == 256
         assert (
-            bundle_a.metadata["layout_plan_signature"]
-            == batch_a[0].metadata["layout_plan_signature"]
-        )
-        assert (
-            bundle_b.metadata["layout_plan_signature"]
-            == batch_b[0].metadata["layout_plan_signature"]
+            bundle_a.metadata["layout_plan_signature"] == bundle_b.metadata["layout_plan_signature"]
         )
 
 
@@ -3460,11 +3433,11 @@ def test_generate_batch_metadata_preserves_run_seed_and_dataset_indices() -> Non
     dataset_seeds = [int(bundle.metadata["dataset_seed"]) for bundle in batch]
     dataset_ids = [str(bundle.metadata["dataset_id"]) for bundle in batch]
     request_run_groups = [bundle.metadata["split_groups"]["request_run"] for bundle in batch]
-    layout_plan_groups = [bundle.metadata["split_groups"]["layout_plan"] for bundle in batch]
+    cohort_groups = [bundle.metadata["split_groups"]["cohort"] for bundle in batch]
     assert len(set(dataset_seeds)) == 3
     assert len(set(dataset_ids)) == 3
     assert len(set(request_run_groups)) == 1
-    assert len(set(layout_plan_groups)) == 1
+    assert len(set(cohort_groups)) == 3
 
 
 def test_generate_one_request_run_identity_changes_with_noise_contract() -> None:
@@ -3483,8 +3456,8 @@ def test_generate_one_request_run_identity_changes_with_noise_contract() -> None
         == bundle_drifted.metadata["layout_plan_signature"]
     )
     assert (
-        bundle_base.metadata["split_groups"]["layout_plan"]
-        == bundle_drifted.metadata["split_groups"]["layout_plan"]
+        bundle_base.metadata["split_groups"]["cohort"]
+        != bundle_drifted.metadata["split_groups"]["cohort"]
     )
     assert (
         bundle_base.metadata["split_groups"]["request_run"]
@@ -3510,8 +3483,8 @@ def test_generate_one_request_run_identity_changes_with_realized_row_shape() -> 
         == bundle_drifted.metadata["layout_plan_signature"]
     )
     assert (
-        bundle_base.metadata["split_groups"]["layout_plan"]
-        == bundle_drifted.metadata["split_groups"]["layout_plan"]
+        bundle_base.metadata["split_groups"]["cohort"]
+        != bundle_drifted.metadata["split_groups"]["cohort"]
     )
     assert (
         bundle_base.metadata["split_groups"]["request_run"]
@@ -3563,13 +3536,13 @@ def test_generate_batch_request_run_identity_changes_with_fixed_layout_target_ce
         == batch_drifted[0].metadata["layout_plan_signature"]
     )
     assert (
-        batch_base[0].metadata["split_groups"]["layout_plan"]
-        == batch_drifted[0].metadata["split_groups"]["layout_plan"]
+        batch_base[0].metadata["split_groups"]["cohort"]
+        == batch_drifted[0].metadata["split_groups"]["cohort"]
     )
-    assert not np.array_equal(
+    np.testing.assert_allclose(
         np.asarray(batch_base[0].X_train), np.asarray(batch_drifted[0].X_train)
     )
-    assert not np.array_equal(
+    np.testing.assert_allclose(
         np.asarray(batch_base[0].y_train), np.asarray(batch_drifted[0].y_train)
     )
     assert (
@@ -6252,13 +6225,11 @@ def test_generate_one_replays_from_emitted_metadata_seed() -> None:
 
     bundle = generate_one(cfg, seed=4321, device="cpu")
     replayed = generate_one(cfg, seed=int(bundle.metadata["seed"]), device="cpu")
+    keyed_replay = bundle.metadata["keyed_replay"]
 
     assert int(bundle.metadata["seed"]) == 4321
-    assert int(bundle.metadata["layout_plan_seed"]) == KeyedRng(4321).child_seed(
-        "plan_candidate",
-        0,
-        "layout",
-    )
+    expected_layout_plan_seed = KeyedRng(4321).keyed(*keyed_replay["layout_root_path"]).child_seed()
+    assert int(bundle.metadata["layout_plan_seed"]) == expected_layout_plan_seed
     assert int(replayed.metadata["seed"]) == 4321
     np.testing.assert_allclose(np.asarray(bundle.X_train), np.asarray(replayed.X_train), atol=1e-6)
     np.testing.assert_allclose(np.asarray(bundle.X_test), np.asarray(replayed.X_test), atol=1e-6)
@@ -6278,7 +6249,7 @@ def test_generate_one_keyed_replay_layout_root_path_replays_layout_signature() -
         "cpu",
     )
 
-    assert keyed_replay["layout_root_path"] == ["plan_candidate", 0, "layout"]
+    assert keyed_replay["layout_root_path"] == ["dataset", 0, "plan_candidate", 0, "layout"]
     assert _layout_signature(replayed_layout) == str(bundle.metadata["layout_signature"])
 
 
@@ -6375,24 +6346,17 @@ def test_generate_batch_graph_steering_preserves_base_replay_roots_and_replays_p
     assert "steering_execution_plan_root_path" not in base_keyed_replay
     assert "steering_layout_root_path" not in batch[4].metadata["keyed_replay"]
     assert "steering_execution_plan_root_path" not in batch[4].metadata["keyed_replay"]
-    assert steered_keyed_replay["layout_root_path"] == ["plan_candidate", 0, "layout"]
+    assert steered_keyed_replay["layout_root_path"] == ["dataset", 2, "plan_candidate", 0, "layout"]
     assert steered_keyed_replay["execution_plan_root_path"] == [
+        "dataset",
+        2,
         "plan_candidate",
         0,
         "execution_plan",
     ]
-    assert steered_keyed_replay["steering_layout_root_path"] == [
-        "dataset",
-        2,
-        "steering",
-        "layout",
-    ]
-    assert steered_keyed_replay["steering_execution_plan_root_path"] == [
-        "dataset",
-        2,
-        "steering",
-        "execution_plan",
-    ]
+    assert "steering_layout_root_path" not in steered_keyed_replay
+    assert "steering_execution_plan_root_path" not in steered_keyed_replay
+    assert replayed_plan.layout_signature == steered_bundle.metadata["layout_signature"]
     assert int(steered_bundle.metadata["layout_plan_schema_version"]) == 10
     assert str(steered_bundle.metadata["layout_execution_contract"]) == "chunk_batched_v3"
     assert str(replayed_plan.layout_signature) == str(steered_bundle.metadata["layout_signature"])

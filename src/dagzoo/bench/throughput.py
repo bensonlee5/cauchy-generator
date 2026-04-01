@@ -207,7 +207,7 @@ def _consume_generation(
     """Run generation for ``num_datasets`` items while discarding outputs."""
 
     run_config = clone_generator_config(config, revalidate=False)
-    run_config.runtime.layout_mode = "fixed"
+    run_config.runtime.layout_mode = "stratified"
     for bundle in generate_batch_iter(
         run_config,
         num_datasets=num_datasets,

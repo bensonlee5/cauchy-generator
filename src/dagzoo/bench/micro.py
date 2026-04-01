@@ -120,23 +120,25 @@ def run_microbenchmarks(
             "cpu",
         )
 
-    fixed_micro_cfg = _micro_config(config)
-    fixed_micro_cfg.runtime.layout_mode = "fixed"
+    stratified_micro_cfg = _micro_config(config)
+    stratified_micro_cfg.runtime.layout_mode = "stratified"
     heterogeneous_micro_cfg = _micro_config(config)
     heterogeneous_micro_cfg.runtime.layout_mode = "heterogeneous"
     generate_one_ms: float | None
     generate_one_heterogeneous_ms: float | None
     if include_generate_one:
 
-        def run_generate_one_fixed() -> None:
+        def run_generate_one_stratified() -> None:
             _ = generate_one(
-                fixed_micro_cfg,
-                seed=micro_root.child_seed("generate_one", "fixed"),
+                stratified_micro_cfg,
+                seed=micro_root.child_seed("generate_one", "stratified"),
                 device=device,
             )
 
         generate_one_ms = _time_ms(
-            run_generate_one_fixed, repeats, device=device or fixed_micro_cfg.runtime.device
+            run_generate_one_stratified,
+            repeats,
+            device=device or stratified_micro_cfg.runtime.device,
         )
 
         def run_generate_one_heterogeneous() -> None:
