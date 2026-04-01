@@ -60,6 +60,7 @@ def _micro_config(config: GeneratorConfig) -> GeneratorConfig:
     c.dataset.n_features_max = min(MICRO_CONFIG_N_FEATURES_CAP, c.dataset.n_features_max)
     c.graph.n_nodes_min = min(MICRO_CONFIG_N_NODES_CAP, c.graph.n_nodes_min)
     c.graph.n_nodes_max = min(MICRO_CONFIG_N_NODES_CAP, c.graph.n_nodes_max)
+    c.runtime.layout_mode = "fixed"
     return c
 
 

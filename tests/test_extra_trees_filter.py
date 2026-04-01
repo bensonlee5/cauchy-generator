@@ -9,6 +9,7 @@ from dagzoo.filtering.extra_trees_filter import (
     _apply_extra_trees_filter_numpy,
     _lineage_has_feature_target_path,
 )
+from dagzoo.io.lineage_schema import LINEAGE_SCHEMA_VERSION_DENSE
 
 
 def _make_regression_split(
@@ -69,22 +70,39 @@ def _make_classification_split(
 def _dense_lineage(
     *,
     feature_to_node: list[int],
-    target_to_node: int | None = None,
-    target_mode: str | None = None,
+    target_to_node: int,
     adjacency: list[list[int]],
 ):
+    def _ancestor_nodes_for_target() -> set[int]:
+        ancestors = {int(target_to_node)}
+        frontier = [int(target_to_node)]
+        while frontier:
+            node_index = int(frontier.pop())
+            for parent_index, row in enumerate(adjacency):
+                if int(row[node_index]) == 0 or int(parent_index) in ancestors:
+                    continue
+                ancestors.add(int(parent_index))
+                frontier.append(int(parent_index))
+        return ancestors
+
+    relevant_nodes = _ancestor_nodes_for_target()
+    relevant_features = [
+        feature_index
+        for feature_index, node_index in enumerate(feature_to_node)
+        if int(node_index) in relevant_nodes
+    ]
     assignments: dict[str, object] = {
         "feature_to_node": feature_to_node,
+        "target_to_node": int(target_to_node),
+        "target_relevant_features": relevant_features,
+        "target_relevant_feature_count": len(relevant_features),
+        "target_relevant_feature_fraction": (
+            float(len(relevant_features)) / float(len(feature_to_node)) if feature_to_node else 0.0
+        ),
     }
-    if target_mode is not None:
-        assignments["target_mode"] = target_mode
-    elif target_to_node is not None:
-        assignments["target_to_node"] = target_to_node
-    else:
-        raise ValueError("Either target_to_node or target_mode must be provided.")
     return {
         "schema_name": "dagzoo.dag_lineage",
-        "schema_version": "1.0.0",
+        "schema_version": LINEAGE_SCHEMA_VERSION_DENSE,
         "graph": {
             "n_nodes": len(adjacency),
             "adjacency": adjacency,
@@ -327,9 +345,9 @@ def test_extra_trees_filter_rejects_lineage_without_feature_target_path(
         feature_to_node=[0, 0, 1],
         target_to_node=3,
         adjacency=[
-            [0, 0, 1, 0],
             [0, 0, 0, 0],
             [0, 0, 0, 0],
+            [0, 0, 0, 1],
             [0, 0, 0, 0],
         ],
     )
@@ -353,12 +371,131 @@ def test_extra_trees_filter_rejects_lineage_without_feature_target_path(
     assert accepted is False
     assert details["reason"] == "no_feature_target_path"
     assert details["lineage_veto_applied"] is True
+    assert details["feature_target_path_exists"] is False
 
 
-def test_lineage_veto_accepts_latent_complete_conditional_target_mode() -> None:
+def test_extra_trees_filter_rejects_target_root_before_model_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    x_train, y_train, x_test, y_test = _make_regression_split(kind="linear")
+    lineage = _dense_lineage(
+        feature_to_node=[0, 0, 1],
+        target_to_node=3,
+        adjacency=[
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0],
+        ],
+    )
+
+    monkeypatch.setattr(
+        "dagzoo.filtering.extra_trees_filter.ExtraTreesRegressor",
+        lambda *_args, **_kwargs: pytest.fail("model fit should not run after target-root veto"),
+    )
+
+    accepted, details = apply_extra_trees_filter(
+        x_train,
+        y_train,
+        x_test,
+        y_test,
+        task="regression",
+        seed=88,
+        lineage_payload=lineage,
+        use_lineage_veto=True,
+        min_target_indegree=1,
+    )
+
+    assert accepted is False
+    assert details["reason"] == "target_root"
+    assert details["target_indegree"] == 0
+    assert details["lineage_veto_applied"] is True
+
+
+def test_extra_trees_filter_rejects_insufficient_target_relevant_feature_count_before_model_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    x_train, y_train, x_test, y_test = _make_regression_split(kind="linear")
+    lineage = _dense_lineage(
+        feature_to_node=[0, 1, 1, 1],
+        target_to_node=2,
+        adjacency=[
+            [0, 0, 1],
+            [0, 0, 0],
+            [0, 0, 0],
+        ],
+    )
+
+    monkeypatch.setattr(
+        "dagzoo.filtering.extra_trees_filter.ExtraTreesRegressor",
+        lambda *_args, **_kwargs: pytest.fail(
+            "model fit should not run after relevant-feature-count veto"
+        ),
+    )
+
+    accepted, details = apply_extra_trees_filter(
+        x_train,
+        y_train,
+        x_test,
+        y_test,
+        task="regression",
+        seed=88,
+        lineage_payload=lineage,
+        use_lineage_veto=True,
+        min_target_indegree=0,
+        min_target_relevant_feature_count=2,
+        min_target_relevant_feature_fraction=0.0,
+    )
+
+    assert accepted is False
+    assert details["reason"] == "insufficient_target_relevant_feature_count"
+    assert details["target_relevant_feature_count"] == 1
+
+
+def test_extra_trees_filter_rejects_insufficient_target_relevant_feature_fraction_before_model_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    x_train, y_train, x_test, y_test = _make_regression_split(kind="linear")
+    lineage = _dense_lineage(
+        feature_to_node=[0, 0, 1, 1],
+        target_to_node=2,
+        adjacency=[
+            [0, 0, 1],
+            [0, 0, 0],
+            [0, 0, 0],
+        ],
+    )
+
+    monkeypatch.setattr(
+        "dagzoo.filtering.extra_trees_filter.ExtraTreesRegressor",
+        lambda *_args, **_kwargs: pytest.fail(
+            "model fit should not run after relevant-feature-fraction veto"
+        ),
+    )
+
+    accepted, details = apply_extra_trees_filter(
+        x_train,
+        y_train,
+        x_test,
+        y_test,
+        task="regression",
+        seed=88,
+        lineage_payload=lineage,
+        use_lineage_veto=True,
+        min_target_indegree=0,
+        min_target_relevant_feature_count=0,
+        min_target_relevant_feature_fraction=0.75,
+    )
+
+    assert accepted is False
+    assert details["reason"] == "insufficient_target_relevant_feature_fraction"
+    assert details["target_relevant_feature_fraction"] == pytest.approx(0.5)
+
+
+def test_lineage_veto_accepts_when_feature_nodes_reach_target_node() -> None:
     lineage = _dense_lineage(
         feature_to_node=[0, 1, 1],
-        target_mode="latent_complete_x_conditional",
+        target_to_node=2,
         adjacency=[
             [0, 1, 1],
             [0, 0, 1],
@@ -375,6 +512,79 @@ def test_lineage_veto_accepts_latent_complete_conditional_target_mode() -> None:
     assert has_path is True
 
 
+def test_extra_trees_filter_rejects_prediction_collapse_on_classification_full_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    x_train, y_train, x_test, y_test = _make_classification_split(seed=12, n_classes=3)
+    call_count = {"value": 0}
+
+    def _stub_fit(*, x_test: np.ndarray, **_kwargs) -> np.ndarray:
+        call_count["value"] += 1
+        pred = np.zeros((x_test.shape[0], 3), dtype=np.float32)
+        pred[:, 0] = 1.0
+        return pred
+
+    monkeypatch.setattr(
+        "dagzoo.filtering.extra_trees_filter._fit_extra_trees_predictions",
+        _stub_fit,
+    )
+
+    accepted, details = apply_extra_trees_filter(
+        x_train,
+        y_train,
+        x_test,
+        y_test,
+        task="classification",
+        seed=77,
+        use_lineage_veto=False,
+    )
+
+    assert accepted is False
+    assert call_count["value"] == 2
+    assert details["reason"] == "prediction_collapse_full"
+    assert details["predicted_unique_classes_full"] == 1
+    assert details["cohen_kappa_full"] is not None
+
+
+def test_extra_trees_filter_rejects_chance_kappa_on_classification_full_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    x_train = torch.zeros((4, 2), dtype=torch.float32)
+    x_test = torch.zeros((4, 2), dtype=torch.float32)
+    y_train = torch.tensor([0, 0, 1, 1], dtype=torch.int64)
+    y_test = torch.tensor([0, 0, 1, 1], dtype=torch.int64)
+    call_count = {"value": 0}
+
+    def _stub_fit(*, x_test: np.ndarray, **_kwargs) -> np.ndarray:
+        call_count["value"] += 1
+        pred = np.zeros((x_test.shape[0], 2), dtype=np.float32)
+        pred[:, 0] = np.asarray([0.0, 1.0, 1.0, 0.0], dtype=np.float32)
+        pred[:, 1] = np.asarray([1.0, 0.0, 0.0, 1.0], dtype=np.float32)
+        return pred
+
+    monkeypatch.setattr(
+        "dagzoo.filtering.extra_trees_filter._fit_extra_trees_predictions",
+        _stub_fit,
+    )
+
+    accepted, details = apply_extra_trees_filter(
+        x_train,
+        y_train,
+        x_test,
+        y_test,
+        task="classification",
+        seed=19,
+        use_lineage_veto=False,
+        classification_kappa_threshold=0.0,
+    )
+
+    assert accepted is False
+    assert call_count["value"] == 2
+    assert details["reason"] == "chance_kappa_full"
+    assert float(details["cohen_kappa_full"]) <= 0.0
+    assert details["predicted_unique_classes_full"] == 2
+
+
 @pytest.mark.parametrize(
     ("field_name", "kwargs"),
     [
@@ -382,6 +592,11 @@ def test_lineage_veto_accepts_latent_complete_conditional_target_mode() -> None:
         ("easy_gain_threshold", {"easy_gain_threshold": -0.1}),
         ("hard_skill_threshold", {"hard_skill_threshold": 1.1}),
         ("stump_skill_threshold", {"stump_skill_threshold": -0.1}),
+        (
+            "min_target_relevant_feature_fraction",
+            {"min_target_relevant_feature_fraction": 1.1},
+        ),
+        ("classification_kappa_threshold", {"classification_kappa_threshold": 1.1}),
     ],
 )
 def test_extra_trees_filter_rejects_invalid_public_thresholds(
@@ -389,7 +604,12 @@ def test_extra_trees_filter_rejects_invalid_public_thresholds(
     kwargs: dict[str, float],
 ) -> None:
     x_train, y_train, x_test, y_test = _make_regression_split()
-    with pytest.raises(ValueError, match=rf"{field_name} must be a finite value in \[0.0, 1.0\]"):
+    message = (
+        r"classification_kappa_threshold must be a finite value in \[-1.0, 1.0\]\."
+        if field_name == "classification_kappa_threshold"
+        else rf"{field_name} must be a finite value in \[0.0, 1.0\]"
+    )
+    with pytest.raises(ValueError, match=message):
         apply_extra_trees_filter(
             x_train,
             y_train,

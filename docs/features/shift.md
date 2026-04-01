@@ -156,7 +156,7 @@ ______________________________________________________________________
 
 ## What to inspect
 
-- Per-dataset `metadata.ndjson` records include resolved mode/scales and derived
+- In-process `DatasetBundle.metadata["shift"]` includes resolved mode/scales and derived
   multipliers (`edge_odds_multiplier`, `noise_variance_multiplier`,
   `mechanism_nonlinear_mass`).
 - Diagnostics coverage summaries include shift observability metrics such as

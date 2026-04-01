@@ -142,29 +142,12 @@ def canonical_request_run_provenance(metadata: Mapping[str, Any]) -> dict[str, A
                 dataset.get("n_test"),
                 path="metadata.config.dataset.n_test",
             ),
-            "target_parent_prior": _require_string(
-                dataset.get("target_parent_prior"),
-                path="metadata.config.dataset.target_parent_prior",
-            ),
-            "target_parent_count_min": _require_int(
-                dataset.get("target_parent_count_min"),
-                path="metadata.config.dataset.target_parent_count_min",
-            ),
-            "target_parent_count_max": _require_optional_int(
-                dataset.get("target_parent_count_max"),
-                path="metadata.config.dataset.target_parent_count_max",
-            ),
-            "target_parent_near_max_band_min_fraction": _require_number(
-                dataset.get("target_parent_near_max_band_min_fraction"),
-                path="metadata.config.dataset.target_parent_near_max_band_min_fraction",
-            ),
-            "target_parent_below_sqrt_prob": _require_number(
-                dataset.get("target_parent_below_sqrt_prob"),
-                path="metadata.config.dataset.target_parent_below_sqrt_prob",
-            ),
-            "target_parent_midrange_prob": _require_number(
-                dataset.get("target_parent_midrange_prob"),
-                path="metadata.config.dataset.target_parent_midrange_prob",
+            "target_derivation": _require_string(
+                _require_mapping(
+                    metadata.get("prior"),
+                    path="metadata.prior",
+                ).get("target_derivation"),
+                path="metadata.prior.target_derivation",
             ),
             "missingness": missingness_payload,
         },
@@ -255,10 +238,64 @@ def canonical_dataset_id(
     )
 
 
+def heterogeneous_request_run_split_group(
+    *,
+    seed: int,
+    run_num_datasets: int,
+    request_run_provenance: Mapping[str, Any],
+) -> str:
+    """Return a stable split-group key for one heterogeneous request run."""
+
+    return stable_blake2s_hex(
+        {
+            "seed": int(seed),
+            "run_num_datasets": int(run_num_datasets),
+            "layout_mode": "heterogeneous",
+            "request_run_provenance": dict(request_run_provenance),
+        }
+    )
+
+
+def heterogeneous_cohort_split_group(
+    *,
+    cohort_payload: Mapping[str, Any],
+) -> str:
+    """Return a stable grouping key for one heterogeneous raw-generation cohort."""
+
+    return stable_blake2s_hex(
+        {
+            "layout_mode": "heterogeneous",
+            "cohort_payload": dict(cohort_payload),
+        }
+    )
+
+
+def heterogeneous_dataset_id(
+    *,
+    request_run_split_group: str,
+    cohort_split_group: str,
+    dataset_index: int,
+    dataset_seed: int,
+) -> str:
+    """Return a stable dataset identifier for one heterogeneous dataset bundle."""
+
+    return stable_blake2s_hex(
+        {
+            "request_run_split_group": str(request_run_split_group),
+            "cohort_split_group": str(cohort_split_group),
+            "dataset_index": int(dataset_index),
+            "dataset_seed": int(dataset_seed),
+        }
+    )
+
+
 __all__ = [
     "canonical_dataset_id",
     "canonical_layout_plan_split_group",
     "canonical_request_run_provenance",
     "canonical_request_run_split_group",
+    "heterogeneous_cohort_split_group",
+    "heterogeneous_dataset_id",
+    "heterogeneous_request_run_split_group",
     "stable_blake2s_hex",
 ]

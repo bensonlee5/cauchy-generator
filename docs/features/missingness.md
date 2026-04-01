@@ -35,10 +35,11 @@ Use missingness workflows to inject deterministic synthetic null patterns for
 robustness testing under MCAR, MAR, and MNAR regimes.
 
 In `dagzoo`, missingness is an observation model applied after target
-generation. The default prior first samples complete features
-`X_complete ~ p(x)` and targets `y ~ p(y | X_complete)`, then samples a
-missingness process and emits `X_obs = mask(X_complete, m)`. This keeps the
-target mechanism separate from the later censoring process.
+generation. The default prior first samples a latent DAG, emits complete
+features from node-assigned converters, emits `y` from one selected latent
+target node, then samples a missingness process and emits
+`X_obs = mask(X_complete, m)`. This keeps latent target derivation separate
+from the later censoring process.
 
 ______________________________________________________________________
 
@@ -132,8 +133,12 @@ ______________________________________________________________________
 
 ## What to inspect
 
-- `metadata.ndjson` dataset records for resolved missingness configuration.
-- `metadata.prior` for the complete-data versus observation-model semantics.
+- In-process `DatasetBundle.metadata["missingness"]` for resolved missingness
+  configuration and realized rates.
+- In-process `DatasetBundle.metadata["prior"]` for the latent-node target
+  semantics versus the later observation-model step.
+- Public `dataset_catalog.ndjson` for the stable emitted dataset identity and
+  schema surface.
 - Benchmark summaries for `preset_results[*].scenarios.missingness` (when enabled).
 
 For output details, see

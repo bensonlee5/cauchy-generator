@@ -43,6 +43,7 @@ USER_MD_SOURCES = [
     "transforms.md",
     "usage-guide.md",
     "output-format.md",
+    "export-contract-fields.md",
     "features/diagnostics.md",
     "features/missingness.md",
     "features/many-class.md",
@@ -90,6 +91,10 @@ PAGE_METADATA: dict[str, PageMeta] = {
     "output-format.md": PageMeta(
         weight=60,
         description="Artifact schema, API contract, and handoff metadata layout.",
+    ),
+    "export-contract-fields.md": PageMeta(
+        weight=61,
+        description="Exhaustive field-by-field export contract catalog generated from the checked-in inventory.",
     ),
     "features/diagnostics.md": PageMeta(
         weight=60,

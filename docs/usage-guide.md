@@ -45,8 +45,10 @@ dagzoo generate --config configs/default.yaml --num-datasets 10 --out data/run1
 
 Each generate run writes `effective_config.yaml` and `effective_config_trace.yaml`
 under the resolved output directory.
-`dagzoo generate` samples one internal fixed-layout plan per run, so all
-datasets emitted in the same run share one layout signature / plan signature.
+`dagzoo generate` defaults to fully heterogeneous per-dataset plan sampling, so
+datasets in the same run may differ in feature schema, lineage assignments, and
+target node choice. Set `runtime.layout_mode: fixed` when you want one shared
+fixed-layout plan across the run.
 Inline filtering is removed from `dagzoo generate`. Keep `filter.enabled: false`
 for generate flows, then run `dagzoo filter` as a separate replay stage on the
 emitted shards when you want acceptance decisions.
@@ -114,21 +116,32 @@ Detailed guides:
 
 ______________________________________________________________________
 
-## 5. Canonical fixed-layout generation
+## 5. Generation modes
 
 Use `dagzoo generate`, `generate_one`, `generate_batch`, or
-`generate_batch_iter`; those entrypoints all run on the canonical
-fixed-layout engine internally.
+`generate_batch_iter`; those entrypoints share the same public generation
+surface.
 
-For persisted outputs, replay canonical batch bundles with the shared run seed
-plus `dataset_index` / `run_num_datasets` from the recorded metadata.
+Default mode:
+
+- `runtime.layout_mode: heterogeneous`
+- samples a layout and execution plan per dataset
+- preserves one stable `request_run` id across the run
+- emits `group_ids.cohort` instead of `group_ids.layout_plan`
+
+Opt-in fixed mode:
+
+- `runtime.layout_mode: fixed`
+- keeps one shared fixed-layout plan across the run
+- preserves aligned emitted feature schema within that run
+- emits `group_ids.layout_plan`
 
 ### PyTorch bridge
 
-Use the PyTorch bridge when you want the same canonical fixed-layout run
-semantics in an in-process training loop instead of persisted shard outputs.
-Across one requested run, samples yielded through the bridge still share the
-same sampled layout/execution plan.
+Use the PyTorch bridge when you want the same public generation semantics in an
+in-process training loop instead of persisted shard outputs. The bridge follows
+`runtime.layout_mode`, so it defaults to heterogeneous runs and can be pinned to
+fixed mode when you need aligned schema.
 
 `build_dataloader(...)` is the recommended public entrypoint for most users.
 `DagzooDataset` is the lower-level iterable dataset when you need direct
@@ -339,8 +352,8 @@ ______________________________________________________________________
 
 ## 13. Generate handoff workflows
 
-Use `dagzoo generate --handoff-root` when a downstream repo such as
-`tab-foundry` needs a stable handoff root. There is no separate request-file
+Use `dagzoo generate --handoff-root` when a downstream consumer needs a stable
+handoff root. There is no separate request-file
 contract now; the handoff workflow uses the normal internal config plus CLI
 overrides.
 
@@ -349,7 +362,7 @@ Example one-way handoff run:
 ```bash
 dagzoo generate \
   --config configs/default.yaml \
-  --handoff-root handoffs/tab_foundry_smoke \
+  --handoff-root handoffs/smoke_run \
   --num-datasets 2 \
   --rows 1024 \
   --seed 7 \
@@ -359,15 +372,16 @@ dagzoo generate \
 
 That command writes:
 
-- `handoffs/tab_foundry_smoke/handoff_manifest.json`
-- `handoffs/tab_foundry_smoke/generated/`
+- `handoffs/smoke_run/handoff_manifest.json`
+- `handoffs/smoke_run/generated/`
+- `handoffs/smoke_run/internal/`
 
 Downstream consumption should start from `handoff_manifest.json`. The manifest
-surfaces the generated corpus path, effective-config artifacts, and invocation
-metadata in one versioned JSON file:
+surfaces the generated corpus path and stable corpus identity in one versioned
+JSON file:
 
 ```bash
-./.venv/bin/python -c "import json; from pathlib import Path; payload=json.loads(Path('handoffs/tab_foundry_smoke/handoff_manifest.json').read_text()); print(payload['artifacts']['generated_dir']); print(payload['summary']['generated_datasets'])"
+./.venv/bin/python -c "import json; from pathlib import Path; payload=json.loads(Path('handoffs/smoke_run/handoff_manifest.json').read_text()); print(payload['artifacts_relative']['generated_dir']); print(payload['summary']['generated_datasets'])"
 ```
 
 Closed-loop feedback from downstream predictions is still out of scope for this

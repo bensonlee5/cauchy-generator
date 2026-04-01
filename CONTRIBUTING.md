@@ -23,6 +23,9 @@ Use `.venv/` for commands and tests in this repo.
   it as the default first-touch surface.
 - If a CLI flag, persisted metadata field, or artifact schema changes, call it
   out explicitly as a user-facing change.
+- If the export contract changes, update `reference/export_contract_inventory.yaml`,
+  `docs/output-format.md`, `docs/export-contract-fields.md`, and the export-contract
+  tests in the same PR.
 
 ## Docs boundaries
 

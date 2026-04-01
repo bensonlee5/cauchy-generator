@@ -16,12 +16,6 @@ from dagzoo.rng import KeyedRng
 from dagzoo.sampling import CorrelatedSampler
 
 
-def _clamp_int(value: int, lo: int, hi: int) -> int:
-    """Clamp one integer into the inclusive `[lo, hi]` interval."""
-
-    return max(int(lo), min(int(hi), int(value)))
-
-
 def _sample_log_uniform_int(generator: torch.Generator, device: str, low: int, high: int) -> int:
     """Sample an integer from a log-uniform range [low, high]."""
 
@@ -60,177 +54,80 @@ def _sample_assignments(
     return eligible_nodes[indices].tolist()
 
 
-def _sample_uniform_int(
+def _ancestor_nodes_for_target(adjacency: torch.Tensor, *, target_to_node: int) -> set[int]:
+    adjacency_cpu = adjacency.to(device="cpu", dtype=torch.bool)
+    ancestors = {int(target_to_node)}
+    frontier = [int(target_to_node)]
+    while frontier:
+        node_index = int(frontier.pop())
+        for parent_index in range(int(adjacency_cpu.shape[0])):
+            if not bool(adjacency_cpu[parent_index, node_index]) or parent_index in ancestors:
+                continue
+            ancestors.add(parent_index)
+            frontier.append(parent_index)
+    return ancestors
+
+
+def _eligible_target_nodes(
     *,
-    low: int,
-    high: int,
-    generator: torch.Generator,
-    device: str,
-) -> int:
-    """Sample one integer uniformly from the inclusive `[low, high]` interval."""
-
-    if low >= high:
-        return int(low)
-    return int(torch.randint(low, high + 1, (1,), generator=generator, device=device).item())
-
-
-def _sample_linearly_weighted_int(
-    *,
-    low: int,
-    high: int,
-    generator: torch.Generator,
-    device: str,
-) -> int:
-    """Sample one integer with linearly increasing mass toward `high`."""
-
-    if low >= high:
-        return int(low)
-    weights = torch.arange(
-        1,
-        (high - low) + 2,
-        dtype=torch.float64,
-        device=device,
-    )
-    sampled_offset = int(torch.multinomial(weights, 1, generator=generator).item())
-    return int(low + sampled_offset)
-
-
-def _sample_target_parent_features(
-    *,
+    adjacency: torch.Tensor,
+    feature_to_node: list[int],
     config: GeneratorConfig,
-    n_features: int,
+) -> list[int]:
+    adjacency_cpu = adjacency.to(device="cpu", dtype=torch.bool)
+    min_target_indegree = int(config.filter.min_target_indegree)
+    min_target_relevant_feature_count = int(config.filter.min_target_relevant_feature_count)
+    min_target_relevant_feature_fraction = float(config.filter.min_target_relevant_feature_fraction)
+    total_features = int(len(feature_to_node))
+    eligible: list[int] = []
+
+    for target_to_node in range(int(adjacency_cpu.shape[0])):
+        target_indegree = int(adjacency_cpu[:, target_to_node].to(dtype=torch.int64).sum().item())
+        if target_indegree < min_target_indegree:
+            continue
+        relevant_nodes = _ancestor_nodes_for_target(adjacency_cpu, target_to_node=target_to_node)
+        relevant_feature_count = int(
+            sum(1 for node_index in feature_to_node if int(node_index) in relevant_nodes)
+        )
+        if relevant_feature_count == 0:
+            continue
+        if relevant_feature_count < min_target_relevant_feature_count:
+            continue
+        relevant_feature_fraction = (
+            float(relevant_feature_count) / float(total_features) if total_features > 0 else 0.0
+        )
+        if relevant_feature_fraction + 1e-12 < min_target_relevant_feature_fraction:
+            continue
+        eligible.append(int(target_to_node))
+    return eligible
+
+
+def _sample_target_node(
+    *,
+    adjacency: torch.Tensor,
+    feature_to_node: list[int],
+    config: GeneratorConfig,
     keyed_rng: KeyedRng,
     device: str,
-) -> tuple[list[int], str, int]:
-    """Sample the observed-feature subset that directly drives the target head."""
-
-    dataset_cfg = config.dataset
-    if str(dataset_cfg.target_parent_prior) == "all_features":
-        sqrt_threshold = max(1, min(int(n_features), int(math.floor(math.sqrt(n_features)))))
-        return list(range(int(n_features))), "all_features", int(sqrt_threshold)
-
-    lo = min(max(1, int(dataset_cfg.target_parent_count_min)), int(n_features))
-    hi = min(
-        int(n_features),
-        int(dataset_cfg.target_parent_count_max)
-        if dataset_cfg.target_parent_count_max is not None
-        else int(n_features),
+) -> int:
+    generator = keyed_rng.keyed("assignments", "target").torch_rng(device=device)
+    eligible_target_nodes = _eligible_target_nodes(
+        adjacency=adjacency,
+        feature_to_node=feature_to_node,
+        config=config,
     )
-    if lo > hi:
-        lo = hi
-    sqrt_floor = _clamp_int(int(math.floor(math.sqrt(n_features))), lo, hi)
-    near_max_lo = _clamp_int(
-        max(
-            int(sqrt_floor),
-            int(math.ceil(float(dataset_cfg.target_parent_near_max_band_min_fraction) * float(hi))),
-        ),
-        lo,
-        hi,
+    if not eligible_target_nodes:
+        return int(_sample_assignments(1, int(adjacency.shape[0]), generator, device)[0])
+    target_index = int(
+        torch.randint(
+            0,
+            len(eligible_target_nodes),
+            (1,),
+            generator=generator,
+            device=device,
+        ).item()
     )
-
-    regime_specs: list[tuple[str, float, int, int, str]] = [
-        (
-            "sparse_tail",
-            float(dataset_cfg.target_parent_below_sqrt_prob),
-            int(lo),
-            int(sqrt_floor - 1),
-            "uniform",
-        ),
-        (
-            "midrange",
-            float(dataset_cfg.target_parent_midrange_prob),
-            int(sqrt_floor),
-            int(near_max_lo - 1),
-            "uniform",
-        ),
-        (
-            "near_max",
-            max(
-                0.0,
-                1.0
-                - float(dataset_cfg.target_parent_below_sqrt_prob)
-                - float(dataset_cfg.target_parent_midrange_prob),
-            ),
-            int(near_max_lo),
-            int(hi),
-            "linear_up",
-        ),
-    ]
-    available_regimes: list[tuple[str, float, int, int, str]] = []
-    carried_mass = 0.0
-    for regime_name, regime_prob, start, end, draw_kind in regime_specs:
-        total_mass = float(regime_prob) + float(carried_mass)
-        if start <= end:
-            available_regimes.append((regime_name, total_mass, start, end, draw_kind))
-            carried_mass = 0.0
-        else:
-            carried_mass = total_mass
-    if not available_regimes:
-        target_parent_count = int(hi)
-        target_parent_regime = "near_max"
-    else:
-        if carried_mass > 0.0:
-            last_name, last_prob, last_start, last_end, last_kind = available_regimes[-1]
-            available_regimes[-1] = (
-                last_name,
-                float(last_prob) + float(carried_mass),
-                last_start,
-                last_end,
-                last_kind,
-            )
-        if len(available_regimes) == 1:
-            chosen_regime = available_regimes[0]
-        else:
-            weights = torch.tensor(
-                [float(max(0.0, regime_prob)) for _, regime_prob, _, _, _ in available_regimes],
-                dtype=torch.float64,
-                device=device,
-            )
-            if float(weights.sum().item()) <= 0.0:
-                chosen_regime = available_regimes[-1]
-            else:
-                chosen_regime = available_regimes[
-                    int(
-                        torch.multinomial(
-                            weights,
-                            1,
-                            generator=keyed_rng.keyed("target_parent_regime").torch_rng(
-                                device=device
-                            ),
-                        ).item()
-                    )
-                ]
-        target_parent_regime, _, regime_lo, regime_hi, draw_kind = chosen_regime
-        draw_generator = keyed_rng.keyed("target_parent_count").torch_rng(device=device)
-        if draw_kind == "linear_up":
-            target_parent_count = _sample_linearly_weighted_int(
-                low=int(regime_lo),
-                high=int(regime_hi),
-                generator=draw_generator,
-                device=device,
-            )
-        else:
-            target_parent_count = _sample_uniform_int(
-                low=int(regime_lo),
-                high=int(regime_hi),
-                generator=draw_generator,
-                device=device,
-            )
-
-    if target_parent_count >= int(n_features):
-        return list(range(int(n_features))), str(target_parent_regime), int(sqrt_floor)
-
-    sampled_indices = torch.randperm(
-        int(n_features),
-        generator=keyed_rng.keyed("target_parent_features").torch_rng(device=device),
-        device=device,
-    )[: int(target_parent_count)]
-    sampled_indices, _ = torch.sort(sampled_indices)
-    return (
-        [int(index) for index in sampled_indices.tolist()],
-        str(target_parent_regime),
-        int(sqrt_floor),
-    )
+    return int(eligible_target_nodes[target_index])
 
 
 def _sample_layout(
@@ -308,27 +205,47 @@ def _sample_layout(
         keyed_rng.keyed("graph_nodes").torch_rng(device=device),
         device,
     )
-    adjacency = sample_dag(
-        num_nodes,
-        keyed_rng.keyed("graph").torch_rng(device="cpu"),
-        edge_logit_bias=float(shift_params.edge_logit_bias_shift),
-    )
-    graph_depth_nodes = dag_longest_path_nodes(adjacency)
-    graph_edge_density = dag_edge_density(adjacency)
-    feature_to_node = _sample_assignments(
-        num_features,
-        num_nodes,
-        keyed_rng.keyed("assignments", "feature").torch_rng(device=device),
-        device,
-    )
-    target_parent_features, target_parent_regime, target_parent_sqrt_threshold = (
-        _sample_target_parent_features(
+    structure_attempts = max(1, int(config.filter.max_attempts))
+    adjacency: torch.Tensor | None = None
+    feature_to_node: list[int] | None = None
+    target_to_node: int | None = None
+    graph_depth_nodes = 1
+    graph_edge_density = 0.0
+    for structure_attempt in range(structure_attempts):
+        attempt_root = (
+            keyed_rng
+            if structure_attempt == 0
+            else keyed_rng.keyed("structure_candidate", int(structure_attempt))
+        )
+        adjacency = sample_dag(
+            num_nodes,
+            attempt_root.keyed("graph").torch_rng(device="cpu"),
+            edge_logit_bias=float(shift_params.edge_logit_bias_shift),
+        )
+        graph_depth_nodes = dag_longest_path_nodes(adjacency)
+        graph_edge_density = dag_edge_density(adjacency)
+        feature_to_node = _sample_assignments(
+            num_features,
+            num_nodes,
+            attempt_root.keyed("assignments", "feature").torch_rng(device=device),
+            device,
+        )
+        target_to_node = _sample_target_node(
+            adjacency=adjacency,
+            feature_to_node=feature_to_node,
             config=config,
-            n_features=num_features,
-            keyed_rng=keyed_rng.keyed("assignments", "target"),
+            keyed_rng=attempt_root,
             device=device,
         )
-    )
+        if _eligible_target_nodes(
+            adjacency=adjacency,
+            feature_to_node=feature_to_node,
+            config=config,
+        ):
+            break
+    assert adjacency is not None
+    assert feature_to_node is not None
+    assert target_to_node is not None
 
     feature_types: list[FeatureType] = ["num"] * num_features
     for i in cat_idx:
@@ -348,28 +265,48 @@ def _sample_layout(
         graph_edge_density=float(graph_edge_density),
         adjacency=adjacency,
         feature_node_assignment=feature_to_node,
-        target_parent_features=target_parent_features,
-        target_parent_prior=str(config.dataset.target_parent_prior),
-        target_parent_regime=target_parent_regime,
-        target_parent_sqrt_threshold=int(target_parent_sqrt_threshold),
+        target_to_node=target_to_node,
     )
 
 
 def _resample_layout_graph(
     layout: LayoutPlan,
     *,
+    config: GeneratorConfig,
     keyed_rng: KeyedRng,
     edge_logit_bias: float,
 ) -> LayoutPlan:
     """Resample only the graph portion of a layout while preserving feature schema."""
 
-    adjacency = sample_dag(
-        int(layout.graph_nodes),
-        keyed_rng.keyed("graph").torch_rng(device="cpu"),
-        edge_logit_bias=float(edge_logit_bias),
-    )
-    graph_depth_nodes = dag_longest_path_nodes(adjacency)
-    graph_edge_density = dag_edge_density(adjacency)
+    feature_to_node = [int(value) for value in layout.feature_node_assignment]
+    structure_attempts = max(1, int(config.filter.max_attempts))
+    adjacency: torch.Tensor | None = None
+    graph_depth_nodes = 1
+    graph_edge_density = 0.0
+    base_adjacency = torch.as_tensor(layout.adjacency, dtype=torch.bool, device="cpu")
+    for structure_attempt in range(structure_attempts):
+        attempt_root = (
+            keyed_rng
+            if structure_attempt == 0
+            else keyed_rng.keyed("structure_candidate", int(structure_attempt))
+        )
+        adjacency = sample_dag(
+            int(layout.graph_nodes),
+            attempt_root.keyed("graph").torch_rng(device="cpu"),
+            edge_logit_bias=float(edge_logit_bias),
+        )
+        graph_depth_nodes = dag_longest_path_nodes(adjacency)
+        graph_edge_density = dag_edge_density(adjacency)
+        if int(layout.target_to_node) in _eligible_target_nodes(
+            adjacency=adjacency,
+            feature_to_node=feature_to_node,
+            config=config,
+        ) and (
+            not torch.equal(adjacency.to(device="cpu", dtype=torch.bool), base_adjacency)
+            or structure_attempt == (structure_attempts - 1)
+        ):
+            break
+    assert adjacency is not None
     return LayoutPlan(
         n_features=int(layout.n_features),
         n_cat=int(layout.n_cat),
@@ -383,11 +320,8 @@ def _resample_layout_graph(
         graph_depth_nodes=int(graph_depth_nodes),
         graph_edge_density=float(graph_edge_density),
         adjacency=adjacency,
-        feature_node_assignment=[int(value) for value in layout.feature_node_assignment],
-        target_parent_features=[int(value) for value in layout.target_parent_features],
-        target_parent_prior=str(layout.target_parent_prior),
-        target_parent_regime=str(layout.target_parent_regime),
-        target_parent_sqrt_threshold=int(layout.target_parent_sqrt_threshold),
+        feature_node_assignment=feature_to_node,
+        target_to_node=int(layout.target_to_node),
     )
 
 
@@ -466,7 +400,7 @@ def _build_target_specs(
     layout: LayoutPlan,
     task: str,
 ) -> list[FixedLayoutConverterSpec]:
-    """Build converter specs for the latent-complete-data target head."""
+    """Build converter specs for the selected latent target node."""
 
     if task == "classification":
         n_classes = int(layout.n_classes)

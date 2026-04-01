@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from golden_support import (
     assert_normalized_json_equal,
     assert_normalized_text_equal,
+    load_golden_json,
     normalize_benchmark_summary,
     normalize_benchmark_summary_markdown,
     normalize_coverage_summary,
@@ -13,6 +15,8 @@ from golden_support import (
 )
 
 from dagzoo.bench.report import write_suite_json, write_suite_markdown
+from dagzoo.config import GeneratorConfig
+from dagzoo.core.dataset import generate_batch
 from dagzoo.core.generate_handoff import write_generate_handoff_manifest
 from dagzoo.diagnostics.coverage import (
     CoverageAggregationConfig,
@@ -20,6 +24,36 @@ from dagzoo.diagnostics.coverage import (
     write_coverage_summary_json,
 )
 from dagzoo.diagnostics.types import DatasetMetrics
+from dagzoo.io.parquet_writer import write_packed_parquet_shards_stream
+from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _flatten_path_tokens(value: object, prefix: tuple[str, ...] = ()) -> list[tuple[str, ...]]:
+    flattened: list[tuple[str, ...]] = []
+    if prefix:
+        flattened.append(prefix)
+    if isinstance(value, dict):
+        for key, child in value.items():
+            flattened.extend(_flatten_path_tokens(child, prefix + (str(key),)))
+    elif isinstance(value, list):
+        for child in value:
+            flattened.extend(_flatten_path_tokens(child, prefix + ("[]",)))
+    return flattened
+
+
+def _format_tokens(tokens: tuple[str, ...]) -> str:
+    parts: list[str] = []
+    for token in tokens:
+        if token == "[]":
+            if parts:
+                parts[-1] = f"{parts[-1]}[]"
+            else:
+                parts.append("[]")
+            continue
+        parts.append(token)
+    return ".".join(parts)
 
 
 def _benchmark_summary_fixture(tmp_path: Path) -> dict[str, object]:
@@ -121,41 +155,27 @@ def _write_generated_metadata(run_root: Path) -> None:
     generated_dir = run_root / "generated"
     shard_dir = generated_dir / "shard_00000"
     shard_dir.mkdir(parents=True, exist_ok=True)
-    factorization = "independent_p_x_complete_and_p_y_given_x_complete"
-    metric_definition = "label-target log loss per test cell"
-    (shard_dir / "metadata.ndjson").write_text(
+    (shard_dir / DATASET_CATALOG_FILENAME).write_text(
         "\n".join(
             [
                 json.dumps(
                     {
                         "dataset_index": 0,
-                        "metadata": {
-                            "dataset_id": "2" * 32,
-                            "config": {
-                                "dataset": {
-                                    "target_parent_prior": "near_max_mixture",
-                                    "target_parent_near_max_band_min_fraction": 0.75,
-                                    "target_parent_below_sqrt_prob": 0.05,
-                                    "target_parent_midrange_prob": 0.20,
-                                }
-                            },
-                            "lineage": {
-                                "assignments": {
-                                    "target_parent_count": 6,
-                                    "target_parent_fraction": 0.75,
-                                    "target_parent_regime": "near_max",
-                                }
-                            },
-                            "posterior_predictive": {
-                                "factorization": factorization,
-                                "metric_definition": metric_definition,
-                                "teacher_conditional_export_enabled": False,
-                                "teacher_conditionals_available": False,
-                            },
-                            "prior": {
-                                "factorization": factorization,
-                            },
-                            "split_groups": {"request_run": "1" * 32},
+                        "dataset_id": "2" * 32,
+                        "task": "classification",
+                        "n_train": 16,
+                        "n_test": 8,
+                        "n_features": 8,
+                        "feature_types": ["num"] * 8,
+                        "n_classes": 3,
+                        "group_ids": {
+                            "request_run": "1" * 32,
+                            "layout_plan": "4" * 32,
+                        },
+                        "target_derivation": "tabiclv2_latent_node",
+                        "target_relevance": {
+                            "feature_count": 5,
+                            "feature_fraction": 0.625,
                         },
                     },
                     sort_keys=True,
@@ -163,33 +183,21 @@ def _write_generated_metadata(run_root: Path) -> None:
                 json.dumps(
                     {
                         "dataset_index": 1,
-                        "metadata": {
-                            "dataset_id": "3" * 32,
-                            "config": {
-                                "dataset": {
-                                    "target_parent_prior": "near_max_mixture",
-                                    "target_parent_near_max_band_min_fraction": 0.75,
-                                    "target_parent_below_sqrt_prob": 0.05,
-                                    "target_parent_midrange_prob": 0.20,
-                                }
-                            },
-                            "lineage": {
-                                "assignments": {
-                                    "target_parent_count": 7,
-                                    "target_parent_fraction": 0.8,
-                                    "target_parent_regime": "midrange",
-                                }
-                            },
-                            "posterior_predictive": {
-                                "factorization": factorization,
-                                "metric_definition": metric_definition,
-                                "teacher_conditional_export_enabled": False,
-                                "teacher_conditionals_available": False,
-                            },
-                            "prior": {
-                                "factorization": factorization,
-                            },
-                            "split_groups": {"request_run": "1" * 32},
+                        "dataset_id": "3" * 32,
+                        "task": "classification",
+                        "n_train": 16,
+                        "n_test": 8,
+                        "n_features": 8,
+                        "feature_types": ["num"] * 8,
+                        "n_classes": 3,
+                        "group_ids": {
+                            "request_run": "1" * 32,
+                            "layout_plan": "4" * 32,
+                        },
+                        "target_derivation": "tabiclv2_latent_node",
+                        "target_relevance": {
+                            "feature_count": 6,
+                            "feature_fraction": 0.75,
                         },
                     },
                     sort_keys=True,
@@ -333,3 +341,53 @@ def test_coverage_summary_contract_golden(tmp_path: Path) -> None:
         "coverage_summary.json",
         normalizer=normalize_coverage_summary,
     )
+
+
+def test_generated_metadata_record_paths_contract_golden(tmp_path: Path) -> None:
+    cfg = GeneratorConfig.from_yaml("configs/default.yaml")
+    cfg.runtime.device = "cpu"
+    cfg.filter.enabled = False
+    cfg.dataset.task = "classification"
+    cfg.dataset.n_train = 16
+    cfg.dataset.n_test = 8
+    cfg.dataset.n_features_min = 8
+    cfg.dataset.n_features_max = 8
+    cfg.graph.n_nodes_min = 2
+    cfg.graph.n_nodes_max = 6
+    cfg.dataset.missing_rate = 0.1
+    cfg.dataset.missing_mechanism = "mcar"
+
+    batch = generate_batch(cfg, num_datasets=1, seed=123, device="cpu")
+    write_packed_parquet_shards_stream(batch, tmp_path, shard_size=8, compression="zstd")
+    record = json.loads(
+        (tmp_path / "shard_00000" / DATASET_CATALOG_FILENAME).read_text().splitlines()[0]
+    )
+
+    actual_paths = sorted({_format_tokens(tokens) for tokens in _flatten_path_tokens(record)})
+
+    assert actual_paths == load_golden_json("generated_metadata_record_paths.json")
+
+
+def test_public_docs_do_not_reference_removed_target_head_contract() -> None:
+    forbidden_patterns = {
+        "p(y | X_complete)": r"p\(y \| X_complete\)",
+        "p(y | x_complete)": r"p\(y \| x_complete\)",
+        "y|X_complete": r"y\|X_complete",
+        "conditional target head": r"conditional target head",
+        "latent_complete_x_conditional": r"latent_complete_x_conditional",
+        "posterior_predictive": r"posterior_predictive",
+        "teacher_conditionals": r"teacher_conditionals",
+        "teacher-conditional": r"teacher-conditional",
+        "metadata.ndjson": r"metadata\.ndjson",
+        "tab-foundry": r"tab-foundry",
+    }
+
+    doc_paths = [REPO_ROOT / "README.md", *sorted((REPO_ROOT / "docs").rglob("*.md"))]
+    offenders: list[str] = []
+    for path in doc_paths:
+        text = path.read_text(encoding="utf-8")
+        for label, pattern in forbidden_patterns.items():
+            if re.search(pattern, text):
+                offenders.append(f"{path.relative_to(REPO_ROOT)}: {label}")
+
+    assert not offenders, "Found removed contract terminology in docs:\n" + "\n".join(offenders)

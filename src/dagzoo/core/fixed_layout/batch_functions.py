@@ -7,6 +7,7 @@ import math
 import torch
 
 from dagzoo.core.trees import compute_odt_leaf_indices_batch, sample_odt_splits_batch
+from dagzoo.core.validation import validate_matrix_output
 from dagzoo.functions import activations as activations_module
 from dagzoo.sampling.noise import NoiseSamplingSpec, sample_noise_from_spec
 
@@ -234,7 +235,9 @@ def _sample_random_matrix_from_plan_batch(
         device=rng.device,
         noise_spec=noise_spec,
     )
-    return _row_normalize_batch(matrix)
+    matrix = _row_normalize_batch(matrix)
+    validate_matrix_output(matrix, context="_sample_random_matrix_from_plan_batch")
+    return matrix
 
 
 def _apply_linear_batch(

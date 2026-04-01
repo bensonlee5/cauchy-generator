@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -7,7 +8,15 @@ from dagzoo.filtering.deferred_filter import (
     _iter_packed_split_datasets,
     run_deferred_filter,
 )
+from dagzoo.io.lineage_artifact import pack_upper_triangle_adjacency, sha256_hex
+from dagzoo.io.lineage_schema import (
+    LINEAGE_ADJACENCY_ENCODING,
+    LINEAGE_SCHEMA_NAME,
+    LINEAGE_SCHEMA_VERSION_COMPACT,
+    LINEAGE_SCHEMA_VERSION_DENSE,
+)
 from dagzoo.io.parquet_writer import write_packed_parquet_shards_stream
+from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME, REPLAY_CATALOG_FILENAME
 from dagzoo.types import DatasetBundle
 
 
@@ -85,22 +94,63 @@ def _write_ndjson_records(path, records: list[dict[str, object]]) -> None:
     )
 
 
+def _rewrite_replay_lineage_to_compact(metadata_path: Path) -> list[dict[str, object]]:
+    records = _load_ndjson(metadata_path)
+    record = records[0]
+    metadata = record["metadata"]
+    assert isinstance(metadata, dict)
+    lineage = metadata["lineage"]
+    assert isinstance(lineage, dict)
+    graph = lineage["graph"]
+    assert isinstance(graph, dict)
+    if "adjacency_ref" in graph:
+        return records
+    adjacency = graph["adjacency"]
+    n_nodes, edge_count, payload = pack_upper_triangle_adjacency(adjacency)
+    lineage_dir = metadata_path.parent / "lineage"
+    lineage_dir.mkdir(parents=True, exist_ok=True)
+    blob_path = lineage_dir / "adjacency.bitpack.bin"
+    index_path = lineage_dir / "adjacency.index.json"
+    blob_path.write_bytes(payload)
+    index_path.write_text("{}", encoding="utf-8")
+    lineage["schema_name"] = LINEAGE_SCHEMA_NAME
+    lineage["schema_version"] = LINEAGE_SCHEMA_VERSION_COMPACT
+    lineage["graph"] = {
+        "n_nodes": n_nodes,
+        "edge_count": edge_count,
+        "adjacency_ref": {
+            "encoding": LINEAGE_ADJACENCY_ENCODING,
+            "blob_path": "lineage/adjacency.bitpack.bin",
+            "index_path": "lineage/adjacency.index.json",
+            "dataset_index": 0,
+            "bit_offset": 0,
+            "bit_length": (n_nodes * (n_nodes - 1)) // 2,
+            "sha256": sha256_hex(payload),
+        },
+    }
+    _write_ndjson_records(metadata_path, records)
+    return records
+
+
 def _dense_lineage_payload() -> dict[str, object]:
     return {
         "schema_name": "dagzoo.dag_lineage",
-        "schema_version": "1.0.0",
+        "schema_version": LINEAGE_SCHEMA_VERSION_DENSE,
         "graph": {
             "n_nodes": 4,
             "adjacency": [
-                [0, 0, 1, 0],
                 [0, 0, 0, 0],
                 [0, 0, 0, 0],
+                [0, 0, 0, 1],
                 [0, 0, 0, 0],
             ],
         },
         "assignments": {
             "feature_to_node": [0, 0],
             "target_to_node": 3,
+            "target_relevant_features": [],
+            "target_relevant_feature_count": 0,
+            "target_relevant_feature_fraction": 0.0,
         },
     }
 
@@ -299,14 +349,14 @@ def test_run_deferred_filter_writes_curated_output_for_accepted_only(
 
     shard_dir = curated_out / "shard_00000"
     assert shard_dir.exists()
-    input_metadata_records = _load_ndjson(in_dir / "shard_00000" / "metadata.ndjson")
-    metadata_records = _load_ndjson(shard_dir / "metadata.ndjson")
+    input_metadata_records = _load_ndjson(in_dir / "shard_00000" / DATASET_CATALOG_FILENAME)
+    metadata_records = _load_ndjson(shard_dir / DATASET_CATALOG_FILENAME)
     assert [int(record["dataset_index"]) for record in metadata_records] == [0, 2]
     input_metadata_by_index = {
-        int(record["dataset_index"]): record["metadata"] for record in input_metadata_records
+        int(record["dataset_index"]): record for record in input_metadata_records
     }
     curated_metadata_by_index = {
-        int(record["dataset_index"]): record["metadata"] for record in metadata_records
+        int(record["dataset_index"]): record for record in metadata_records
     }
     for dataset_index in (0, 2):
         assert (
@@ -314,8 +364,8 @@ def test_run_deferred_filter_writes_curated_output_for_accepted_only(
             == input_metadata_by_index[dataset_index]["dataset_id"]
         )
         assert (
-            curated_metadata_by_index[dataset_index]["split_groups"]
-            == input_metadata_by_index[dataset_index]["split_groups"]
+            curated_metadata_by_index[dataset_index]["group_ids"]
+            == input_metadata_by_index[dataset_index]["group_ids"]
         )
 
     train_table = pyarrow_parquet.read_table(shard_dir / "train.parquet")
@@ -374,6 +424,39 @@ def test_run_deferred_filter_prefers_dataset_seed_when_present(
     assert result.total_datasets == 2
     assert result.accepted_datasets == 2
     assert replay_seeds == [501, 502]
+
+
+def test_run_deferred_filter_resolves_internal_sidecars_from_direct_handoff_shard_input(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_deferred_filter_impl(monkeypatch)
+    pytest.importorskip("pyarrow.parquet")
+
+    handoff_root = tmp_path / "handoff"
+    generated_dir = handoff_root / "generated"
+    out_dir = tmp_path / "filter_out"
+    bundles = [_bundle_with_embedded_config(601, filter_overrides={"enabled": False})]
+    _ = write_packed_parquet_shards_stream(
+        bundles,
+        generated_dir,
+        shard_size=1,
+        compression="zstd",
+        internal_root=handoff_root / "internal",
+    )
+
+    monkeypatch.setattr(
+        "dagzoo.filtering.deferred_filter._apply_extra_trees_filter_numpy",
+        lambda *_args, **_kwargs: (True, {"skill_full": 0.9}),
+    )
+
+    result = run_deferred_filter(in_dir=generated_dir / "shard_00000", out_dir=out_dir)
+
+    assert result.total_datasets == 1
+    assert result.accepted_datasets == 1
+    assert (handoff_root / "internal" / "shard_00000" / REPLAY_CATALOG_FILENAME).exists()
+    manifest_records = _load_ndjson(result.manifest_path)
+    assert [str(record["status"]) for record in manifest_records] == ["accepted"]
 
 
 def test_run_deferred_filter_applies_ease_overrides_and_records_summary_provenance(
@@ -528,8 +611,8 @@ def test_run_deferred_filter_rejects_compact_lineage_checksum_mismatch(
     bundles = [_bundle_with_embedded_config(541, lineage=_dense_lineage_payload())]
     _ = write_packed_parquet_shards_stream(bundles, in_dir, shard_size=1, compression="zstd")
 
-    metadata_path = in_dir / "shard_00000" / "metadata.ndjson"
-    records = _load_ndjson(metadata_path)
+    metadata_path = in_dir / "internal" / "shard_00000" / REPLAY_CATALOG_FILENAME
+    records = _rewrite_replay_lineage_to_compact(metadata_path)
     record = records[0]
     metadata = record["metadata"]
     assert isinstance(metadata, dict)
@@ -573,8 +656,8 @@ def test_run_deferred_filter_rejects_compact_lineage_blob_paths_outside_shard_tr
     bundles = [_bundle_with_embedded_config(551, lineage=_dense_lineage_payload())]
     _ = write_packed_parquet_shards_stream(bundles, in_dir, shard_size=1, compression="zstd")
 
-    metadata_path = in_dir / "shard_00000" / "metadata.ndjson"
-    records = _load_ndjson(metadata_path)
+    metadata_path = in_dir / "internal" / "shard_00000" / REPLAY_CATALOG_FILENAME
+    records = _rewrite_replay_lineage_to_compact(metadata_path)
     record = records[0]
     metadata = record["metadata"]
     assert isinstance(metadata, dict)
@@ -643,7 +726,7 @@ def test_run_deferred_filter_rejects_extra_split_rows_beyond_metadata(
         compression="zstd",
     )
 
-    metadata_path = in_dir / "shard_00000" / "metadata.ndjson"
+    metadata_path = in_dir / "shard_00000" / DATASET_CATALOG_FILENAME
     records = _load_ndjson(metadata_path)
     _write_ndjson_records(metadata_path, [records[0]])
 
@@ -669,12 +752,45 @@ def test_run_deferred_filter_rejects_non_monotonic_split_rows(
     pytest.importorskip("pyarrow.parquet")
 
     shard_dir = tmp_path / "input" / "shard_00000"
+    replay_dir = tmp_path / "input" / "internal" / "shard_00000"
     shard_dir.mkdir(parents=True)
-    metadata_path = shard_dir / "metadata.ndjson"
+    replay_dir.mkdir(parents=True)
+    catalog_path = shard_dir / DATASET_CATALOG_FILENAME
+    replay_path = replay_dir / REPLAY_CATALOG_FILENAME
     train_path = shard_dir / "train.parquet"
     test_path = shard_dir / "test.parquet"
 
-    metadata_records = [
+    catalog_records = [
+        {
+            "dataset_index": 0,
+            "dataset_id": "2" * 32,
+            "task": "classification",
+            "n_train": 2,
+            "n_test": 1,
+            "n_features": 2,
+            "feature_types": ["num", "num"],
+            "n_classes": 2,
+            "group_ids": {
+                "request_run": "1" * 32,
+                "layout_plan": "4" * 32,
+            },
+        },
+        {
+            "dataset_index": 1,
+            "dataset_id": "3" * 32,
+            "task": "classification",
+            "n_train": 1,
+            "n_test": 1,
+            "n_features": 2,
+            "feature_types": ["num", "num"],
+            "n_classes": 2,
+            "group_ids": {
+                "request_run": "1" * 32,
+                "layout_plan": "4" * 32,
+            },
+        },
+    ]
+    replay_records = [
         {
             "dataset_index": 0,
             "n_train": 2,
@@ -706,7 +822,8 @@ def test_run_deferred_filter_rejects_non_monotonic_split_rows(
             },
         },
     ]
-    _write_ndjson_records(metadata_path, metadata_records)
+    _write_ndjson_records(catalog_path, catalog_records)
+    _write_ndjson_records(replay_path, replay_records)
     _write_split_table(
         train_path,
         dataset_indices=[0, 1, 0],
@@ -731,7 +848,7 @@ def test_run_deferred_filter_rejects_non_monotonic_split_rows(
         _ = run_deferred_filter(in_dir=shard_dir, out_dir=tmp_path / "filter_out")
 
 
-def test_run_deferred_filter_rejects_lineage_symlinks_during_curated_copy(
+def test_run_deferred_filter_ignores_public_lineage_tree_when_curating_minimal_outputs(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -762,15 +879,11 @@ def test_run_deferred_filter_rejects_lineage_symlinks_during_curated_copy(
         lambda *_args, **_kwargs: (True, {"skill_full": 0.9}),
     )
 
-    with pytest.raises(RuntimeError, match="must not be a symlink"):
-        _ = run_deferred_filter(in_dir=in_dir, out_dir=out_dir, curated_out_dir=curated_out)
-    assert list(out_dir.iterdir()) == []
-    assert list(curated_out.iterdir()) == []
+    result = run_deferred_filter(in_dir=in_dir, out_dir=out_dir, curated_out_dir=curated_out)
 
-    with pytest.raises(RuntimeError, match="must not be a symlink"):
-        _ = run_deferred_filter(in_dir=in_dir, out_dir=out_dir, curated_out_dir=curated_out)
-    assert list(out_dir.iterdir()) == []
-    assert list(curated_out.iterdir()) == []
+    assert result.accepted_datasets == 1
+    assert (curated_out / "shard_00000" / DATASET_CATALOG_FILENAME).exists()
+    assert not (curated_out / "shard_00000" / "lineage").exists()
 
 
 def test_run_deferred_filter_cleans_up_curated_output_after_split_exhaustion_failure(
@@ -790,7 +903,7 @@ def test_run_deferred_filter_cleans_up_curated_output_after_split_exhaustion_fai
         compression="zstd",
     )
 
-    metadata_path = in_dir / "shard_00000" / "metadata.ndjson"
+    metadata_path = in_dir / "shard_00000" / DATASET_CATALOG_FILENAME
     records = _load_ndjson(metadata_path)
     _write_ndjson_records(metadata_path, [records[0]])
 

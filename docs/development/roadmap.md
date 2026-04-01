@@ -47,18 +47,17 @@ Roadmap ranking is currently optimized for downstream PFN utility:
 - primary: curriculum-aware dataset levers that improve downstream model quality
   by making generated corpora thoughtfully harder while preserving
   reproducibility and acceptable throughput
-- near-term downstream contract: `tab-foundry` now needs one carried dagzoo
-  curriculum/SCM slice with comparable dataset-size and task-complexity bands
-  for classification scaling, so steering and stress-profile work should
-  preserve stable regime identity rather than reopen retired stagewise
-  complexity controls
-- near-term evidence: `tab-foundry` harder-ladder results currently favor
-  noise drift, graph drift, and structured missingness over broader new
-  generator subsystems as the next harder-front candidates
+- near-term downstream contract: carried curriculum/SCM slices need stable
+  regime identity with comparable dataset-size and task-complexity bands, so
+  steering and stress-profile work should preserve those identities rather than
+  reopen retired stagewise complexity controls
+- near-term evidence: recent harder-front evaluation currently favors noise
+  drift, graph drift, and structured missingness over broader new generator
+  subsystems as the next harder-front candidates
 - implemented baseline: downstream handoff now ships through
   `dagzoo generate --handoff-root` plus `handoff_manifest.json` so downstream
-  repos such as `tab-foundry` can consume generated corpora without a parallel
-  request-only contract
+  consumers can ingest generated corpora without a parallel request-only
+  contract
 - immediate follow-on: the next downstream ask is not a new handoff protocol;
   it is stable carried-slice identity and regime metadata on top of the
   shipped one-way handoff
@@ -79,7 +78,7 @@ Lower rank means higher priority. Rank `0` is reserved for completed items retai
 | 0    | RD-014     | Stage-level benchmark observability and telemetry                      | implemented | Now       | `BL-82` (completed historical delivery under `BL-49`)                                                            |
 | 0    | RD-015     | Keyed RNG semantic reproducibility                                     | implemented | Now       | `BL-90 -> BL-133 -> BL-134 -> BL-135 -> BL-136 -> BL-137`                                                        |
 | 0    | RD-009     | Filtered dataset throughput and deferred-filter scaling                | implemented | Now       | `BL-49 -> BL-148 -> BL-149 -> BL-150` (completed), `BL-84 -> BL-85` (deferred follow-ons)                        |
-| 0    | RD-016     | Generate-handoff manifest and one-way `tab-foundry` handoff            | implemented | Now       | `BL-143 -> BL-144 -> BL-145 -> BL-146 -> BL-147` (completed)                                                     |
+| 0    | RD-016     | Generate-handoff manifest and one-way downstream handoff               | implemented | Now       | `BL-143 -> BL-144 -> BL-145 -> BL-146 -> BL-147` (completed)                                                     |
 | 0    | RD-011     | Mechanism diversity expansion with measurable effective-diversity gain | implemented | Now       | `#28 -> #240` (completed), `#220` (later analytical follow-on), `BL-26 -> BL-151 -> BL-29 -> BL-30` (historical) |
 | 0    | RD-008     | Meta-feature coverage steering                                         | implemented | Now       | `#246 -> #251 -> #256 -> #261 -> #266` (completed)                                                               |
 | 1    | RD-005     | Robustness stress profiles (hard-task/adversarial regimes)             | research    | Now       | `#247 -> #252 -> #257 -> #262 -> #267`                                                                           |
@@ -178,7 +177,7 @@ graph TD
 | PFN task coverage (classification, regression, time-series)         | `partial`     | Classification and regression generation pipelines are fully supported with deterministic seeds, keyed replay metadata, and benchmark workflows                                                                                                                                                               | No time-series generation mode, temporal metadata contract, or temporal diagnostics/guardrails                                                   | RD-013         |
 | Staged complexity scaling (features/nodes/samples)                  | `retired`     | Historical staged-complexity implementation (RD-006) has been retired in favor of explicit split sizing and fixed-layout generation                                                                                                                                                                           | Not active                                                                                                                                       | RD-006         |
 | Hardware-native performance (Torch + hardware-aware tuning)         | `partial`     | Torch CPU/CUDA/MPS path, hardware detection, coarse profile-based tuning, benchmark suite, and stage-level generation/write/filter metrics are implemented                                                                                                                                                    | Hardware-adaptive autotuning is not implemented; any further throughput work is deferred to later follow-ons after the completed RD-009 baseline | RD-010, RD-014 |
-| Downstream synthetic-corpus handoff                                 | `implemented` | `dagzoo generate --handoff-root` emits `handoff_manifest.json`, writes generated handoff artifacts under `generated/`, and the docs include a reproducible one-way `dagzoo -> tab-foundry` smoke workflow                                                                                                     | Closed-loop downstream feedback remains intentionally deferred beyond the one-way handoff baseline                                               | RD-016         |
+| Downstream synthetic-corpus handoff                                 | `implemented` | `dagzoo generate --handoff-root` emits `handoff_manifest.json`, writes generated handoff artifacts under `generated/`, and the docs describe a reproducible one-way downstream smoke workflow                                                                                                                 | Closed-loop downstream feedback remains intentionally deferred beyond the one-way handoff baseline                                               | RD-016         |
 
 ## Current Implementation Baseline
 
@@ -387,11 +386,12 @@ Use the canonical docs instead:
   - Diagnostics artifacts persist steering-aware coverage summaries.
   - Tests and changelog entries cover the shipped steering surface.
 - Evidence context:
-  - `tab-foundry` branch `tf-rd-020-harder-dagzoo-ladder-v1-execute` currently shows the strongest validation log-loss improvements from noise drift v2 (`-3.897`), graph drift v2 (`-3.892`), MNAR v2 (`-3.851`), and MAR v2 (`-3.850`).
-  - This points toward a curriculum built from progressively harder missingness and drift regimes rather than a return to the retired RD-006 shell.
-  - The current `tab-foundry` classification-first scaling plan now treats RD-008
-    steering outputs as the upstream source for one carried harder-front slice;
-    follow-on stress-profile work should preserve that fixed-slice identity.
+  - Current harder-front evaluation points toward a curriculum built from
+    progressively harder missingness and drift regimes rather than a return to
+    the retired RD-006 shell.
+  - RD-008 steering outputs should stay usable as the upstream source for one
+    carried harder-front slice, and follow-on stress-profile work should
+    preserve that fixed-slice identity.
 - Current repo baseline:
   - `diagnostics.meta_feature_targets` remains supported as reporting-only metadata for coverage summaries.
   - Steering is part of the current implementation baseline rather than future roadmap scope.
@@ -535,7 +535,7 @@ Use the canonical docs instead:
   - Generated bundle metadata includes keyed replay paths for canonical batch replay.
   - The Linear implementation chain is closed and moved to historical traceability.
 
-### RD-016: Generate-Handoff Manifest and One-Way `tab-foundry` Handoff
+### RD-016: Generate-Handoff Manifest and One-Way Downstream Handoff
 
 - Status: `implemented`
 - Milestone: `Now`
@@ -543,17 +543,21 @@ Use the canonical docs instead:
 - Pillar alignment: hardware-native performance, tabular realism
 - Goal: let downstream repos consume generated corpora plus machine-readable handoff metadata directly from the canonical generate workflow, without a parallel request-only contract.
 - Linear tracking: epic `BL-143`; dependency chain `BL-144 -> BL-145 -> BL-146 -> BL-147`
-- Repo touchpoints: `src/dagzoo/cli/`, `src/dagzoo/core/`, `docs/`, downstream `tab-foundry`
+- Repo touchpoints: `src/dagzoo/cli/`, `src/dagzoo/core/`, `docs/`, downstream consumers
 - Exit criteria:
   - `dagzoo generate --handoff-root` publishes a versioned handoff manifest without a separate request-file schema.
   - Handoff execution stays on the canonical generate path with effective-config traceability.
-  - A machine-readable handoff manifest exposes generated-corpus paths, stage-throughput context, invocation metadata, and diversity-artifact paths.
-  - Docs include at least one reproducible `dagzoo -> tab-foundry` smoke workflow.
+  - A machine-readable handoff manifest exposes generated-corpus paths,
+    stage-throughput context, invocation metadata, and provenance summaries.
+  - Docs include at least one reproducible one-way downstream smoke workflow.
   - Closed-loop feedback ingestion remains explicitly out of scope until the one-way handoff is stable.
 - Completion evidence:
   - `dagzoo generate --handoff-root` rejects stale handoff roots before execution.
-  - Handoff runs publish a versioned `handoff_manifest.json` at the handoff root with generate invocation metadata, artifact paths, throughput context, hardware metadata, and nullable diversity-artifact paths.
-  - Public docs cover the handoff artifact layout, manifest contract, and one-way downstream smoke workflow.
+  - Handoff runs publish a versioned `handoff_manifest.json` at the handoff
+    root with generated-corpus identity, artifact paths, and provenance
+    summaries.
+  - Public docs cover the handoff artifact layout, manifest contract, and
+    one-way downstream smoke workflow.
   - The Linear implementation chain `BL-143 -> BL-144 -> BL-145 -> BL-146 -> BL-147` is closed.
   - The next downstream follow-on is carried regime identity on top of this
     manifest contract, not a second handoff protocol.
@@ -571,7 +575,7 @@ Use the canonical docs instead:
 - RD-012 noise family diversification, completed via `#24`, `#25`, `#26`, and `#27`
 - RD-014 stage-level benchmark observability and telemetry, completed via `BL-82`
 - RD-015 keyed RNG semantic reproducibility, completed via `BL-90`, `BL-133`, `BL-134`, `BL-135`, `BL-136`, and `BL-137`
-- RD-016 generate-handoff manifest and one-way `tab-foundry` handoff, completed via `BL-143`, `BL-144`, `BL-145`, `BL-146`, and `BL-147`
+- RD-016 generate-handoff manifest and one-way downstream handoff, completed via `BL-143`, `BL-144`, `BL-145`, `BL-146`, and `BL-147`
 
 ### Now
 
@@ -590,11 +594,13 @@ Use the canonical docs instead:
 - RD-015 is implemented and provides the semantic RNG contract that active throughput or handoff work must preserve.
 - RD-009 is implemented and now serves as the baseline canonical `generate -> filter` pipeline for later handoff and runtime work.
 - RD-016 is implemented on top of the canonical `generate -> filter` pipeline from RD-009 and does not introduce a parallel configuration surface that the repo has already removed.
-- RD-016 is sufficient for the current one-way `dagzoo -> tab-foundry` contract;
-  the next downstream gap is stable carried-slice identity and regime metadata,
-  not a new handoff protocol.
+- RD-016 is sufficient for the current one-way downstream handoff; the next
+  downstream gap is stable carried-slice identity and regime metadata, not a
+  new handoff protocol.
 - RD-011 is implemented and provides the shipped mechanism-diversity baseline; `#220` remains a later analytical follow-on rather than unfinished roadmap delivery.
-- RD-008 is the top active data-lever item because current `tab-foundry` harder-ladder evidence favors noise drift, graph drift, and structured missingness as the strongest near-term harder fronts.
+- RD-008 is the top active data-lever item because current harder-front
+  evidence favors noise drift, graph drift, and structured missingness as the
+  strongest near-term harder fronts.
 - RD-008 should compose existing RD-003, RD-004, and RD-012 surfaces plus `diagnostics.meta_feature_targets` rather than reviving the retired RD-006 stagewise feature/node/graph shell.
 - RD-008 should now also be read as the upstream contract for one carried
   harder-front slice in downstream classification scaling rather than as purely

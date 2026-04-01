@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 import torch
+from conftest import load_repo_config
 
-from dagzoo.config import GeneratorConfig
 from dagzoo.core.execution_semantics import typed_converter_specs
 from dagzoo.core.fixed_layout.batched import (
     FixedLayoutBatchRng,
@@ -29,7 +29,6 @@ from dagzoo.core.fixed_layout.plan_types import (
     FixedLayoutExecutionPlan,
     FixedLayoutLatentPlan,
     FixedLayoutNodePlan,
-    FixedLayoutTargetHeadPlan,
     GaussianMatrixPlan,
     GpFunctionPlan,
     KernelMatrixPlan,
@@ -348,7 +347,7 @@ def test_fixed_layout_batch_rng_seed_matches_manual_seed_root_stream() -> None:
 def test_build_fixed_layout_execution_plan_uses_keyed_node_roots(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = GeneratorConfig.from_yaml("configs/default.yaml")
+    config = load_repo_config()
     config.dataset.task = "regression"
 
     layout = LayoutPlan(
@@ -365,10 +364,7 @@ def test_build_fixed_layout_execution_plan_uses_keyed_node_roots(
         graph_edge_density=0.5,
         adjacency=torch.tensor([[False, True], [False, False]], dtype=torch.bool),
         feature_node_assignment=[0],
-        target_parent_features=[0],
-        target_parent_prior="all_features",
-        target_parent_regime="all_features",
-        target_parent_sqrt_threshold=1,
+        target_to_node=1,
     )
     observed_spec_roots: list[tuple[int, int]] = []
     observed_plan_roots: list[tuple[int, int]] = []
@@ -385,6 +381,7 @@ def test_build_fixed_layout_execution_plan_uses_keyed_node_roots(
         *,
         node_index: int,
         parent_indices: tuple[int, ...] | list[int],
+        parent_output_dims: tuple[int, ...] | list[int] | None = None,
         converter_specs: list[ConverterSpec],
         generator: torch.Generator | None = None,
         keyed_rng: KeyedRng | None = None,
@@ -392,15 +389,18 @@ def test_build_fixed_layout_execution_plan_uses_keyed_node_roots(
         mechanism_logit_tilt: float,
         function_family_mix: dict[str, float] | None,
     ) -> FixedLayoutNodePlan:
-        del device, mechanism_logit_tilt, function_family_mix
+        del parent_output_dims, device, mechanism_logit_tilt, function_family_mix
         assert generator is None
         assert keyed_rng is not None
         observed_plan_roots.append((node_index, keyed_rng.child_seed("probe")))
         typed_specs = typed_converter_specs(converter_specs)
-        converter_kind = (
-            "target_reg" if typed_specs and typed_specs[0].kind == "target_reg" else "num"
+        converter_plans = tuple(
+            NumericConverterPlan(
+                kind="target_reg" if spec.kind == "target_reg" else "num",
+                warp_enabled=False,
+            )
+            for spec in typed_specs
         )
-        converter_plans = (NumericConverterPlan(kind=converter_kind, warp_enabled=False),)
         return FixedLayoutNodePlan(
             node_index=node_index,
             parent_indices=tuple(int(parent_index) for parent_index in parent_indices),
@@ -435,12 +435,13 @@ def test_build_fixed_layout_execution_plan_uses_keyed_node_roots(
     assert observed_plan_roots == [
         (0, KeyedRng(31).child_seed("node_plan", 0, "probe")),
         (1, KeyedRng(31).child_seed("node_plan", 1, "probe")),
-        (2, KeyedRng(31).child_seed("target_head", "probe")),
     ]
     assert execution_plan.node_plans[0].compiled_converter_groups
     assert execution_plan.node_plans[0].compiled_converter_groups[0].spec_indices == (0,)
-    assert execution_plan.target_head_plan is not None
-    assert execution_plan.target_head_plan.parent_feature_indices == (0,)
+    assert [spec.key for spec in execution_plan.node_plans[1].converter_specs] == [
+        "feature_1",
+        "target",
+    ]
 
 
 def test_apply_node_plan_batch_grouped_numeric_converters_match_split_execution() -> None:
@@ -784,7 +785,7 @@ def test_apply_node_plan_batch_keeps_center_random_fn_groups_split(
 def test_generate_fixed_layout_raw_batch_keys_seeded_batch_rng_per_node(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cfg = GeneratorConfig.from_yaml("configs/default.yaml")
+    cfg = load_repo_config()
     cfg.dataset.task = "regression"
     cfg.dataset.n_train = 4
     cfg.dataset.n_test = 2
@@ -803,10 +804,7 @@ def test_generate_fixed_layout_raw_batch_keys_seeded_batch_rng_per_node(
         graph_edge_density=0.0,
         adjacency=torch.zeros((2, 2), dtype=torch.bool),
         feature_node_assignment=[],
-        target_parent_features=[],
-        target_parent_prior="all_features",
-        target_parent_regime="all_features",
-        target_parent_sqrt_threshold=1,
+        target_to_node=1,
     )
     node_plan = FixedLayoutNodePlan(
         node_index=0,
@@ -820,12 +818,20 @@ def test_generate_fixed_layout_raw_batch_keys_seeded_batch_rng_per_node(
             function=LinearFunctionPlan(matrix=GaussianMatrixPlan()),
         ),
     )
-    execution_plan = FixedLayoutExecutionPlan(
-        node_plans=(node_plan, node_plan),
-        target_head_plan=FixedLayoutTargetHeadPlan(
-            parent_feature_indices=(),
-            node_plan=node_plan,
+    target_node_plan = FixedLayoutNodePlan(
+        node_index=1,
+        parent_indices=(),
+        converter_specs=(),
+        converter_plans=(),
+        converter_groups=(),
+        latent=FixedLayoutLatentPlan(required_dim=0, extra_dim=1, total_dim=1),
+        source=RandomPointsNodeSource(
+            base_kind="normal",
+            function=LinearFunctionPlan(matrix=GaussianMatrixPlan()),
         ),
+    )
+    execution_plan = FixedLayoutExecutionPlan(
+        node_plans=(node_plan, target_node_plan),
     )
     keyed_paths: list[tuple[str | int, ...]] = []
 
@@ -840,7 +846,6 @@ def test_generate_fixed_layout_raw_batch_keys_seeded_batch_rng_per_node(
         noise_sigma_multiplier: float,
         noise_spec,
         runtime_metrics_out=None,
-        target_teacher_conditionals_out=None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         _ = (
             _config,
@@ -850,11 +855,13 @@ def test_generate_fixed_layout_raw_batch_keys_seeded_batch_rng_per_node(
             noise_sigma_multiplier,
             noise_spec,
             runtime_metrics_out,
-            target_teacher_conditionals_out,
         )
         assert rng.keyed_root is not None
         keyed_paths.append(rng.keyed_root.path)
-        return torch.zeros((rng.batch_size, n_rows, 1), device=rng.device), {}
+        extracted = {"target": torch.zeros((rng.batch_size, n_rows), device=rng.device)}
+        if int(_node_plan.node_index) != int(layout.target_to_node):
+            extracted = {}
+        return torch.zeros((rng.batch_size, n_rows, 1), device=rng.device), extracted
 
     monkeypatch.setattr(
         "dagzoo.core.fixed_layout.batched._apply_node_plan_batch",
@@ -872,13 +879,13 @@ def test_generate_fixed_layout_raw_batch_keys_seeded_batch_rng_per_node(
         emit_features=False,
     )
 
-    assert keyed_paths == [("node", 0), ("node", 1), ("target_head",)]
+    assert keyed_paths == [("node", 0), ("node", 1)]
 
 
 def test_generate_fixed_layout_raw_batch_reports_runtime_metrics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cfg = GeneratorConfig.from_yaml("configs/default.yaml")
+    cfg = load_repo_config()
     cfg.dataset.task = "regression"
     cfg.dataset.n_train = 4
     cfg.dataset.n_test = 2
@@ -897,44 +904,30 @@ def test_generate_fixed_layout_raw_batch_reports_runtime_metrics(
         graph_edge_density=0.0,
         adjacency=torch.zeros((1, 1), dtype=torch.bool),
         feature_node_assignment=[0],
-        target_parent_features=[0],
-        target_parent_prior="all_features",
-        target_parent_regime="all_features",
-        target_parent_sqrt_threshold=1,
+        target_to_node=0,
     )
-    typed_specs = typed_converter_specs([ConverterSpec(key="feature_0", kind="num", dim=1)])
+    typed_specs = typed_converter_specs(
+        [
+            ConverterSpec(key="feature_0", kind="num", dim=1),
+            ConverterSpec(key="target", kind="target_reg", dim=1),
+        ]
+    )
     node_plan = FixedLayoutNodePlan(
         node_index=0,
         parent_indices=(),
         converter_specs=typed_specs,
-        converter_plans=(NumericConverterPlan(kind="num", warp_enabled=False),),
-        converter_groups=(NumericConverterGroup(spec_indices=(0,)),),
-        latent=FixedLayoutLatentPlan(required_dim=1, extra_dim=0, total_dim=1),
+        converter_plans=(
+            NumericConverterPlan(kind="num", warp_enabled=False),
+            NumericConverterPlan(kind="target_reg", warp_enabled=False),
+        ),
+        converter_groups=(NumericConverterGroup(spec_indices=(0, 1)),),
+        latent=FixedLayoutLatentPlan(required_dim=2, extra_dim=0, total_dim=2),
         source=RandomPointsNodeSource(
             base_kind="normal",
             function=LinearFunctionPlan(matrix=GaussianMatrixPlan()),
         ),
     )
-    execution_plan = FixedLayoutExecutionPlan(
-        node_plans=(node_plan,),
-        target_head_plan=FixedLayoutTargetHeadPlan(
-            parent_feature_indices=(0,),
-            node_plan=FixedLayoutNodePlan(
-                node_index=1,
-                parent_indices=(0,),
-                converter_specs=typed_converter_specs(
-                    [ConverterSpec(key="target", kind="target_reg", dim=1)]
-                ),
-                converter_plans=(NumericConverterPlan(kind="target_reg", warp_enabled=False),),
-                converter_groups=(NumericConverterGroup(spec_indices=(0,)),),
-                latent=FixedLayoutLatentPlan(required_dim=1, extra_dim=0, total_dim=1),
-                source=RandomPointsNodeSource(
-                    base_kind="normal",
-                    function=LinearFunctionPlan(matrix=GaussianMatrixPlan()),
-                ),
-            ),
-        ),
-    )
+    execution_plan = FixedLayoutExecutionPlan(node_plans=(node_plan,))
 
     def _stub_apply_node_plan_batch(
         _config,
@@ -947,7 +940,6 @@ def test_generate_fixed_layout_raw_batch_reports_runtime_metrics(
         noise_sigma_multiplier: float,
         noise_spec,
         runtime_metrics_out=None,
-        target_teacher_conditionals_out=None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         _ = (
             _config,
@@ -956,7 +948,6 @@ def test_generate_fixed_layout_raw_batch_reports_runtime_metrics(
             device,
             noise_sigma_multiplier,
             noise_spec,
-            target_teacher_conditionals_out,
         )
         if runtime_metrics_out is not None:
             runtime_metrics_out["node_apply_elapsed_seconds"] = (
@@ -971,10 +962,12 @@ def test_generate_fixed_layout_raw_batch_reports_runtime_metrics(
             runtime_metrics_out["converter_cpu_time_seconds"] = (
                 float(runtime_metrics_out.get("converter_cpu_time_seconds", 0.0)) + 0.1
             )
-        key = "target" if _node_plan.node_index == 1 else "feature_0"
         return (
-            torch.zeros((rng.batch_size, n_rows, 1), device=rng.device),
-            {key: torch.zeros((rng.batch_size, n_rows), device=rng.device)},
+            torch.zeros((rng.batch_size, n_rows, 2), device=rng.device),
+            {
+                "feature_0": torch.zeros((rng.batch_size, n_rows), device=rng.device),
+                "target": torch.zeros((rng.batch_size, n_rows), device=rng.device),
+            },
         )
 
     monkeypatch.setattr(
@@ -998,12 +991,10 @@ def test_generate_fixed_layout_raw_batch_reports_runtime_metrics(
     assert x is not None
     assert x.shape == (2, 6, 1)
     assert y.shape == (2, 6)
-    assert runtime_metrics["node_apply_elapsed_seconds"] == pytest.approx(2.5)
-    assert runtime_metrics["node_apply_cpu_time_seconds"] == pytest.approx(1.5)
-    assert runtime_metrics["converter_elapsed_seconds"] == pytest.approx(0.5)
-    assert runtime_metrics["converter_cpu_time_seconds"] == pytest.approx(0.2)
-    assert runtime_metrics["target_materialization_elapsed_seconds"] >= 0.0
-    assert runtime_metrics["target_materialization_cpu_time_seconds"] >= 0.0
+    assert runtime_metrics["node_apply_elapsed_seconds"] == pytest.approx(1.25)
+    assert runtime_metrics["node_apply_cpu_time_seconds"] == pytest.approx(0.75)
+    assert runtime_metrics["converter_elapsed_seconds"] == pytest.approx(0.25)
+    assert runtime_metrics["converter_cpu_time_seconds"] == pytest.approx(0.1)
     assert runtime_metrics["feature_materialization_elapsed_seconds"] >= 0.0
     assert runtime_metrics["feature_materialization_cpu_time_seconds"] >= 0.0
     assert runtime_metrics["raw_batch_elapsed_seconds"] >= 0.0
@@ -1045,7 +1036,7 @@ def test_lp_distances_to_centers_matches_dense_reference() -> None:
 
 
 def test_generate_fixed_layout_label_batch_matches_graph_batch_targets() -> None:
-    cfg = GeneratorConfig.from_yaml("configs/default.yaml")
+    cfg = load_repo_config()
     cfg.dataset.task = "classification"
     cfg.dataset.n_train = 6
     cfg.dataset.n_test = 4

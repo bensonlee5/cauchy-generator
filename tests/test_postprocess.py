@@ -5,6 +5,7 @@ import torch
 from conftest import make_generator as _make_generator
 
 from dagzoo.config import DatasetConfig
+from dagzoo.core.validation import InvalidFeatureMatrixError
 from dagzoo.postprocess.postprocess import (
     _clip_and_standardize_rows,
     inject_missingness,
@@ -61,6 +62,25 @@ def test_removes_constant_columns() -> None:
     xtp, _, xtep, _, ft_out = postprocess_dataset(xt, yt, xte, yte, ft, task, KeyedRng(0), "cpu")
     assert xtp.shape[1] < 4
     assert len(ft_out) == xtp.shape[1]
+
+
+def test_postprocess_raises_specific_reason_when_all_columns_are_constant() -> None:
+    xt = torch.ones((16, 3), dtype=torch.float32)
+    xte = torch.ones((8, 3), dtype=torch.float32)
+    yt = torch.randint(0, 2, (16,), generator=_make_generator(123), dtype=torch.int64)
+    yte = torch.randint(0, 2, (8,), generator=_make_generator(124), dtype=torch.int64)
+
+    with pytest.raises(InvalidFeatureMatrixError, match="all_constant_features"):
+        postprocess_dataset(
+            xt,
+            yt,
+            xte,
+            yte,
+            ["num", "num", "num"],
+            "classification",
+            KeyedRng(9),
+            "cpu",
+        )
 
 
 def test_standardizes_numeric() -> None:

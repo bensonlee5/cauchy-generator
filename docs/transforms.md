@@ -969,9 +969,9 @@ class="math inline">\((d_{\text{req}}, d_{\text{extra}})\)</span>,
 random weights <span class="math inline">\(w\)</span>, and scale <span
 class="math inline">\(s_j \rightarrow Z_j\)</span>.<br> <strong>Path to
 Final Output:</strong> <span class="math inline">\(Z_j
-\rightarrow\)</span> converter slices and extracted feature values -&gt;
-complete <code>X</code> -&gt; conditional target head -&gt; final
-<code>y</code>.<br></p>
+\rightarrow\)</span> converter slices, extracted feature values, and one
+selected target-node conversion -&gt; final
+<code>X</code>/<code>y</code>.<br></p>
 <p><strong>Rationale.</strong> Node generation is documented as an
 ordered contract because converter extraction and metadata semantics
 depend on stable execution order. The split into root sampling, parent
@@ -1021,8 +1021,8 @@ class="math inline">\(\mathsf{Agg} \rightarrow
 Z_{\text{comp}}\)</span>.<br> <strong>Path to Final Output:</strong>
 <span class="math inline">\(Z_{\text{comp}} \rightarrow\)</span> node
 mechanism output -&gt; updated <span class="math inline">\(Z_j\)</span>
--&gt; feature converter extraction -&gt; complete <code>X</code> -&gt;
-conditional target head -&gt; <code>y</code>.<br></p>
+-&gt; feature converter extraction plus target-node conversion -&gt;
+emitted <code>X</code>/<code>y</code>.<br></p>
 <p><strong>Rationale.</strong> The 50/50 concat-versus-aggregation
 branch injects both feature-mixing and commutative interaction patterns.
 This broadens functional regimes without changing the node interface
@@ -1078,18 +1078,17 @@ slice/writeback updates <span class="math inline">\(\rightarrow
 Z_{\text{post}}\)</span>.<br> <strong>Path to Final Output:</strong>
 <span class="math inline">\(Z_{\text{post}} \rightarrow\)</span>
 per-spec extracted values <span class="math inline">\((v_s)\)</span> and
-rewritten latent slices -&gt; assigned feature outputs -&gt; complete
-<code>X</code> -&gt; conditional target head -&gt; final
-<code>y</code>.<br></p>
+rewritten latent slices -&gt; assigned feature outputs plus one selected
+target-node conversion -&gt; final <code>X</code>/<code>y</code>.<br></p>
 <p><strong>Rationale.</strong> Sanitization, standardization, weighting,
 and norm scaling are applied before conversion to keep numerics stable
 across mechanism families. The slice-and-writeback loop formalizes how
 observable values are extracted while preserving latent continuity.</p>
 <p><strong>Current default semantic note.</strong> In the shipped default
-prior, this node pipeline emits complete features only. The target is then
-generated from the postprocessed complete feature matrix by a separately
-sampled conditional head, and optional missingness acts later as an
-observation process over emitted features.</p>
+prior, both feature converters and the target converter are attached to
+sampled latent nodes. One selected latent node emits <code>y</code>
+directly, and optional missingness acts later as an observation process
+over emitted features only.</p>
 <p>For each node, converter specs define required width:</p>
 <p><span class="math display">\[d_{\text{req}} = \sum_s \max(1, d_s),
 \quad d = d_{\text{req}} + d_{\text{extra}}, \quad d_{\text{extra}} =
@@ -1174,8 +1173,8 @@ X_{\text{aug}}, M_t \rightarrow Y_{\text{quad}}\)</span>.<br>
 <strong>Path to Final Output:</strong> <span
 class="math inline">\(Y_{\text{quad}} \rightarrow\)</span>
 interaction-heavy latent signal -&gt; converter extraction -&gt;
-nonlinear feature structure in <code>X</code>, which then conditions the
-separate target head for <code>y</code>.<br></p>
+nonlinear structure in emitted features and in any downstream target-node
+ancestry.<br></p>
 <p><strong>Rationale.</strong> Quadratic forms add pairwise interactions
 not available in pure linear maps. Subspace capping and bias
 augmentation balance expressivity with numerical stability and compute
@@ -1403,10 +1402,9 @@ Without converter diversity, even mechanistically diverse latent signals could
 produce tabular data where every numeric column looks Gaussian and every
 categorical column uses the same assignment logic — a subtle effective-diversity
 gap that is easy to overlook.</p>
-<p><strong>Current default semantic note.</strong> The default target path is a
-separate latent-complete-data conditional head applied after feature
-postprocess, rather than a target slice emitted directly from a latent DAG
-node.</p>
+<p><strong>Current default semantic note.</strong> The default target path
+attaches a target converter to one selected latent DAG node rather than
+sampling <code>y</code> from a separate post-feature head.</p>
 <p><strong>Primary Variable:</strong> <span
 class="math inline">\((X&#39;_s, v_s)\)</span> (converter output state
 and extracted observable value for spec <span
@@ -1415,9 +1413,9 @@ latent slice, converter kind, and converter parameters <span
 class="math inline">\(\rightarrow (X&#39;_s, v_s)\)</span>.<br>
 <strong>Path to Final Output:</strong> extracted <span
 class="math inline">\(v_s\)</span> values are assigned to feature
-slots and become complete <code>X</code>; the conditional target head
-then maps complete <code>X</code> to <code>y</code>; later missingness
-may censor emitted <code>X</code>; <span
+slots and become emitted feature values; one selected latent node emits
+<code>y</code> through its target converter; later missingness may censor
+emitted <code>X</code>; <span
 class="math inline">\(X&#39;_s\)</span> is written back to latent for
 downstream coupling.<br></p>
 <p><strong>Rationale.</strong> Converters are separated from mechanism

@@ -20,13 +20,6 @@ repos:
     language: system
     types_or: [python, pyi]
     pass_filenames: false
-  - id: mdformat
-    name: mdformat
-    entry: ./.venv/bin/mdformat
-    language: system
-    types: [markdown]
-    exclude: ^(WORKFLOW\.md|docs/transforms.md|site/)
-    pass_filenames: true
   - id: deptry
     name: deptry
     entry: ./.venv/bin/deptry .

@@ -19,7 +19,6 @@ from dagzoo.core.staged_artifacts import staged_output_path as _staged_output_pa
 from dagzoo.filtering.deferred_filter_artifacts import (
     _close_curated_shard_writer,
     _consume_expected_split,
-    _copy_lineage_tree_safe,
     _create_curated_shard_writer,
     _CuratedShardWriter,
     _ensure_curated_output_dir_safe,
@@ -36,6 +35,13 @@ from dagzoo.filtering.extra_trees_filter import _apply_extra_trees_filter_numpy
 from dagzoo.io.parquet_writer import (
     _require_pyarrow,
     pq,
+)
+from dagzoo.io.shard_contract import (
+    DATASET_CATALOG_FILENAME,
+    REPLAY_CATALOG_FILENAME,
+    internal_shard_dir,
+    iter_ndjson_records,
+    resolve_internal_root,
 )
 from dagzoo.math import sanitize_json as _sanitize_json
 
@@ -70,17 +76,42 @@ class _PackedSplitDataset:
 def _discover_shard_dirs(input_path: Path) -> list[Path]:
     """Resolve shard directories from a root output dir or a direct shard path."""
 
-    if input_path.is_dir() and (input_path / "metadata.ndjson").exists():
+    if input_path.is_dir() and _catalog_path_for_shard(input_path) is not None:
         return [input_path]
 
     shards = sorted(p for p in input_path.glob("shard_*") if p.is_dir())
-    shards = [p for p in shards if (p / "metadata.ndjson").exists()]
+    shards = [p for p in shards if _catalog_path_for_shard(p) is not None]
     if shards:
         return shards
 
     raise FileNotFoundError(
         "No shard directories found under input path. "
-        f"Expected either <dir>/metadata.ndjson or <dir>/shard_*/metadata.ndjson: {input_path}"
+        f"Expected either <dir>/{DATASET_CATALOG_FILENAME} "
+        f"or <dir>/shard_*/{DATASET_CATALOG_FILENAME}: {input_path}"
+    )
+
+
+def _catalog_path_for_shard(shard_dir: Path) -> Path | None:
+    """Return the public catalog path for one shard."""
+
+    candidate = shard_dir / DATASET_CATALOG_FILENAME
+    return candidate if candidate.exists() else None
+
+
+def _replay_catalog_path_for_shard(shard_dir: Path, *, internal_root: Path) -> Path:
+    """Return the replay metadata path for one shard."""
+
+    private_candidate = (
+        internal_shard_dir(
+            internal_root=internal_root,
+            shard_name=shard_dir.name,
+        )
+        / REPLAY_CATALOG_FILENAME
+    )
+    if private_candidate.exists():
+        return private_candidate
+    raise FileNotFoundError(
+        f"Missing replay metadata for shard {shard_dir}. Expected {private_candidate}."
     )
 
 
@@ -103,19 +134,9 @@ def _ensure_filter_output_dir_safe(out_dir: Path) -> None:
 
 
 def _iter_metadata_records(path: Path) -> Iterator[dict[str, Any]]:
-    """Yield metadata.ndjson records for one shard."""
+    """Yield NDJSON records for one shard."""
 
-    with path.open("r", encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, start=1):
-            if not line.strip():
-                continue
-            payload = json.loads(line)
-            if not isinstance(payload, dict):
-                raise ValueError(
-                    "Invalid metadata record in "
-                    f"{path}:{line_number}: expected object, got {type(payload)}"
-                )
-            yield payload
+    yield from iter_ndjson_records(path)
 
 
 def _build_packed_split_dataset(
@@ -318,6 +339,13 @@ def _filter_dataset(
         hard_skill_threshold=filter_cfg.hard_skill_threshold,
         stump_skill_threshold=filter_cfg.stump_skill_threshold,
         use_lineage_veto=filter_cfg.use_lineage_veto,
+        min_target_indegree=filter_cfg.min_target_indegree,
+        min_target_relevant_feature_count=filter_cfg.min_target_relevant_feature_count,
+        min_target_relevant_feature_fraction=filter_cfg.min_target_relevant_feature_fraction,
+        classification_kappa_threshold=filter_cfg.classification_kappa_threshold,
+        classification_require_prediction_diversity=(
+            filter_cfg.classification_require_prediction_diversity
+        ),
         n_jobs=filter_cfg.n_jobs,
     )
     elapsed_seconds = max(0.0, time.perf_counter() - start)
@@ -345,6 +373,7 @@ def run_deferred_filter(
         _ensure_curated_output_dir_safe(curated_path)
 
     shard_dirs = _discover_shard_dirs(input_path)
+    internal_root = resolve_internal_root(input_path)
 
     rejected_reason_counts: Counter[str] = Counter()
 
@@ -373,13 +402,21 @@ def run_deferred_filter(
     try:
         with staged_manifest_path.open("w", encoding="utf-8") as manifest_file:
             for shard_dir in shard_dirs:
-                metadata_path = shard_dir / "metadata.ndjson"
+                catalog_path = _catalog_path_for_shard(shard_dir)
+                if catalog_path is None:
+                    raise FileNotFoundError(
+                        f"Shard directory is missing a public catalog file: {shard_dir}"
+                    )
+                replay_path = _replay_catalog_path_for_shard(
+                    shard_dir,
+                    internal_root=internal_root,
+                )
                 train_path = shard_dir / "train.parquet"
                 test_path = shard_dir / "test.parquet"
-                if not metadata_path.exists() or not train_path.exists() or not test_path.exists():
+                if not train_path.exists() or not test_path.exists():
                     raise FileNotFoundError(
                         "Shard directory is missing required artifacts "
-                        "(metadata.ndjson/train.parquet/test.parquet): "
+                        f"({DATASET_CATALOG_FILENAME}/train.parquet/test.parquet): "
                         f"{shard_dir}"
                     )
 
@@ -390,8 +427,9 @@ def run_deferred_filter(
                 curated_written = 0
 
                 try:
-                    for record in _iter_metadata_records(metadata_path):
-                        dataset_index_raw = record.get("dataset_index")
+                    replay_records = _iter_metadata_records(replay_path)
+                    for catalog_record in _iter_metadata_records(catalog_path):
+                        dataset_index_raw = catalog_record.get("dataset_index")
                         if dataset_index_raw is None or isinstance(dataset_index_raw, bool):
                             raise ValueError(
                                 "Invalid dataset_index in metadata record: "
@@ -412,7 +450,24 @@ def run_deferred_filter(
                             )
                         last_dataset_index = dataset_index
 
-                        metadata_payload = record.get("metadata")
+                        try:
+                            replay_record = next(replay_records)
+                        except StopIteration as exc:
+                            raise ValueError(
+                                "Replay sidecar has fewer records than the public catalog: "
+                                f"shard={shard_dir} dataset_index={dataset_index}"
+                            ) from exc
+                        replay_dataset_index = replay_record.get("dataset_index")
+                        if (
+                            replay_dataset_index is None
+                            or int(replay_dataset_index) != dataset_index
+                        ):
+                            raise ValueError(
+                                "Replay sidecar dataset_index does not align with public catalog: "
+                                f"shard={shard_dir} expected={dataset_index} got={replay_dataset_index!r}"
+                            )
+
+                        metadata_payload = replay_record.get("metadata")
                         if not isinstance(metadata_payload, Mapping):
                             raise ValueError(
                                 "Invalid metadata payload for deferred filtering: "
@@ -448,7 +503,7 @@ def run_deferred_filter(
                                 if isinstance(metadata_payload.get("lineage"), Mapping)
                                 else None
                             ),
-                            lineage_base_dir=shard_dir,
+                            lineage_base_dir=replay_path.parent,
                             filter_cfg=filter_cfg,
                         )
                         total_elapsed_seconds += elapsed_seconds
@@ -458,11 +513,6 @@ def run_deferred_filter(
                             accepted=accepted,
                             filter_details=filter_details,
                         )
-
-                        normalized_record = dict(record)
-                        normalized_metadata = dict(metadata_payload)
-                        normalized_metadata["filter"] = filter_metadata
-                        normalized_record["metadata"] = normalized_metadata
 
                         reason_value = filter_details.get("reason")
                         reason = (
@@ -488,7 +538,7 @@ def run_deferred_filter(
                                     dataset_index=dataset_index,
                                     train_split=train_split,
                                     test_split=test_split,
-                                    record=normalized_record,
+                                    record=dict(catalog_record),
                                 )
                                 curated_written += 1
 
@@ -508,16 +558,19 @@ def run_deferred_filter(
 
                     _ensure_split_iter_exhausted(train_iter, split_path=train_path)
                     _ensure_split_iter_exhausted(test_iter, split_path=test_path)
+                    try:
+                        next(replay_records)
+                    except StopIteration:
+                        pass
+                    else:
+                        raise ValueError(
+                            "Replay sidecar contains extra records beyond public catalog coverage: "
+                            f"shard={shard_dir}"
+                        )
                 finally:
                     _close_curated_shard_writer(curated_writer)
 
                 if curated_writer is not None and curated_written > 0:
-                    source_lineage_dir = shard_dir / "lineage"
-                    if source_lineage_dir.exists():
-                        _copy_lineage_tree_safe(
-                            source_dir=source_lineage_dir,
-                            dest_dir=curated_writer.shard_dir / "lineage",
-                        )
                     promotable_curated_dirs.append(
                         (curated_writer.shard_dir, curated_writer.final_shard_dir)
                     )

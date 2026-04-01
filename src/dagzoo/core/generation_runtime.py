@@ -21,8 +21,10 @@ from dagzoo.core.shift import ShiftRuntimeParams
 from dagzoo.core.validation import (
     InfeasibleStratifiedSplitError,
     InvalidClassSplitError,
+    RetryableDegeneracyError,
     _classification_split_valid,
     _stratified_split_indices,
+    validate_pathway_output,
 )
 from dagzoo.postprocess.postprocess import (
     inject_missingness,
@@ -32,8 +34,6 @@ from dagzoo.postprocess.postprocess import (
 )
 from dagzoo.rng import KeyedRng
 from dagzoo.types import DatasetBundle
-
-_LABEL_TARGET_LOG_LOSS_PER_TEST_CELL = "label-target log loss per test cell"
 
 
 @dataclass(slots=True)
@@ -271,7 +271,6 @@ def _build_bundle_metadata(
     noise_runtime_selection: NoiseRuntimeSelection,
     missingness_summary: dict[str, Any] | None,
     class_structure: dict[str, Any] | None,
-    teacher_conditionals_metadata: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Build emitted dataset metadata for scalar and batched finalization paths."""
 
@@ -298,8 +297,7 @@ def _build_bundle_metadata(
                 "filter_rejection_rate": None,
             },
             "prior": {
-                "factorization": "independent_p_x_complete_and_p_y_given_x_complete",
-                "target_head": "latent_complete_x_conditional",
+                "target_derivation": "tabiclv2_latent_node",
                 "feature_generator": "latent_dag",
                 "missingness_stage": "post_target_observation",
                 "classification_validity_policy": "retry_only",
@@ -309,87 +307,11 @@ def _build_bundle_metadata(
             "config": copy.deepcopy(context.config_payload),
         }
     )
-    diagnostics_payload = context.config_payload.get("diagnostics")
-    teacher_export_enabled = bool(
-        isinstance(diagnostics_payload, dict)
-        and diagnostics_payload.get("teacher_conditional_export")
-    )
-    metadata["posterior_predictive"] = {
-        "factorization": metadata["prior"]["factorization"],
-        "teacher_conditional_export_enabled": teacher_export_enabled,
-        "teacher_conditionals_available": teacher_conditionals_metadata is not None,
-        "metric_definition": _LABEL_TARGET_LOG_LOSS_PER_TEST_CELL,
-    }
     if missingness_summary is not None:
         metadata["missingness"] = missingness_summary
     if class_structure is not None:
         metadata["class_structure"] = class_structure
-    if teacher_conditionals_metadata is not None:
-        metadata["teacher_conditionals"] = teacher_conditionals_metadata
-    assignments = metadata.get("lineage", {}).get("assignments")
-    if isinstance(assignments, dict):
-        target_parent_features = assignments.get("target_parent_features")
-        raw_feature_to_node = assignments.get("feature_to_node")
-        if isinstance(target_parent_features, list) and isinstance(raw_feature_to_node, list):
-            metadata["target_parent_summary"] = {
-                "count": int(assignments.get("target_parent_count", len(target_parent_features))),
-                "fraction": float(
-                    assignments.get(
-                        "target_parent_fraction",
-                        float(len(target_parent_features))
-                        / float(max(1, len(raw_feature_to_node))),
-                    )
-                ),
-                "prior": assignments.get("target_parent_prior"),
-                "regime": assignments.get("target_parent_regime"),
-                "sqrt_threshold": assignments.get("target_parent_sqrt_threshold"),
-                "features": [int(value) for value in target_parent_features],
-            }
     return metadata
-
-
-def _teacher_conditionals_metadata(
-    *,
-    y_test: torch.Tensor,
-    aux_meta: dict[str, Any],
-) -> dict[str, Any] | None:
-    raw_probs = aux_meta.get("teacher_conditional_test_probs")
-    raw_labels = aux_meta.get("teacher_conditional_class_labels")
-    if not isinstance(raw_probs, list) or not raw_probs:
-        return None
-    if not isinstance(raw_labels, list) or not raw_labels:
-        return None
-    probs = torch.as_tensor(raw_probs, dtype=torch.float32)
-    if probs.ndim != 2:
-        return None
-    if int(probs.shape[0]) != int(y_test.shape[0]):
-        return None
-    if int(probs.shape[1]) != len(raw_labels):
-        return None
-    labels = [int(label) for label in raw_labels]
-    y_test_cpu = y_test.to(device="cpu", dtype=torch.int64)
-    selected = probs.gather(1, y_test_cpu.unsqueeze(1)).squeeze(1).clamp_min(1e-12)
-    optimal_log_loss = float((-torch.log(selected)).mean().item())
-    return {
-        "schema_version": 1,
-        "target_split": "test",
-        "class_labels": labels,
-        "test_probs": probs.tolist(),
-        "optimal_log_loss_per_test_cell": optimal_log_loss,
-    }
-
-
-def _attach_teacher_conditionals_for_test_split(
-    aux_meta: dict[str, Any],
-    *,
-    test_idx: torch.Tensor,
-) -> None:
-    raw_probs = aux_meta.get("teacher_conditional_full_probs")
-    if not isinstance(raw_probs, list) or not raw_probs:
-        return
-    probs = torch.as_tensor(raw_probs, dtype=torch.float32)
-    test_probs = probs.index_select(0, test_idx.to(device="cpu", dtype=torch.int64))
-    aux_meta["teacher_conditional_test_probs"] = test_probs.tolist()
 
 
 def _finalize_processed_bundle(
@@ -415,6 +337,10 @@ def _finalize_processed_bundle(
 ) -> DatasetBundle:
     """Finalize one already-postprocessed dataset into the emitted bundle contract."""
 
+    validate_pathway_output(
+        torch.cat([x_train.to(torch.float32), x_test.to(torch.float32)], dim=0),
+        context="_finalize_processed_bundle.features",
+    )
     if context.missingness_enabled:
         x_train, x_test, missingness_summary = inject_missingness(
             x_train,
@@ -456,10 +382,6 @@ def _finalize_processed_bundle(
         noise_runtime_selection=noise_runtime_selection,
         missingness_summary=missingness_summary,
         class_structure=class_structure,
-        teacher_conditionals_metadata=_teacher_conditionals_metadata(
-            y_test=y_test,
-            aux_meta=aux_meta,
-        ),
     )
     return DatasetBundle(
         X_train=x_train,
@@ -533,10 +455,6 @@ def _finalize_generated_chunk_preserve_schema(
         train_idx_list.append(train_idx)
         test_idx_list.append(test_idx)
         postprocess_roots.append(dataset_root.keyed("attempt", attempt, "postprocess"))
-        _attach_teacher_conditionals_for_test_split(
-            aux_meta_batch[batch_index],
-            test_idx=test_idx,
-        )
 
     if not valid_positions:
         return results
@@ -598,7 +516,7 @@ def _finalize_generated_chunk_preserve_schema(
                 noise_runtime_selection=noise_runtime_selection,
                 dtype=dtype,
             )
-        except InvalidClassSplitError:
+        except (InvalidClassSplitError, RetryableDegeneracyError):
             continue
 
     return results
@@ -697,7 +615,6 @@ def _finalize_generated_tensors(
             feature_types=feature_types,
             feature_index_map=feature_index_map,
         )
-    _attach_teacher_conditionals_for_test_split(aux_meta, test_idx=test_idx)
     return _finalize_processed_bundle(
         config,
         layout,

@@ -21,6 +21,7 @@ from dagzoo.core.fixed_layout.plan_types import (
     fixed_layout_converter_groups,
 )
 from dagzoo.core.node_pipeline import apply_node_pipeline
+from dagzoo.core.validation import RetryableDegeneracyError
 
 
 @dataclass(slots=True)
@@ -200,3 +201,40 @@ def test_node_pipeline_splits_grouped_center_random_fn_converters(
         assert torch.all(torch.isfinite(value))
         torch.testing.assert_close(value, expected_extracted[key].squeeze(0))
     torch.testing.assert_close(actual_generator.get_state(), reference_generator.get_state())
+
+
+def test_apply_node_pipeline_retries_retryable_degeneracy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    specs = [ConverterSpec(key="v", kind="num", dim=1)]
+    typed_specs = typed_converter_specs(specs)
+    converter_plans = (NumericConverterPlan(kind="num", warp_enabled=False),)
+    node_plan = FixedLayoutNodePlan(
+        node_index=0,
+        parent_indices=(),
+        converter_specs=typed_specs,
+        converter_plans=converter_plans,
+        converter_groups=fixed_layout_converter_groups(typed_specs, converter_plans),
+        latent=FixedLayoutLatentPlan(required_dim=1, extra_dim=1, total_dim=2),
+        source=RandomPointsNodeSource(
+            base_kind="normal",
+            function=LinearFunctionPlan(matrix=GaussianMatrixPlan()),
+        ),
+    )
+    call_count = 0
+
+    def _stub_sample_node_plan(**_kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RetryableDegeneracyError("constant_pathway_output")
+        return node_plan
+
+    monkeypatch.setattr(node_pipeline_mod, "sample_node_plan", _stub_sample_node_plan)
+
+    latent, extracted = apply_node_pipeline([], 32, typed_specs, _make_generator(24), "cpu")
+
+    assert call_count == 2
+    assert latent.shape[0] == 32
+    assert torch.all(torch.isfinite(latent))
+    assert torch.all(torch.isfinite(extracted["v"]))

@@ -1,54 +1,6 @@
 {
-  "artifacts": {
-    "effective_config_path": "<ABSOLUTE_PATH>",
-    "effective_config_trace_path": "<ABSOLUTE_PATH>",
-    "generated_dir": "<ABSOLUTE_PATH>",
-    "run_root": "<ABSOLUTE_PATH>"
-  },
   "artifacts_relative": {
-    "effective_config_path": "generated/effective_config.yaml",
-    "effective_config_trace_path": "generated/effective_config_trace.yaml",
-    "generated_dir": "generated",
-    "run_root": "."
-  },
-  "checksums": {
-    "effective_config_sha256": "<SHA256>",
-    "effective_config_trace_sha256": "<SHA256>"
-  },
-  "defaults": {
-    "curation_policy": "none",
-    "recommended_training_artifact_key": "generated_dir",
-    "recommended_training_corpus": "generated"
-  },
-  "diversity_artifacts": {
-    "summary_json_path": null,
-    "summary_md_path": null
-  },
-  "generate_invocation": {
-    "config_path": "<ABSOLUTE_PATH>",
-    "overrides": {
-      "device": "cpu",
-      "diagnostics": false,
-      "diagnostics_out_dir": null,
-      "hardware_policy": "none",
-      "handoff_root": "<ABSOLUTE_PATH>",
-      "missing_mar_logit_scale": null,
-      "missing_mar_observed_fraction": null,
-      "missing_mechanism": null,
-      "missing_mnar_logit_scale": null,
-      "missing_rate": null,
-      "num_datasets": 2,
-      "rows": "1024..4096",
-      "seed": 7
-    }
-  },
-  "hardware": {
-    "backend": "cpu",
-    "device_name": "CPU",
-    "hardware_policy": "none",
-    "requested_device": "cpu",
-    "resolved_device": "cpu",
-    "tier": "cpu"
+    "generated_dir": "generated"
   },
   "identity": {
     "generate_run_id": "<RUN_ID>",
@@ -56,36 +8,19 @@
     "source_family": "dagzoo.fixed_layout_scm"
   },
   "provenance": {
-    "posterior_predictive_factorization": "independent_p_x_complete_and_p_y_given_x_complete",
-    "target_parent_below_sqrt_prob": 0.05,
-    "target_parent_count_range": {
-      "max": 7,
-      "min": 6
+    "target_derivation": "tabiclv2_latent_node",
+    "target_relevant_feature_count_range": {
+      "max": 6,
+      "min": 5
     },
-    "target_parent_fraction_range": {
-      "max": 0.8,
-      "min": 0.75
-    },
-    "target_parent_midrange_prob": 0.2,
-    "target_parent_near_max_band_min_fraction": 0.75,
-    "target_parent_prior": "near_max_mixture",
-    "target_parent_regimes_present": [
-      "midrange",
-      "near_max"
-    ],
-    "teacher_conditional_export": false,
-    "teacher_conditional_metric_definition": "label-target log loss per test cell"
+    "target_relevant_feature_fraction_range": {
+      "max": 0.75,
+      "min": 0.625
+    }
   },
   "schema_name": "dagzoo_generate_handoff_manifest",
-  "schema_version": 1,
+  "schema_version": 4,
   "summary": {
     "generated_datasets": 2
-  },
-  "throughput": {
-    "generation_stage": {
-      "datasets_per_minute": "<RATE>",
-      "elapsed_seconds": "<SECONDS>",
-      "generated_datasets": 2
-    }
   }
 }

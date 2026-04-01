@@ -1,0 +1,18 @@
+[
+  "dataset_id",
+  "dataset_index",
+  "feature_types",
+  "feature_types[]",
+  "group_ids",
+  "group_ids.cohort",
+  "group_ids.request_run",
+  "n_classes",
+  "n_features",
+  "n_test",
+  "n_train",
+  "target_derivation",
+  "target_relevance",
+  "target_relevance.feature_count",
+  "target_relevance.feature_fraction",
+  "task"
+]

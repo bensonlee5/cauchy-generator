@@ -11,6 +11,7 @@ from dagzoo.config import (
     DatasetConfig,
     normalize_missing_mechanism,
 )
+from dagzoo.core.validation import InvalidFeatureMatrixError
 from dagzoo.rng import KeyedRng
 from dagzoo.sampling import sample_missingness_mask
 
@@ -22,7 +23,7 @@ def _remove_constant_columns(
 
     keep = torch.std(x, dim=0, correction=0) > 1e-12
     if not torch.any(keep):
-        raise ValueError("All columns are constant after generation.")
+        raise InvalidFeatureMatrixError("all_constant_features")
     keep_indices = [int(i) for i, keep_col in enumerate(keep.tolist()) if keep_col]
     kept_types = [feature_types[i] for i in keep_indices]
     return x[:, keep], kept_types, keep_indices

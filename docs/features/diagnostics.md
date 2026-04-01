@@ -56,7 +56,7 @@ ______________________________________________________________________
 
 ### Operational triggers
 
-- You need per-dataset records in shard `metadata.ndjson` and summary-level metric coverage.
+- You need the stable public `dataset_catalog.ndjson` plus summary-level metric coverage.
 - You are validating whether presets or CLI overrides hit expected ranges.
 - You want benchmark runs to include richer context for guardrail triage.
 
@@ -105,7 +105,8 @@ ______________________________________________________________________
 
 ## What to inspect
 
-- Per-dataset `metadata.ndjson` records for realized generation parameters.
+- Public `dataset_catalog.ndjson` for stable per-dataset identity and emitted schema.
+- In-process `DatasetBundle.metadata` when you need rich realized generation parameters.
 - Coverage summaries for meta-features, enabled observability metrics, and steering movement when curriculum steering is enabled.
 - Benchmark summary guardrail sections that include diagnostics context.
 
@@ -132,7 +133,7 @@ emitting a separate artifact family. That section reports:
   emitted metadata for the generated run.
 
 This steering analysis is additive: it does not add new CLI flags and does not
-change the per-dataset `metadata.ndjson` contract.
+change the public per-dataset `dataset_catalog.ndjson` contract.
 
 ______________________________________________________________________
 

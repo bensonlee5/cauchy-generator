@@ -17,6 +17,7 @@ from dagzoo.io.lineage_schema import (
     validate_lineage_payload,
 )
 from dagzoo.io.parquet_writer import _sanitize_json, write_packed_parquet_shards_stream
+from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME, REPLAY_CATALOG_FILENAME
 from dagzoo.types import DatasetBundle
 
 
@@ -64,6 +65,9 @@ def _bundle_with_dense_lineage(seed: int) -> DatasetBundle:
         "assignments": {
             "feature_to_node": [0, 1],
             "target_to_node": 1,
+            "target_relevant_features": [0, 1],
+            "target_relevant_feature_count": 2,
+            "target_relevant_feature_fraction": 1.0,
         },
     }
     return bundle
@@ -98,7 +102,7 @@ def _stub_write_packed_split(*, state, split, dataset_index, x, y, compression) 
         f.write(f"{dataset_index}\n")
 
 
-def _load_metadata_records(path: Path) -> list[dict[str, object]]:
+def _load_ndjson_records(path: Path) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         records.append(json.loads(line))
@@ -126,10 +130,14 @@ def test_write_packed_parquet_shards_stream_writes_iterable(tmp_path, monkeypatc
     assert written == 3
     assert (tmp_path / "shard_00000" / "train.parquet").exists()
     assert (tmp_path / "shard_00000" / "test.parquet").exists()
-    assert (tmp_path / "shard_00001" / "metadata.ndjson").exists()
-    records = _load_metadata_records(tmp_path / "shard_00001" / "metadata.ndjson")
-    assert records[0]["dataset_index"] == 2
-    assert records[0]["metadata"]["peak_flops"] is None
+    assert (tmp_path / "shard_00001" / DATASET_CATALOG_FILENAME).exists()
+    public_records = _load_ndjson_records(tmp_path / "shard_00001" / DATASET_CATALOG_FILENAME)
+    replay_records = _load_ndjson_records(
+        tmp_path / "internal" / "shard_00001" / REPLAY_CATALOG_FILENAME
+    )
+    assert public_records[0]["dataset_index"] == 2
+    assert "metadata" not in public_records[0]
+    assert replay_records[0]["metadata"]["peak_flops"] is None
 
 
 def test_write_packed_parquet_shards_stream_writes_real_parquet_tables(tmp_path) -> None:
@@ -157,6 +165,7 @@ def test_write_packed_parquet_shards_stream_preserves_canonical_replay_metadata(
 
     cfg = GeneratorConfig.from_yaml("configs/default.yaml")
     cfg.runtime.device = "cpu"
+    cfg.runtime.layout_mode = "fixed"
     cfg.filter.enabled = False
     cfg.dataset.task = "regression"
     cfg.dataset.n_train = 32
@@ -172,7 +181,7 @@ def test_write_packed_parquet_shards_stream_preserves_canonical_replay_metadata(
     )
 
     assert written == 2
-    records = _load_metadata_records(tmp_path / "shard_00000" / "metadata.ndjson")
+    records = _load_ndjson_records(tmp_path / "internal" / "shard_00000" / REPLAY_CATALOG_FILENAME)
     assert [int(record["dataset_index"]) for record in records] == [0, 1]
     metadata = [record["metadata"] for record in records]
     assert [int(payload["seed"]) for payload in metadata] == [4321, 4321]
@@ -254,8 +263,7 @@ def test_write_packed_parquet_shards_stream_writes_lineage_metadata(tmp_path, mo
     )
     assert written == 1
 
-    shard_dir = tmp_path / "shard_00000"
-    records = _load_metadata_records(shard_dir / "metadata.ndjson")
+    records = _load_ndjson_records(tmp_path / "internal" / "shard_00000" / REPLAY_CATALOG_FILENAME)
     metadata = records[0]["metadata"]
     lineage = metadata["lineage"]
     assert lineage["schema_name"] == LINEAGE_SCHEMA_NAME
@@ -271,8 +279,9 @@ def test_write_packed_parquet_shards_stream_writes_lineage_metadata(tmp_path, mo
     assert isinstance(adjacency_ref["sha256"], str)
     assert len(adjacency_ref["sha256"]) == 64
 
-    blob_path = resolve_lineage_path(shard_dir, adjacency_ref["blob_path"])
-    index_path = resolve_lineage_path(shard_dir, adjacency_ref["index_path"])
+    internal_shard_dir = tmp_path / "internal" / "shard_00000"
+    blob_path = resolve_lineage_path(internal_shard_dir, adjacency_ref["blob_path"])
+    index_path = resolve_lineage_path(internal_shard_dir, adjacency_ref["index_path"])
     assert blob_path.exists()
     assert index_path.exists()
 
@@ -324,8 +333,7 @@ def test_generate_and_persist_compact_lineage_for_task(
     )
     assert written == 1
 
-    shard_dir = tmp_path / "shard_00000"
-    records = _load_metadata_records(shard_dir / "metadata.ndjson")
+    records = _load_ndjson_records(tmp_path / "internal" / "shard_00000" / REPLAY_CATALOG_FILENAME)
     metadata = records[0]["metadata"]
     lineage = metadata["lineage"]
     assert lineage["schema_version"] == LINEAGE_SCHEMA_VERSION_COMPACT
@@ -333,8 +341,9 @@ def test_generate_and_persist_compact_lineage_for_task(
 
     graph = lineage["graph"]
     adjacency_ref = graph["adjacency_ref"]
-    blob_path = resolve_lineage_path(shard_dir, adjacency_ref["blob_path"])
-    index_path = resolve_lineage_path(shard_dir, adjacency_ref["index_path"])
+    internal_shard_dir = tmp_path / "internal" / "shard_00000"
+    blob_path = resolve_lineage_path(internal_shard_dir, adjacency_ref["blob_path"])
+    index_path = resolve_lineage_path(internal_shard_dir, adjacency_ref["index_path"])
 
     n_nodes = int(graph["n_nodes"])
     with blob_path.open("rb") as f:
@@ -519,10 +528,10 @@ def test_write_packed_parquet_shards_stream_writes_lineage_index_on_failure(
     with pytest.raises(RuntimeError, match="forced split failure"):
         write_packed_parquet_shards_stream(bundles, tmp_path, shard_size=8, compression="zstd")
 
-    shard_dir = tmp_path / "shard_00000"
-    records = _load_metadata_records(shard_dir / "metadata.ndjson")
+    internal_shard_dir = tmp_path / "internal" / "shard_00000"
+    records = _load_ndjson_records(internal_shard_dir / REPLAY_CATALOG_FILENAME)
     adjacency_ref = records[0]["metadata"]["lineage"]["graph"]["adjacency_ref"]
-    index_path = resolve_lineage_path(shard_dir, adjacency_ref["index_path"])
+    index_path = resolve_lineage_path(internal_shard_dir, adjacency_ref["index_path"])
     assert index_path.exists()
 
     index_payload = json.loads(index_path.read_text(encoding="utf-8"))

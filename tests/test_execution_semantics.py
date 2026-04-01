@@ -51,6 +51,7 @@ from dagzoo.core.fixed_layout.plan_types import (
 )
 from dagzoo.core.layout_types import MechanismFamily
 from dagzoo.core.node_pipeline import apply_node_pipeline
+from dagzoo.core.validation import RetryableDegeneracyError, validate_function_plan_nondegeneracy
 from dagzoo.functions.random_functions import apply_random_function
 from dagzoo.rng import KeyedRng
 from dagzoo.sampling.random_points import sample_random_points
@@ -261,6 +262,149 @@ def test_sample_activation_plan_can_emit_gumbel_softmax(
     assert isinstance(plan, execution_semantics_mod.ParametricActivationPlan)
     assert plan.kind == "gumbel_softmax"
     assert plan.temperature == pytest.approx(0.75)
+
+
+@pytest.mark.parametrize(
+    ("plan", "label"),
+    [
+        (FixedActivationPlan(name="softmax"), "softmax"),
+        (FixedActivationPlan(name="onehot_argmax"), "onehot_argmax"),
+        (FixedActivationPlan(name="argsort"), "argsort"),
+        (FixedActivationPlan(name="rank"), "rank"),
+        (ParametricActivationPlan(kind="gumbel_softmax", temperature=0.75), "gumbel_softmax"),
+    ],
+)
+def test_validate_activation_plan_width_rejects_width_one_degenerate_variants(
+    plan: FixedActivationPlan | ParametricActivationPlan,
+    label: str,
+) -> None:
+    with pytest.raises(ValueError, match=label):
+        execution_semantics_mod._validate_activation_plan_width(
+            plan,
+            width=1,
+            context="probe",
+        )
+
+
+def test_sample_activation_plan_resamples_width_one_incompatible_fixed_activation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    draw_iter = iter([0, 1])
+    monkeypatch.setattr(execution_semantics_mod, "_rand_scalar", lambda *_args, **_kwargs: 1.0)
+    monkeypatch.setattr(
+        execution_semantics_mod,
+        "_randint_scalar",
+        lambda *_args, **_kwargs: next(draw_iter),
+    )
+    monkeypatch.setattr(execution_semantics_mod, "fixed_activation_names", lambda: ("rank", "relu"))
+
+    plan = execution_semantics_mod.sample_activation_plan(
+        keyed_rng=KeyedRng(141),
+        device="cpu",
+        width=1,
+    )
+
+    assert isinstance(plan, FixedActivationPlan)
+    assert plan.name == "relu"
+
+
+def test_sample_activation_plan_resamples_width_one_incompatible_gumbel_softmax(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scalar_iter = iter([0.0, 1.0])
+    index_iter = iter([4, 0])
+    monkeypatch.setattr(
+        execution_semantics_mod,
+        "_rand_scalar",
+        lambda *_args, **_kwargs: next(scalar_iter),
+    )
+    monkeypatch.setattr(
+        execution_semantics_mod,
+        "_randint_scalar",
+        lambda *_args, **_kwargs: next(index_iter),
+    )
+    monkeypatch.setattr(execution_semantics_mod, "_log_uniform", lambda *_args, **_kwargs: 0.75)
+    monkeypatch.setattr(execution_semantics_mod, "fixed_activation_names", lambda: ("relu",))
+
+    plan = execution_semantics_mod.sample_activation_plan(
+        keyed_rng=KeyedRng(142),
+        device="cpu",
+        width=1,
+    )
+
+    assert isinstance(plan, FixedActivationPlan)
+    assert plan.name == "relu"
+
+
+def test_sample_function_plan_for_family_nn_fails_closed_on_width_incompatible_activation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execution_semantics_mod, "_randint_scalar", lambda *_args, **_kwargs: 2)
+    monkeypatch.setattr(execution_semantics_mod, "_log_uniform", lambda *_args, **_kwargs: 1.0)
+    monkeypatch.setattr(execution_semantics_mod, "_sample_bool", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        execution_semantics_mod,
+        "sample_matrix_plan",
+        lambda *_args, **_kwargs: GaussianMatrixPlan(),
+    )
+    monkeypatch.setattr(
+        execution_semantics_mod,
+        "sample_activation_plan",
+        lambda *_args, **kwargs: (
+            FixedActivationPlan(name="rank")
+            if int(kwargs.get("width") or 0) == 1
+            else FixedActivationPlan(name="relu")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="hidden_activations\\[0\\].*width=1"):
+        execution_semantics_mod.sample_function_plan_for_family(
+            keyed_rng=KeyedRng(143),
+            family="nn",
+            input_dim=3,
+            out_dim=1,
+            mechanism_logit_tilt=0.0,
+            function_family_mix=None,
+            device="cpu",
+        )
+
+
+def test_validate_function_plan_nondegeneracy_rejects_single_stump_tree() -> None:
+    with pytest.raises(RetryableDegeneracyError, match="structurally degenerate") as exc_info:
+        validate_function_plan_nondegeneracy(TreeFunctionPlan(n_trees=1, depths=(1,)))
+
+    assert exc_info.value.reason == "degenerate_tree_plan"
+
+
+def test_sample_function_plan_for_family_tree_resamples_single_stump(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    n_tree_iter = iter([1.0, 2.0])
+    depth_iter = iter([1, 2, 3])
+    monkeypatch.setattr(
+        execution_semantics_mod,
+        "_log_uniform",
+        lambda *_args, **_kwargs: next(n_tree_iter),
+    )
+    monkeypatch.setattr(
+        execution_semantics_mod,
+        "_randint_scalar",
+        lambda *_args, **_kwargs: next(depth_iter),
+    )
+
+    plan = execution_semantics_mod.sample_function_plan_for_family(
+        keyed_rng=KeyedRng(144),
+        family="tree",
+        input_dim=4,
+        out_dim=3,
+        mechanism_logit_tilt=0.0,
+        function_family_mix=None,
+        device="cpu",
+    )
+
+    assert isinstance(plan, TreeFunctionPlan)
+    assert plan.n_trees == 2
+    assert plan.depths == (2, 3)
 
 
 @pytest.mark.parametrize(
@@ -546,12 +690,14 @@ def test_keyed_multi_parent_sampling_is_independent_across_parent_plans(
             generator: torch.Generator | None = None,
             *,
             keyed_rng: KeyedRng | None = None,
+            input_dim: int | None = None,
             out_dim: int,
             mechanism_logit_tilt: float,
             function_family_mix: dict[MechanismFamily, float] | None,
             device: str | None = None,
         ) -> LinearFunctionPlan:
             nonlocal parent_call_index
+            del input_dim
             rng, _ = execution_semantics_mod._resolve_sampling_generator(
                 generator=generator,
                 keyed_rng=keyed_rng,

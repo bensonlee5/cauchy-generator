@@ -93,7 +93,7 @@ ______________________________________________________________________
 
 ## What to inspect
 
-- Per-dataset `metadata.ndjson` entries:
+- In-process `DatasetBundle.metadata["noise_distribution"]`:
   - `noise_distribution.family_requested`
   - `noise_distribution.family_sampled`
   - `noise_distribution.sampling_strategy`

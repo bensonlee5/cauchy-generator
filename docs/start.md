@@ -33,22 +33,22 @@ dagzoo recipe list
 ```
 
 That command prints the stable recipe names and the regime each one is meant to
-approximate or stress. All shipped recipes now use the default factorized
-complete-data prior: sample complete `X`, then sample `y | X_complete`, then
-optionally apply missingness as a separate observation process.
+approximate or stress. All shipped recipes use the default latent-node prior:
+sample a latent DAG, emit features from node-assigned converters, emit `y` from
+one selected target node, then optionally apply missingness as a separate
+observation process over the emitted features.
 
 ______________________________________________________________________
 
 ## 3. Generate your first run
 
-Balanced baseline with the default factorized `p(x_complete)` plus
-`p(y | x_complete)` prior:
+Balanced baseline with the default latent-node target prior:
 
 ```bash
 dagzoo generate --config recipe:default-baseline --num-datasets 25 --out data/default_baseline
 ```
 
-TabPFN-inspired numeric-heavy factorized complete-data prior:
+TabPFN-inspired numeric-heavy latent-node prior:
 
 ```bash
 dagzoo generate --config recipe:tabpfn-v1-prior-approx --num-datasets 25 --out data/tabpfn_prior
@@ -80,6 +80,9 @@ sample = next(iter(loader))
 
 `build_dataloader(...)` is the recommended programmatic entrypoint. It uses the
 same config surface as the CLI: either `recipe:<name>` or a YAML path.
+Public generation defaults to fully heterogeneous per-dataset layouts; set
+`runtime.layout_mode: fixed` when you want aligned schema and faster
+fixed-layout batching within one run.
 
 ______________________________________________________________________
 
@@ -88,4 +91,5 @@ ______________________________________________________________________
 - Want the published catalog and citations: [reference-packs.md](reference-packs.md)
 - Need custom generation controls: [usage-guide.md](usage-guide.md)
 - Need artifact and API contracts: [output-format.md](output-format.md)
+- Need the exhaustive field catalog: [export-contract-fields.md](export-contract-fields.md)
 - Want the runtime model: [how-it-works.md](how-it-works.md)

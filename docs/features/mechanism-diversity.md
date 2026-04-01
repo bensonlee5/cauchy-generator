@@ -138,7 +138,7 @@ dagzoo generate \
   --out data/run_gp_smoke_local
 ```
 
-Inspect shard `metadata.ndjson` for:
+Inspect in-process `DatasetBundle.metadata["mechanism_families"]` for:
 
 - `mechanism_families.sampled_family_counts`
 - `mechanism_families.families_present`

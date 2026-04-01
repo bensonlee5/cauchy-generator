@@ -29,6 +29,8 @@ REQUIRED_FILES = (
     REPO_ROOT / "docs" / "reference-packs.md",
     REPO_ROOT / "docs" / "usage-guide.md",
     REPO_ROOT / "docs" / "output-format.md",
+    REPO_ROOT / "docs" / "export-contract-fields.md",
+    REPO_ROOT / "reference" / "export_contract_inventory.yaml",
     REPO_ROOT / "recipes" / "README.md",
     REPO_ROOT / "CONTRIBUTING.md",
     REPO_ROOT / "SECURITY.md",
@@ -37,11 +39,21 @@ REQUIRED_README_SNIPPETS = (
     "dagzoo recipe list",
     "recipe:default-baseline",
     "build_dataloader(",
+    "docs/export-contract-fields.md",
 )
 REQUIRED_START_SNIPPETS = (
     "dagzoo recipe list",
     "recipe:default-baseline",
     "recipe:tabpfn-v1-prior-approx",
+    "export-contract-fields.md",
+)
+REQUIRED_OUTPUT_FORMAT_SNIPPETS = (
+    "export-contract-fields.md",
+    "reference/export_contract_inventory.yaml",
+)
+REQUIRED_CONTRIBUTING_SNIPPETS = (
+    "reference/export_contract_inventory.yaml",
+    "docs/export-contract-fields.md",
 )
 
 
@@ -103,6 +115,24 @@ def main() -> int:
     start_text = _read_text(start_path) if start_path.exists() else ""
     for snippet in REQUIRED_START_SNIPPETS:
         _require(snippet in start_text, f"docs/start.md must mention `{snippet}`.", errors=errors)
+
+    output_format_path = REPO_ROOT / "docs" / "output-format.md"
+    output_format_text = _read_text(output_format_path) if output_format_path.exists() else ""
+    for snippet in REQUIRED_OUTPUT_FORMAT_SNIPPETS:
+        _require(
+            snippet in output_format_text,
+            f"docs/output-format.md must mention `{snippet}`.",
+            errors=errors,
+        )
+
+    contributing_path = REPO_ROOT / "CONTRIBUTING.md"
+    contributing_text = _read_text(contributing_path) if contributing_path.exists() else ""
+    for snippet in REQUIRED_CONTRIBUTING_SNIPPETS:
+        _require(
+            snippet in contributing_text,
+            f"CONTRIBUTING.md must mention `{snippet}`.",
+            errors=errors,
+        )
 
     reference_packs_path = REPO_ROOT / "docs" / "reference-packs.md"
     recipes_readme_path = REPO_ROOT / "recipes" / "README.md"

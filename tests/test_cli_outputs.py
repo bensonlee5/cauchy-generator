@@ -114,10 +114,13 @@ def test_generate_cli_prints_handoff_execution_summary(
         out_dir: Path,
         shard_size: int,
         compression: str,
+        internal_root: Path | None = None,
     ) -> int:
         assert shard_size > 0
         assert compression
         out_dir.mkdir(parents=True, exist_ok=True)
+        if internal_root is not None:
+            internal_root.mkdir(parents=True, exist_ok=True)
         return 2
 
     monkeypatch.setattr(

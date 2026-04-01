@@ -226,6 +226,15 @@ def replay_filter_stage_metrics(
                 else float(config.filter.stump_skill_threshold)
             ),
             use_lineage_veto=bool(config.filter.use_lineage_veto),
+            min_target_indegree=int(config.filter.min_target_indegree),
+            min_target_relevant_feature_count=int(config.filter.min_target_relevant_feature_count),
+            min_target_relevant_feature_fraction=float(
+                config.filter.min_target_relevant_feature_fraction
+            ),
+            classification_kappa_threshold=float(config.filter.classification_kappa_threshold),
+            classification_require_prediction_diversity=bool(
+                config.filter.classification_require_prediction_diversity
+            ),
             n_jobs=int(config.filter.n_jobs),
         )
         if bool(accepted):

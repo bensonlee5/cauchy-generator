@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +17,7 @@ from dagzoo.io.parquet_writer import (
     _PackedShardState,
     _write_packed_split,
 )
+from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME
 from dagzoo.math import sanitize_json as _sanitize_json
 
 
@@ -83,7 +83,7 @@ def _create_curated_shard_writer(
             shard_dir=shard_dir,
             train_path=shard_dir / "train.parquet",
             test_path=shard_dir / "test.parquet",
-            metadata_path=shard_dir / "metadata.ndjson",
+            metadata_path=shard_dir / DATASET_CATALOG_FILENAME,
         ),
         final_shard_dir=final_shard_dir,
     )
@@ -152,27 +152,6 @@ def _close_curated_shard_writer(state: _CuratedShardWriter | None) -> None:
     if state is None:
         return
     _close_packed_shard_handles(state.shard_state)
-
-
-def _copy_lineage_tree_safe(*, source_dir: Path, dest_dir: Path) -> None:
-    """Copy lineage artifacts without following symlinks."""
-
-    if source_dir.is_symlink():
-        raise RuntimeError(f"Lineage directory must not be a symlink: {source_dir}")
-
-    for source_path in sorted(source_dir.rglob("*")):
-        rel_path = source_path.relative_to(source_dir)
-        dest_path = dest_dir / rel_path
-        if source_path.is_symlink():
-            raise RuntimeError(f"Lineage artifact must not be a symlink: {source_path}")
-        if source_path.is_dir():
-            dest_path.mkdir(parents=True, exist_ok=True)
-            continue
-        if source_path.is_file():
-            dest_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source_path, dest_path)
-            continue
-        raise RuntimeError(f"Unsupported lineage artifact entry: {source_path}")
 
 
 def _consume_expected_split(

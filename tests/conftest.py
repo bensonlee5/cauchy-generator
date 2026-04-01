@@ -35,9 +35,15 @@ def _cached_repo_config(resource_name: str) -> GeneratorConfig:
 
 
 def load_repo_config(resource_name: str = "default.yaml") -> GeneratorConfig:
-    """Load one repo config and return a fresh mutable copy for the caller."""
+    """Load one repo config and return a fresh mutable copy for the caller.
 
-    return clone_generator_config(_cached_repo_config(resource_name), revalidate=False)
+    Most existing unit tests exercise the explicit fixed-layout path unless they
+    opt into heterogeneous mode directly.
+    """
+
+    config = clone_generator_config(_cached_repo_config(resource_name), revalidate=False)
+    config.runtime.layout_mode = "fixed"
+    return config
 
 
 def write_yaml(tmp_path: Path, name: str, payload: object) -> Path:
@@ -113,16 +119,3 @@ def hardware_info_factory():
     """Return one helper that builds stable mock hardware profiles by tier."""
 
     return _build_mock_hardware
-
-
-@pytest.fixture
-def patch_detect_hardware(monkeypatch: pytest.MonkeyPatch, hardware_info_factory):
-    """Patch one or more detect_hardware call sites to one stable mock tier."""
-
-    def _patch(tier: str, *targets: str) -> HardwareInfo:
-        hw = hardware_info_factory(tier)
-        for target in targets:
-            monkeypatch.setattr(target, lambda _requested_device, hw=hw: hw)
-        return hw
-
-    return _patch

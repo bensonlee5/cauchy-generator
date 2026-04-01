@@ -174,8 +174,10 @@ def _consume_generation(
 ) -> None:
     """Run generation for ``num_datasets`` items while discarding outputs."""
 
+    run_config = clone_generator_config(config, revalidate=False)
+    run_config.runtime.layout_mode = "fixed"
     for bundle in generate_batch_iter(
-        config,
+        run_config,
         num_datasets=num_datasets,
         seed=seed,
         device=device,
@@ -193,8 +195,10 @@ def iter_throughput_measure_bundles(
 ) -> Iterator[DatasetBundle]:
     """Yield the deterministic measured corpus used by throughput benchmarks."""
 
+    run_config = clone_generator_config(config, revalidate=False)
+    run_config.runtime.layout_mode = "fixed"
     prepared = prepare_canonical_fixed_layout_run(
-        config,
+        run_config,
         num_datasets=num_datasets,
         seed=_throughput_measure_seed(config),
         device=device,
@@ -217,10 +221,12 @@ def run_throughput_benchmark(
 ) -> dict[str, Any]:
     """Measure end-to-end generation throughput for a benchmark preset."""
 
+    run_config = clone_generator_config(config, revalidate=False)
+    run_config.runtime.layout_mode = "fixed"
     timing_device = device or config.runtime.device
     if warmup_datasets > 0:
         _consume_generation(
-            config,
+            run_config,
             num_datasets=warmup_datasets,
             seed=_throughput_warmup_seed(config),
             device=device,
@@ -231,7 +237,7 @@ def run_throughput_benchmark(
     start_cpu = time.process_time()
     raw_batch_metric_totals = {key: 0.0 for key in _RAW_BATCH_METRIC_KEYS}
     prepared = prepare_canonical_fixed_layout_run(
-        config,
+        run_config,
         num_datasets=num_datasets,
         seed=_throughput_measure_seed(config),
         device=device,

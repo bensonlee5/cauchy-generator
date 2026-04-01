@@ -271,15 +271,8 @@ class FixedLayoutNodePlan:
 
 
 @dataclass(frozen=True, slots=True)
-class FixedLayoutTargetHeadPlan:
-    parent_feature_indices: tuple[int, ...]
-    node_plan: FixedLayoutNodePlan
-
-
-@dataclass(frozen=True, slots=True)
 class FixedLayoutExecutionPlan:
     node_plans: tuple[FixedLayoutNodePlan, ...] = ()
-    target_head_plan: FixedLayoutTargetHeadPlan | None = None
     execution_contract: FixedLayoutExecutionContract = DEFAULT_FIXED_LAYOUT_EXECUTION_CONTRACT
 
 
@@ -326,10 +319,7 @@ def fixed_layout_converter_groups(
 def fixed_layout_signature_payloads(
     execution_plan: FixedLayoutExecutionPlan,
 ) -> list[dict[str, Any]]:
-    payloads = [_signature_node_plan_payload(node_plan) for node_plan in execution_plan.node_plans]
-    if execution_plan.target_head_plan is not None:
-        payloads.append(_signature_target_head_payload(execution_plan.target_head_plan))
-    return payloads
+    return [_signature_node_plan_payload(node_plan) for node_plan in execution_plan.node_plans]
 
 
 def _converter_function_signature(plan: FixedLayoutFunctionPlan | None) -> str | None:
@@ -403,16 +393,6 @@ def _signature_node_plan_payload(node_plan: FixedLayoutNodePlan) -> dict[str, An
         stripped_specs.append(spec_payload)
     payload["converter_specs"] = stripped_specs
     return payload
-
-
-def _signature_target_head_payload(target_head_plan: FixedLayoutTargetHeadPlan) -> dict[str, Any]:
-    return {
-        "role": "target_head",
-        "parent_feature_indices": [
-            int(feature_index) for feature_index in target_head_plan.parent_feature_indices
-        ],
-        "node_plan": _signature_node_plan_payload(target_head_plan.node_plan),
-    }
 
 
 def _converter_plan_payload(plan: FixedLayoutConverterPlan) -> dict[str, Any]:
@@ -602,9 +582,6 @@ def execution_plan_family_counts(
 
     for node_plan in execution_plan.node_plans:
         _merge_node_plan(node_plan)
-    if execution_plan.target_head_plan is not None:
-        _merge_node_plan(execution_plan.target_head_plan.node_plan)
-
     return {family: int(counts[family]) for family in sorted(counts)}
 
 
@@ -657,9 +634,6 @@ def execution_plan_variant_counts(
 
     for node_plan in execution_plan.node_plans:
         _merge_node_plan(node_plan)
-    if execution_plan.target_head_plan is not None:
-        _merge_node_plan(execution_plan.target_head_plan.node_plan)
-
     return {label: int(counts[label]) for label in sorted(counts)}
 
 
@@ -713,7 +687,6 @@ __all__ = [
     "FixedLayoutMatrixPlan",
     "FixedLayoutNodePlan",
     "FixedLayoutNodeSource",
-    "FixedLayoutTargetHeadPlan",
     "GaussianMatrixPlan",
     "GpFunctionPlan",
     "KernelMatrixPlan",

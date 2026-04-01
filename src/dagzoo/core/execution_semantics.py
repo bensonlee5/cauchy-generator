@@ -51,6 +51,12 @@ from dagzoo.core.shift import (
     MECHANISM_FAMILY_SUPPORTED_ORDER,
     mechanism_family_probabilities,
 )
+from dagzoo.core.validation import (
+    RetryableDegeneracyError,
+    validate_converter_plan_nondegeneracy,
+    validate_function_plan_nondegeneracy,
+    validate_node_plan_nondegeneracy,
+)
 from dagzoo.functions.activations import fixed_activation_names
 from dagzoo.math import log_uniform as _log_uniform
 from dagzoo.rng import KeyedRng
@@ -93,6 +99,10 @@ _GP_VARIANT_CHOICES: tuple[FixedLayoutGpVariant, ...] = (
     "periodic",
     "multiscale",
 )
+_WIDTH_ONE_INVALID_FIXED_ACTIVATIONS: frozenset[str] = frozenset(
+    {"softmax", "onehot_argmax", "argsort", "rank"}
+)
+_WIDTH_ONE_INVALID_PARAMETRIC_ACTIVATIONS: frozenset[str] = frozenset({"gumbel_softmax"})
 _AGGREGATION_KIND_ORDER: tuple[AggregationKind, ...] = ("sum", "product", "max", "logsumexp")
 _PRODUCT_COMPONENT_FAMILIES: tuple[MechanismFamily, ...] = (
     "tree",
@@ -129,6 +139,68 @@ class ConverterSpecLike(Protocol):
 
 
 ConverterSpecsInput = Sequence[ConverterSpecLike] | Sequence[FixedLayoutConverterSpec]
+
+
+def _activation_plan_label(plan: FixedLayoutActivationPlan) -> str:
+    if isinstance(plan, FixedActivationPlan):
+        return str(plan.name)
+    return str(plan.kind)
+
+
+def _activation_plan_is_width_compatible(
+    plan: FixedLayoutActivationPlan,
+    *,
+    width: int | None,
+) -> bool:
+    if width is None or int(width) != 1:
+        return True
+    if isinstance(plan, FixedActivationPlan):
+        return str(plan.name) not in _WIDTH_ONE_INVALID_FIXED_ACTIVATIONS
+    return str(plan.kind) not in _WIDTH_ONE_INVALID_PARAMETRIC_ACTIVATIONS
+
+
+def _validate_activation_plan_width(
+    plan: FixedLayoutActivationPlan,
+    *,
+    width: int | None,
+    context: str,
+) -> None:
+    if _activation_plan_is_width_compatible(plan, width=width):
+        return
+    raise RetryableDegeneracyError(
+        "width_incompatible_activation",
+        message=(
+            f"{context} activation {_activation_plan_label(plan)!r} is invalid for width=1 "
+            "because it deterministically collapses the channel dimension."
+        ),
+    )
+
+
+def _validate_neural_net_function_plan_widths(
+    plan: NeuralNetFunctionPlan,
+    *,
+    input_dim: int | None,
+    out_dim: int,
+) -> None:
+    hidden_width = max(1, int(plan.hidden_width))
+    if plan.input_activation is not None:
+        _validate_activation_plan_width(
+            plan.input_activation,
+            width=input_dim,
+            context="NeuralNetFunctionPlan.input_activation",
+        )
+    for hidden_index, hidden_activation in enumerate(plan.hidden_activations):
+        _validate_activation_plan_width(
+            hidden_activation,
+            width=hidden_width,
+            context=f"NeuralNetFunctionPlan.hidden_activations[{hidden_index}]",
+        )
+    if plan.output_activation is not None:
+        _validate_activation_plan_width(
+            plan.output_activation,
+            width=int(out_dim),
+            context="NeuralNetFunctionPlan.output_activation",
+        )
 
 
 def sample_function_family(
@@ -258,6 +330,7 @@ def sample_activation_plan(
     *,
     keyed_rng: KeyedRng | None = None,
     device: str | None = None,
+    width: int | None = None,
 ) -> FixedLayoutActivationPlan:
     """Sample one activation plan using the shared fixed-layout schema."""
 
@@ -268,33 +341,40 @@ def sample_activation_plan(
         namespace="sample_activation_plan",
     )
     generator = keyed_rng.torch_rng(device=resolved_device)
-    if _rand_scalar(generator) < (1.0 / 3.0):
-        choice = _PARAM_ACTIVATION_CHOICES[
-            int(_randint_scalar(0, len(_PARAM_ACTIVATION_CHOICES), generator))
-        ]
-        if choice == "poly":
-            return ParametricActivationPlan(
-                kind=choice,
-                poly_power=int(_randint_scalar(2, 6, generator)),
-            )
-        if choice == "gumbel_softmax":
-            return ParametricActivationPlan(
-                kind=choice,
-                temperature=float(
-                    _log_uniform(
-                        keyed_rng.keyed("gumbel_softmax_temperature").torch_rng(
-                            device=resolved_device
-                        ),
-                        0.25,
-                        4.0,
-                        resolved_device,
-                    )
-                ),
-            )
-        return ParametricActivationPlan(kind=choice)
-    fixed = fixed_activation_names()
-    name = fixed[int(_randint_scalar(0, len(fixed), generator))]
-    return FixedActivationPlan(name=name)
+    max_attempts = max(8, len(fixed_activation_names()) + len(_PARAM_ACTIVATION_CHOICES))
+    for _attempt in range(max_attempts):
+        if _rand_scalar(generator) < (1.0 / 3.0):
+            choice = _PARAM_ACTIVATION_CHOICES[
+                int(_randint_scalar(0, len(_PARAM_ACTIVATION_CHOICES), generator))
+            ]
+            if choice == "poly":
+                plan: FixedLayoutActivationPlan = ParametricActivationPlan(
+                    kind=choice,
+                    poly_power=int(_randint_scalar(2, 6, generator)),
+                )
+            elif choice == "gumbel_softmax":
+                plan = ParametricActivationPlan(
+                    kind=choice,
+                    temperature=float(
+                        _log_uniform(
+                            keyed_rng.keyed("gumbel_softmax_temperature").torch_rng(
+                                device=resolved_device
+                            ),
+                            0.25,
+                            4.0,
+                            resolved_device,
+                        )
+                    ),
+                )
+            else:
+                plan = ParametricActivationPlan(kind=choice)
+        else:
+            fixed = fixed_activation_names()
+            name = fixed[int(_randint_scalar(0, len(fixed), generator))]
+            plan = FixedActivationPlan(name=name)
+        if _activation_plan_is_width_compatible(plan, width=width):
+            return plan
+    raise ValueError(f"Failed to sample a width-compatible activation plan for width={width}.")
 
 
 def sample_matrix_plan(
@@ -339,6 +419,7 @@ def sample_function_plan_for_family(
     *,
     keyed_rng: KeyedRng | None = None,
     family: MechanismFamily,
+    input_dim: int | None = None,
     out_dim: int,
     mechanism_logit_tilt: float,
     function_family_mix: dict[MechanismFamily, float] | None,
@@ -351,6 +432,48 @@ def sample_function_plan_for_family(
         keyed_rng=keyed_rng,
         device=device,
         namespace="sample_function_plan_for_family",
+    )
+    last_error: RetryableDegeneracyError | None = None
+    for attempt in range(8):
+        attempt_root = keyed_rng if attempt == 0 else keyed_rng.keyed("retry", attempt)
+        try:
+            plan = _sample_function_plan_for_family_once(
+                keyed_rng=attempt_root,
+                family=family,
+                input_dim=input_dim,
+                out_dim=out_dim,
+                mechanism_logit_tilt=mechanism_logit_tilt,
+                function_family_mix=function_family_mix,
+                device=resolved_device,
+            )
+            validate_function_plan_nondegeneracy(plan)
+            return plan
+        except RetryableDegeneracyError as exc:
+            last_error = exc
+            continue
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Function-plan sampling exhausted without yielding or erroring.")
+
+
+def _sample_function_plan_for_family_once(
+    generator: torch.Generator | None = None,
+    *,
+    keyed_rng: KeyedRng | None = None,
+    family: MechanismFamily,
+    input_dim: int | None = None,
+    out_dim: int,
+    mechanism_logit_tilt: float,
+    function_family_mix: dict[MechanismFamily, float] | None,
+    device: str | None = None,
+) -> FixedLayoutFunctionPlan:
+    """Sample one typed function plan for an explicit family without retries."""
+
+    keyed_rng, resolved_device = _resolve_sampling_root(
+        generator=generator,
+        keyed_rng=keyed_rng,
+        device=device,
+        namespace="_sample_function_plan_for_family_once",
     )
     if family == "linear":
         return LinearFunctionPlan(
@@ -386,6 +509,7 @@ def sample_function_plan_for_family(
             sample_activation_plan(
                 keyed_rng=keyed_rng.keyed("input_activation"),
                 device=resolved_device,
+                width=input_dim,
             )
             if _sample_bool(
                 keyed_rng.keyed("input_activation_enabled").torch_rng(device=resolved_device)
@@ -396,6 +520,7 @@ def sample_function_plan_for_family(
             sample_activation_plan(
                 keyed_rng=keyed_rng.keyed("output_activation"),
                 device=resolved_device,
+                width=int(out_dim),
             )
             if _sample_bool(
                 keyed_rng.keyed("output_activation_enabled").torch_rng(device=resolved_device)
@@ -403,7 +528,7 @@ def sample_function_plan_for_family(
             else None
         )
         layer_count = max(1, n_layers)
-        return NeuralNetFunctionPlan(
+        plan = NeuralNetFunctionPlan(
             n_layers=n_layers,
             hidden_width=max(1, hidden_width),
             input_activation=input_activation,
@@ -419,10 +544,17 @@ def sample_function_plan_for_family(
                 sample_activation_plan(
                     keyed_rng=keyed_rng.keyed("hidden_activation", layer_index),
                     device=resolved_device,
+                    width=max(1, hidden_width),
                 )
                 for layer_index in range(max(0, layer_count - 1))
             ),
         )
+        _validate_neural_net_function_plan_widths(
+            plan,
+            input_dim=input_dim,
+            out_dim=int(out_dim),
+        )
+        return plan
     if family == "tree":
         n_trees = int(
             _log_uniform(
@@ -514,6 +646,7 @@ def sample_function_plan_for_family(
             lhs=sample_function_plan_for_family(
                 keyed_rng=lhs_root.keyed("plan"),
                 family=lhs_family,
+                input_dim=input_dim,
                 out_dim=out_dim,
                 mechanism_logit_tilt=mechanism_logit_tilt,
                 function_family_mix=function_family_mix,
@@ -522,6 +655,7 @@ def sample_function_plan_for_family(
             rhs=sample_function_plan_for_family(
                 keyed_rng=rhs_root.keyed("plan"),
                 family=rhs_family,
+                input_dim=input_dim,
                 out_dim=out_dim,
                 mechanism_logit_tilt=mechanism_logit_tilt,
                 function_family_mix=function_family_mix,
@@ -564,6 +698,7 @@ def sample_function_plan_for_family(
             lhs=sample_function_plan_for_family(
                 keyed_rng=lhs_root.keyed("plan"),
                 family=lhs_family,
+                input_dim=input_dim,
                 out_dim=out_dim,
                 mechanism_logit_tilt=mechanism_logit_tilt,
                 function_family_mix=function_family_mix,
@@ -572,6 +707,7 @@ def sample_function_plan_for_family(
             rhs=sample_function_plan_for_family(
                 keyed_rng=rhs_root.keyed("plan"),
                 family=rhs_family,
+                input_dim=input_dim,
                 out_dim=out_dim,
                 mechanism_logit_tilt=mechanism_logit_tilt,
                 function_family_mix=function_family_mix,
@@ -585,6 +721,7 @@ def sample_function_plan(
     generator: torch.Generator | None = None,
     *,
     keyed_rng: KeyedRng | None = None,
+    input_dim: int | None = None,
     out_dim: int,
     mechanism_logit_tilt: float,
     function_family_mix: dict[MechanismFamily, float] | None,
@@ -607,6 +744,7 @@ def sample_function_plan(
     return sample_function_plan_for_family(
         keyed_rng=keyed_rng.keyed("plan"),
         family=family,
+        input_dim=input_dim,
         out_dim=out_dim,
         mechanism_logit_tilt=mechanism_logit_tilt,
         function_family_mix=function_family_mix,
@@ -651,23 +789,28 @@ def sample_converter_plan(
         selected_method = cast(FixedLayoutConverterMethod, normalized_method)
     variant = cast(FixedLayoutConverterVariant, variant_raw)
     if variant == "center_random_fn":
-        return CategoricalConverterPlan(
+        plan = CategoricalConverterPlan(
             kind=cast(Literal["cat", "target_cls"], spec.kind),
             method=selected_method,
             variant=variant,
             function=sample_function_plan(
                 keyed_rng=keyed_rng.keyed("function"),
+                input_dim=max(1, int(spec.dim)),
                 out_dim=max(1, int(spec.dim)),
                 mechanism_logit_tilt=mechanism_logit_tilt,
                 function_family_mix=function_family_mix,
                 device=resolved_device,
             ),
         )
-    return CategoricalConverterPlan(
+        validate_converter_plan_nondegeneracy(plan)
+        return plan
+    plan = CategoricalConverterPlan(
         kind=cast(Literal["cat", "target_cls"], spec.kind),
         method=selected_method,
         variant=variant,
     )
+    validate_converter_plan_nondegeneracy(plan)
+    return plan
 
 
 def typed_converter_specs(
@@ -752,6 +895,7 @@ def sample_root_source_plan(
         base_kind=base_kind,
         function=sample_function_plan(
             keyed_rng=keyed_rng.keyed("function"),
+            input_dim=int(out_dim),
             out_dim=out_dim,
             mechanism_logit_tilt=mechanism_logit_tilt,
             function_family_mix=function_family_mix,
@@ -765,6 +909,7 @@ def sample_multi_source_plan(
     *,
     keyed_rng: KeyedRng | None = None,
     parent_count: int,
+    parent_input_dims: Sequence[int] | None = None,
     out_dim: int,
     mechanism_logit_tilt: float,
     function_family_mix: dict[MechanismFamily, float] | None,
@@ -775,6 +920,15 @@ def sample_multi_source_plan(
 
     if parent_count <= 0:
         raise ValueError(f"parent_count must be > 0, got {parent_count}")
+    resolved_parent_input_dims = (
+        [int(dimension) for dimension in parent_input_dims]
+        if parent_input_dims is not None
+        else [int(out_dim)] * int(parent_count)
+    )
+    if len(resolved_parent_input_dims) != int(parent_count):
+        raise ValueError(
+            "parent_input_dims must align with parent_count for multi-source plan sampling."
+        )
     keyed_rng, resolved_device = _resolve_sampling_root(
         generator=generator,
         keyed_rng=keyed_rng,
@@ -787,6 +941,7 @@ def sample_multi_source_plan(
         return ConcatNodeSource(
             function=sample_function_plan(
                 keyed_rng=keyed_rng.keyed("function"),
+                input_dim=int(sum(int(dimension) for dimension in resolved_parent_input_dims)),
                 out_dim=out_dim,
                 mechanism_logit_tilt=mechanism_logit_tilt,
                 function_family_mix=function_family_mix,
@@ -804,6 +959,7 @@ def sample_multi_source_plan(
         parent_functions=tuple(
             sample_function_plan(
                 keyed_rng=keyed_rng.keyed("parent", parent_index),
+                input_dim=int(resolved_parent_input_dims[parent_index]),
                 out_dim=out_dim,
                 mechanism_logit_tilt=mechanism_logit_tilt,
                 function_family_mix=function_family_mix,
@@ -818,6 +974,7 @@ def sample_node_plan(
     *,
     node_index: int,
     parent_indices: Sequence[int],
+    parent_output_dims: Sequence[int] | None = None,
     converter_specs: ConverterSpecsInput,
     generator: torch.Generator | None = None,
     keyed_rng: KeyedRng | None = None,
@@ -851,9 +1008,19 @@ def sample_node_plan(
     )
     source: ConcatNodeSource | StackedNodeSource | RandomPointsNodeSource
     if parent_indices:
+        resolved_parent_output_dims = (
+            [int(dimension) for dimension in parent_output_dims]
+            if parent_output_dims is not None
+            else [int(latent.total_dim)] * len(parent_indices)
+        )
+        if len(resolved_parent_output_dims) != len(parent_indices):
+            raise ValueError(
+                "parent_output_dims must align with parent_indices for node plan sampling."
+            )
         source = sample_multi_source_plan(
             keyed_rng=keyed_rng.keyed("source"),
             parent_count=len(parent_indices),
+            parent_input_dims=resolved_parent_output_dims,
             out_dim=int(latent.total_dim),
             mechanism_logit_tilt=mechanism_logit_tilt,
             function_family_mix=function_family_mix,
@@ -867,7 +1034,7 @@ def sample_node_plan(
             function_family_mix=function_family_mix,
             device=resolved_device,
         )
-    return FixedLayoutNodePlan(
+    node_plan = FixedLayoutNodePlan(
         node_index=int(node_index),
         parent_indices=tuple(int(parent_index) for parent_index in parent_indices),
         converter_specs=typed_specs,
@@ -876,6 +1043,8 @@ def sample_node_plan(
         latent=latent,
         source=source,
     )
+    validate_node_plan_nondegeneracy(node_plan)
+    return node_plan
 
 
 __all__ = [

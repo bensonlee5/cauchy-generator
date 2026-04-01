@@ -6,6 +6,7 @@ import math
 
 import torch
 
+from dagzoo.core.validation import validate_matrix_output
 from dagzoo.functions._rng_helpers import randint_scalar
 from dagzoo.functions.activations import apply_random_activation
 from dagzoo.math import row_normalize as _row_normalize
@@ -198,4 +199,6 @@ def sample_random_matrix(
         device=device,
         noise_spec=noise_spec,
     )
-    return _row_normalize(m)
+    m = _row_normalize(m)
+    validate_matrix_output(m, context="sample_random_matrix")
+    return m
