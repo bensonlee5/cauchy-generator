@@ -426,6 +426,39 @@ def test_run_deferred_filter_prefers_dataset_seed_when_present(
     assert replay_seeds == [501, 502]
 
 
+def test_run_deferred_filter_resolves_internal_sidecars_from_direct_handoff_shard_input(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_deferred_filter_impl(monkeypatch)
+    pytest.importorskip("pyarrow.parquet")
+
+    handoff_root = tmp_path / "handoff"
+    generated_dir = handoff_root / "generated"
+    out_dir = tmp_path / "filter_out"
+    bundles = [_bundle_with_embedded_config(601, filter_overrides={"enabled": False})]
+    _ = write_packed_parquet_shards_stream(
+        bundles,
+        generated_dir,
+        shard_size=1,
+        compression="zstd",
+        internal_root=handoff_root / "internal",
+    )
+
+    monkeypatch.setattr(
+        "dagzoo.filtering.deferred_filter._apply_extra_trees_filter_numpy",
+        lambda *_args, **_kwargs: (True, {"skill_full": 0.9}),
+    )
+
+    result = run_deferred_filter(in_dir=generated_dir / "shard_00000", out_dir=out_dir)
+
+    assert result.total_datasets == 1
+    assert result.accepted_datasets == 1
+    assert (handoff_root / "internal" / "shard_00000" / REPLAY_CATALOG_FILENAME).exists()
+    manifest_records = _load_ndjson(result.manifest_path)
+    assert [str(record["status"]) for record in manifest_records] == ["accepted"]
+
+
 def test_run_deferred_filter_applies_ease_overrides_and_records_summary_provenance(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

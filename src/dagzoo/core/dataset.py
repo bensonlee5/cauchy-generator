@@ -6,7 +6,11 @@ from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 from dagzoo.config import LAYOUT_MODE_FIXED, GeneratorConfig
-from dagzoo.core.fixed_layout.prepare import realize_generation_config_for_run
+from dagzoo.config.models import SteeringStageConfig, steering_stage_definitions
+from dagzoo.core.fixed_layout.prepare import (
+    normalize_fixed_layout_target_cells,
+    realize_generation_config_for_run,
+)
 from dagzoo.core.fixed_layout.runtime import (
     CanonicalFixedLayoutRun,
     _generate_batch_with_heterogeneous_layout_iter,
@@ -55,17 +59,7 @@ def _request_run_provenance_for_config(
     *,
     resolved_device: str,
 ) -> dict[str, Any]:
-    noise_distribution: dict[str, Any] = {
-        "family_requested": str(config.noise.family),
-        "base_scale": float(config.noise.base_scale),
-    }
-    if str(config.noise.family) == "student_t":
-        noise_distribution["student_t_df"] = float(config.noise.student_t_df)
-    elif str(config.noise.family) == "mixture" and config.noise.mixture_weights is not None:
-        noise_distribution["mixture_weights"] = {
-            str(component): float(weight)
-            for component, weight in sorted(config.noise.mixture_weights.items())
-        }
+    noise_distribution = _noise_distribution_provenance_for_config(config)
     return canonical_request_run_provenance(
         {
             "config": {
@@ -99,6 +93,134 @@ def _request_run_provenance_for_config(
             "compute_backend": "torch_appendix_full",
         }
     )
+
+
+def _noise_distribution_provenance_for_config(config: GeneratorConfig) -> dict[str, Any]:
+    """Return normalized run-level noise provenance for one generation config."""
+
+    noise_distribution: dict[str, Any] = {
+        "family_requested": str(config.noise.family),
+        "base_scale": float(config.noise.base_scale),
+    }
+    if str(config.noise.family) == "student_t":
+        noise_distribution["student_t_df"] = float(config.noise.student_t_df)
+    elif str(config.noise.family) == "mixture" and config.noise.mixture_weights is not None:
+        noise_distribution["mixture_weights"] = {
+            str(component): float(weight)
+            for component, weight in sorted(config.noise.mixture_weights.items())
+        }
+    return noise_distribution
+
+
+def _normalized_float_band(band: list[float] | None) -> list[float] | None:
+    """Return a stable two-endpoint float band payload."""
+
+    if band is None:
+        return None
+    return [float(band[0]), float(band[1])]
+
+
+def _steering_stage_provenance(stage: SteeringStageConfig) -> dict[str, Any]:
+    """Return stable request-run provenance for one steering stage definition."""
+
+    payload: dict[str, Any] = {
+        "name": str(stage.name),
+        "fraction": float(stage.fraction),
+    }
+    if stage.missing_rate is not None:
+        payload["missing_rate"] = _normalized_float_band(stage.missing_rate)
+    if stage.missing_mechanism is not None:
+        payload["missing_mechanism"] = str(stage.missing_mechanism)
+    if stage.missing_mar_observed_fraction is not None:
+        payload["missing_mar_observed_fraction"] = float(stage.missing_mar_observed_fraction)
+    if stage.missing_mar_logit_scale is not None:
+        payload["missing_mar_logit_scale"] = float(stage.missing_mar_logit_scale)
+    if stage.missing_mnar_logit_scale is not None:
+        payload["missing_mnar_logit_scale"] = float(stage.missing_mnar_logit_scale)
+    if stage.shift_mode is not None:
+        payload["shift_mode"] = str(stage.shift_mode)
+    if stage.shift_graph_scale is not None:
+        payload["shift_graph_scale"] = _normalized_float_band(stage.shift_graph_scale)
+    if stage.shift_variance_scale is not None:
+        payload["shift_variance_scale"] = _normalized_float_band(stage.shift_variance_scale)
+    if stage.noise_family is not None:
+        payload["noise_family"] = str(stage.noise_family)
+    if stage.noise_student_t_df is not None:
+        payload["noise_student_t_df"] = float(stage.noise_student_t_df)
+    if stage.noise_mixture_weights is not None:
+        payload["noise_mixture_weights"] = {
+            str(component): _normalized_float_band(stage.noise_mixture_weights[component])
+            for component in sorted(stage.noise_mixture_weights)
+        }
+    return payload
+
+
+def _steering_provenance_for_config(config: GeneratorConfig) -> dict[str, Any]:
+    """Return stable request-run provenance for dynamic steering authoring."""
+
+    if not config.steering.enabled:
+        return {"enabled": False}
+
+    return {
+        "enabled": True,
+        "preset": config.steering.preset,
+        "stages": [
+            _steering_stage_provenance(stage)
+            for stage in steering_stage_definitions(config.steering)
+        ],
+    }
+
+
+def _heterogeneous_request_run_provenance_for_config(
+    config: GeneratorConfig,
+    *,
+    resolved_device: str,
+) -> dict[str, Any]:
+    """Return the heterogeneous request-run provenance payload for one public run."""
+
+    shift_params = resolve_shift_runtime_params(config)
+    provenance = _request_run_provenance_for_config(config, resolved_device=resolved_device)
+    provenance["dataset_structure"] = {
+        "n_features_min": int(config.dataset.n_features_min),
+        "n_features_max": int(config.dataset.n_features_max),
+        "n_classes_min": int(config.dataset.n_classes_min),
+        "n_classes_max": int(config.dataset.n_classes_max),
+        "categorical_ratio_min": float(config.dataset.categorical_ratio_min),
+        "categorical_ratio_max": float(config.dataset.categorical_ratio_max),
+        "max_categorical_cardinality": int(config.dataset.max_categorical_cardinality),
+    }
+    provenance["graph"] = {
+        "n_nodes_min": int(config.graph.n_nodes_min),
+        "n_nodes_max": int(config.graph.n_nodes_max),
+    }
+    provenance["mechanism"] = {
+        "function_family_mix": (
+            None
+            if config.mechanism.function_family_mix is None
+            else {
+                str(family): float(weight)
+                for family, weight in sorted(config.mechanism.function_family_mix.items())
+            }
+        )
+    }
+    provenance["shift"] = {
+        **dict(provenance["shift"]),
+        "enabled": bool(shift_params.enabled),
+        "mode": str(shift_params.mode),
+        "graph_scale": float(shift_params.graph_scale),
+        "mechanism_scale": float(shift_params.mechanism_scale),
+        "variance_scale": float(shift_params.variance_scale),
+        "edge_logit_bias_shift": float(shift_params.edge_logit_bias_shift),
+        "mechanism_logit_tilt": float(shift_params.mechanism_logit_tilt),
+    }
+    provenance["steering"] = _steering_provenance_for_config(config)
+    provenance["runtime"] = {
+        **dict(provenance["runtime"]),
+        "fixed_layout_target_cells": normalize_fixed_layout_target_cells(
+            config.runtime.fixed_layout_target_cells
+        ),
+    }
+    return provenance
 
 
 def _heterogeneous_cohort_payload(bundle: DatasetBundle) -> dict[str, Any]:
@@ -302,7 +424,7 @@ def generate_batch_iter(
     request_run_split_group = heterogeneous_request_run_split_group(
         seed=int(run_seed),
         run_num_datasets=int(num_datasets),
-        request_run_provenance=_request_run_provenance_for_config(
+        request_run_provenance=_heterogeneous_request_run_provenance_for_config(
             realized_config,
             resolved_device=resolved_device,
         ),

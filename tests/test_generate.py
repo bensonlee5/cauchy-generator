@@ -184,6 +184,19 @@ def test_generate_batch_heterogeneous_run_is_reproducible() -> None:
         assert torch.equal(bundle_a.y_test, bundle_b.y_test)
 
 
+def test_generate_batch_heterogeneous_request_run_identity_is_run_stable() -> None:
+    cfg = _tiny_heterogeneous_regression_config()
+
+    batch_a = generate_batch(cfg, num_datasets=4, seed=321, device="cpu")
+    batch_b = generate_batch(cfg, num_datasets=4, seed=321, device="cpu")
+
+    request_run_a = [bundle.metadata["split_groups"]["request_run"] for bundle in batch_a]
+    request_run_b = [bundle.metadata["split_groups"]["request_run"] for bundle in batch_b]
+
+    assert len(set(request_run_a)) == 1
+    assert request_run_a == request_run_b
+
+
 def test_generate_batch_heterogeneous_run_can_vary_structural_schema() -> None:
     cfg = _tiny_heterogeneous_regression_config()
 
@@ -199,6 +212,43 @@ def test_generate_batch_heterogeneous_run_can_vary_structural_schema() -> None:
     }
 
     assert len(schema_signatures) > 1
+
+
+def test_generate_batch_heterogeneous_request_run_identity_changes_with_structural_bounds() -> None:
+    baseline = _tiny_heterogeneous_regression_config()
+    drifted = deepcopy(baseline)
+    baseline.dataset.n_features_min = 4
+    baseline.dataset.n_features_max = 4
+    drifted.dataset.n_features_min = 8
+    drifted.dataset.n_features_max = 8
+
+    batch_base = generate_batch(baseline, num_datasets=4, seed=1234, device="cpu")
+    batch_drifted = generate_batch(drifted, num_datasets=4, seed=1234, device="cpu")
+
+    assert {int(bundle.X_train.shape[1]) for bundle in batch_base} == {4}
+    assert {int(bundle.X_train.shape[1]) for bundle in batch_drifted} == {8}
+    assert (
+        batch_base[0].metadata["split_groups"]["request_run"]
+        != batch_drifted[0].metadata["split_groups"]["request_run"]
+    )
+    assert batch_base[0].metadata["dataset_id"] != batch_drifted[0].metadata["dataset_id"]
+
+
+def test_generate_batch_heterogeneous_request_run_identity_changes_with_steering_config() -> None:
+    baseline = _tiny_heterogeneous_regression_config()
+    steered = deepcopy(baseline)
+    steered.steering.enabled = True
+    steered.steering.preset = "anti_memorization_piecewise_v1"
+    steered.validate_generation_constraints()
+
+    batch_base = generate_batch(baseline, num_datasets=5, seed=1234, device="cpu")
+    batch_steered = generate_batch(steered, num_datasets=5, seed=1234, device="cpu")
+
+    assert len({bundle.metadata["split_groups"]["request_run"] for bundle in batch_steered}) == 1
+    assert (
+        batch_base[0].metadata["split_groups"]["request_run"]
+        != batch_steered[0].metadata["split_groups"]["request_run"]
+    )
 
 
 def test_generate_one_uses_fixed_dataset_rows_and_updates_metadata_config_split() -> None:

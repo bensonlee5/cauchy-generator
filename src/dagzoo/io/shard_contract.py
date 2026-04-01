@@ -13,6 +13,28 @@ REPLAY_CATALOG_FILENAME = "replay_catalog.ndjson"
 RUN_CONTEXT_FILENAME = "run_context.json"
 
 
+def _is_direct_shard_input(path: Path) -> bool:
+    """Return whether a public path names one shard directory directly."""
+
+    return path.name.startswith("shard_")
+
+
+def _internal_root_candidates(public_root: Path) -> list[Path]:
+    """Return candidate internal roots for a public run root or shard path."""
+
+    if _is_direct_shard_input(public_root):
+        public_run_root = public_root.parent
+        candidates: list[Path] = []
+        if public_run_root.name == "generated":
+            candidates.append(public_run_root.parent / INTERNAL_DIRNAME)
+        candidates.append(public_run_root / INTERNAL_DIRNAME)
+        return candidates
+    return [
+        public_root / INTERNAL_DIRNAME,
+        public_root.parent / INTERNAL_DIRNAME,
+    ]
+
+
 def infer_task_from_metadata(metadata: Mapping[str, Any]) -> str:
     """Infer task label from metadata payloads."""
 
@@ -92,19 +114,17 @@ def resolve_internal_root(
     *,
     explicit_internal_root: str | Path | None = None,
 ) -> Path:
-    """Resolve the internal sidecar root for one public shard root."""
+    """Resolve the internal sidecar root for one public run root or shard path."""
 
     if explicit_internal_root is not None:
         return Path(explicit_internal_root)
 
     resolved_public_root = Path(public_root)
-    direct_candidate = resolved_public_root / INTERNAL_DIRNAME
-    if direct_candidate.exists():
-        return direct_candidate
-    sibling_candidate = resolved_public_root.parent / INTERNAL_DIRNAME
-    if sibling_candidate.exists():
-        return sibling_candidate
-    return direct_candidate
+    candidates = _internal_root_candidates(resolved_public_root)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
 
 
 def internal_shard_dir(
