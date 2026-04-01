@@ -10,7 +10,7 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
-## [0.18.0] - 2026-03-31
+## [0.17.0] - 2026-03-31
 
 ### Changed
 
@@ -30,11 +30,6 @@ records the later `dagsynth -> dagzoo` rename on the current release line.
 - Fixed-layout-specific throughput and microbenchmark paths now pin
   `runtime.layout_mode: fixed` explicitly instead of inheriting the public
   default.
-
-## [0.17.0] - 2026-03-31
-
-### Changed
-
 - **BREAKING:** The repo now hard-cuts to latent-node target semantics. The
   canonical generator derives `y` from one selected latent DAG node, and the
   public docs no longer describe a separate `p(y | X_complete)` target head.
