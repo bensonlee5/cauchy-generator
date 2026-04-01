@@ -31,7 +31,6 @@ from dagzoo.core.metric_constants import (
     validate_metric_shapes,
 )
 from dagzoo.core.shift import mechanism_nonlinear_mass
-from dagzoo.filtering.extra_trees_filter import _fit_extra_trees_predictions
 from dagzoo.math import (
     coerce_optional_finite_float as _coerce_optional_finite_float,
 )
@@ -452,21 +451,11 @@ def _compute_wins_ratio_proxy(*, x: torch.Tensor, y: torch.Tensor, task: str) ->
             y_test_targets = _regression_target_matrix(y[test_idx])
         else:
             raise ValueError(f"Unsupported task '{task}'.")
-        pred_test = torch.from_numpy(
-            _fit_extra_trees_predictions(
-                x_train=x_tensor[train_idx].detach().to(device="cpu", dtype=torch.float32).numpy(),
-                y_train=y_train_targets.detach().to(device="cpu").numpy(),
-                x_test=x_tensor[test_idx].detach().to(device="cpu", dtype=torch.float32).numpy(),
-                task=task,
-                seed=0,
-                n_estimators=25,
-                max_depth=6,
-                min_samples_leaf=1,
-                max_leaf_nodes=None,
-                max_features="auto",
-                n_jobs=-1,
-            )
-        ).to(dtype=torch.float64)
+        pred_test = _ridge_predict(
+            x_tensor[train_idx],
+            y_train_targets,
+            x_tensor[test_idx],
+        )
         baseline = torch.mean(y_train_targets, dim=0, keepdim=True)
         wins_ratio = _bootstrap_wins_ratio(
             pred=pred_test,

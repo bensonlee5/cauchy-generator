@@ -125,14 +125,16 @@ def test_filter_stage_metric_replays_filter_and_reports_counts(
 ) -> None:
     cfg = GeneratorConfig()
     cfg.filter.enabled = True
-    replay_seeds: list[int] = []
+    filter_calls: list[int] = []
 
     def _stub_filter(*_args, **_kwargs):
-        replay_seeds.append(int(_kwargs["seed"]))
-        assert int(_kwargs["n_jobs"]) == 1
-        return bool(int(_kwargs["seed"]) % 2), {"n_valid_oob": 128}
+        filter_calls.append(1)
+        assert int(_kwargs["min_target_indegree"]) == 1
+        assert int(_kwargs["min_target_relevant_feature_count"]) == 2
+        assert float(_kwargs["min_target_relevant_feature_fraction"]) == pytest.approx(0.05)
+        return bool(len(filter_calls) % 2), {"target_indegree": len(filter_calls)}
 
-    monkeypatch.setattr("dagzoo.bench.stage_metrics._apply_extra_trees_filter_numpy", _stub_filter)
+    monkeypatch.setattr("dagzoo.bench.stage_metrics.apply_structural_filter", _stub_filter)
     bundles = [
         _bundle(metadata={"seed": 11, "dataset_seed": 21}),
         _bundle(metadata={"seed": 12, "dataset_seed": 22}),
@@ -145,7 +147,7 @@ def test_filter_stage_metric_replays_filter_and_reports_counts(
     assert measurement.datasets_per_minute > 0.0
     assert measurement.elapsed_seconds >= 0.0
     assert measurement.cpu_time_seconds >= 0.0
-    assert replay_seeds == [21, 22]
+    assert len(filter_calls) == 2
     assert measure_filter_stage_metrics(bundles, config=cfg).datasets_per_minute > 0.0
 
 
@@ -160,7 +162,7 @@ def test_filter_stage_metric_returns_zero_when_disabled(
         calls["count"] += 1
         return True, {}
 
-    monkeypatch.setattr("dagzoo.bench.stage_metrics._apply_extra_trees_filter_numpy", _stub_filter)
+    monkeypatch.setattr("dagzoo.bench.stage_metrics.apply_structural_filter", _stub_filter)
     measurement = measure_filter_stage_metrics([_bundle(metadata={})], config=cfg)
     assert measurement.datasets_per_minute == 0.0
     assert measurement.filter_attempts_total == 0
@@ -170,41 +172,34 @@ def test_filter_stage_metric_returns_zero_when_disabled(
     assert calls["count"] == 0
 
 
-def test_filter_stage_metric_uses_fallback_seed_when_missing(
+def test_filter_stage_metric_raises_when_lineage_missing() -> None:
+    cfg = GeneratorConfig()
+    cfg.filter.enabled = True
+    with pytest.raises(ValueError, match=r"metadata\.lineage"):
+        _ = measure_filter_stage_metrics([_bundle(metadata={})], config=cfg)
+
+
+def test_filter_stage_metric_passes_structural_threshold_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cfg = GeneratorConfig()
     cfg.filter.enabled = True
-    cfg.seed = 77
-    replay_seeds: list[int] = []
+    cfg.filter.min_target_indegree = 0
+    cfg.filter.min_target_relevant_feature_count = 1
+    cfg.filter.min_target_relevant_feature_fraction = 0.25
+    seen_thresholds: list[tuple[int, int, float]] = []
 
     def _stub_filter(*_args, **_kwargs):
-        replay_seeds.append(int(_kwargs["seed"]))
+        seen_thresholds.append(
+            (
+                int(_kwargs["min_target_indegree"]),
+                int(_kwargs["min_target_relevant_feature_count"]),
+                float(_kwargs["min_target_relevant_feature_fraction"]),
+            )
+        )
         return True, {}
 
-    monkeypatch.setattr("dagzoo.bench.stage_metrics._apply_extra_trees_filter_numpy", _stub_filter)
-    _ = measure_filter_stage_metrics(
-        [
-            _bundle(metadata={}),
-            _bundle(metadata={"seed": 100}),
-        ],
-        config=cfg,
-    )
-    assert replay_seeds == [77, 100]
-
-
-def test_filter_stage_metric_falls_back_to_legacy_seed_when_dataset_seed_missing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    cfg = GeneratorConfig()
-    cfg.filter.enabled = True
-    replay_seeds: list[int] = []
-
-    def _stub_filter(*_args, **_kwargs):
-        replay_seeds.append(int(_kwargs["seed"]))
-        return True, {}
-
-    monkeypatch.setattr("dagzoo.bench.stage_metrics._apply_extra_trees_filter_numpy", _stub_filter)
+    monkeypatch.setattr("dagzoo.bench.stage_metrics.apply_structural_filter", _stub_filter)
     _ = measure_filter_stage_metrics(
         [
             _bundle(metadata={"seed": 41}),
@@ -212,7 +207,7 @@ def test_filter_stage_metric_falls_back_to_legacy_seed_when_dataset_seed_missing
         ],
         config=cfg,
     )
-    assert replay_seeds == [41, 42]
+    assert seen_thresholds == [(0, 1, 0.25), (0, 1, 0.25)]
 
 
 def test_replay_filter_stage_metrics_streams_and_invokes_accept_callback(
@@ -221,13 +216,15 @@ def test_replay_filter_stage_metrics_streams_and_invokes_accept_callback(
     cfg = GeneratorConfig()
     cfg.filter.enabled = True
     accepted_markers: list[int] = []
+    filter_calls = {"count": 0}
 
     def _stub_filter(*_args, **kwargs):
-        accepted = int(kwargs["seed"]) % 2 == 0
-        details = {"reason": "too_hard_garbage"} if not accepted else {}
+        filter_calls["count"] += 1
+        accepted = filter_calls["count"] != 2
+        details = {"reason": "no_feature_target_path"} if not accepted else {}
         return accepted, details
 
-    monkeypatch.setattr("dagzoo.bench.stage_metrics._apply_extra_trees_filter_numpy", _stub_filter)
+    monkeypatch.setattr("dagzoo.bench.stage_metrics.apply_structural_filter", _stub_filter)
     measurement = replay_filter_stage_metrics(
         (_bundle(metadata={"dataset_seed": seed}) for seed in (10, 11, 12)),
         config=cfg,
@@ -239,7 +236,7 @@ def test_replay_filter_stage_metrics_streams_and_invokes_accept_callback(
     assert measurement.filter_attempts_total == 3
     assert measurement.filter_accepted_datasets == 2
     assert measurement.filter_rejected_datasets == 1
-    assert measurement.reason_counts == {"too_hard_garbage": 1}
+    assert measurement.reason_counts == {"no_feature_target_path": 1}
     assert accepted_markers == [10, 12]
 
 
@@ -254,7 +251,7 @@ def test_replay_filter_stage_metrics_excludes_accept_callback_time_from_throughp
 
     perf_counter_values = iter((0.0, 1.0, 6.0, 8.0))
 
-    monkeypatch.setattr("dagzoo.bench.stage_metrics._apply_extra_trees_filter_numpy", _stub_filter)
+    monkeypatch.setattr("dagzoo.bench.stage_metrics.apply_structural_filter", _stub_filter)
     monkeypatch.setattr(
         "dagzoo.bench.stage_metrics.time.perf_counter",
         lambda: next(perf_counter_values),
@@ -282,7 +279,7 @@ def test_replay_filter_stage_metrics_tracks_cpu_time_excluding_accept_callback(
     perf_counter_values = iter((0.0, 1.0, 6.0, 8.0))
     process_time_values = iter((10.0, 10.5, 13.0, 14.0))
 
-    monkeypatch.setattr("dagzoo.bench.stage_metrics._apply_extra_trees_filter_numpy", _stub_filter)
+    monkeypatch.setattr("dagzoo.bench.stage_metrics.apply_structural_filter", _stub_filter)
     monkeypatch.setattr(
         "dagzoo.bench.stage_metrics.time.perf_counter",
         lambda: next(perf_counter_values),

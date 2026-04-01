@@ -43,7 +43,7 @@ Infrastructure that ensures reproducibility, deterministic behavior, and data qu
 
 - [`src/dagzoo/rng.py`](../../src/dagzoo/rng.py): `KeyedRng` is the repo's single semantic RNG surface for deterministic child seeds and keyed torch generators.
 - [`docs/development/keyed-rng.md`](keyed-rng.md): Design note for the keyed RNG migration and semantic reproducibility contract.
-- [`src/dagzoo/filtering/`](../../src/dagzoo/filtering/): Implements deferred CPU ExtraTrees filtering (`dagzoo filter`) and filter replay utilities.
+- [`src/dagzoo/filtering/`](../../src/dagzoo/filtering/): Implements deferred structural filtering (`dagzoo filter`) and filter replay utilities.
 - [`src/dagzoo/core/metrics_torch.py`](../../src/dagzoo/core/metrics_torch.py): Unified torch-native metric extraction used by diagnostics and generation telemetry.
 - [`src/dagzoo/postprocess/`](../../src/dagzoo/postprocess/): Handles final-stage transformations; deterministic missingness (MCAR/MAR/MNAR) logic lives in [`sampling/missingness.py`](../../src/dagzoo/sampling/missingness.py).
 - [`src/dagzoo/core/shift.py`](../../src/dagzoo/core/shift.py): Shift mode resolution and scale coefficients.

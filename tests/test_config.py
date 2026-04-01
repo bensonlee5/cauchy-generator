@@ -81,15 +81,11 @@ def test_load_default_config() -> None:
     assert cfg.diagnostics.meta_feature_targets == {}
     assert cfg.diagnostics.out_dir is None
     assert cfg.runtime.layout_mode == "heterogeneous"
-    assert cfg.filter.n_estimators > 0
-    assert cfg.filter.max_depth >= 0
-    assert cfg.filter.max_features == "auto"
+    assert cfg.filter.enabled is False
     assert cfg.filter.min_target_indegree == 1
     assert cfg.filter.min_target_relevant_feature_count == 2
     assert cfg.filter.min_target_relevant_feature_fraction == pytest.approx(0.05)
-    assert cfg.filter.classification_kappa_threshold == pytest.approx(0.0)
-    assert cfg.filter.classification_require_prediction_diversity is True
-    assert cfg.filter.n_jobs == 1
+    assert cfg.filter.max_attempts == 3
     assert cfg.dataset.missing_rate == 0.0
     assert cfg.dataset.missing_mechanism == MISSINGNESS_MECHANISM_NONE
     assert cfg.dataset.missing_mar_observed_fraction == 0.5
@@ -132,8 +128,8 @@ def test_default_config_metadata_is_compatible_with_optional_lineage() -> None:
             r"filter\.min_target_relevant_feature_fraction must be a finite value in \[0, 1\]",
         ),
         (
-            {"filter": {"classification_kappa_threshold": 1.1}},
-            r"filter\.classification_kappa_threshold must be a finite value in \[-1, 1\]",
+            {"filter": {"enabled": "yes"}},
+            r"filter\.enabled must be a boolean",
         ),
     ],
 )
@@ -1152,20 +1148,10 @@ def test_legacy_graph_log2_keys_are_rejected() -> None:
         GeneratorConfig.from_dict({"graph": {"n_nodes_log2_min": 2, "n_nodes_log2_max": 8}})
 
 
-def test_filter_n_jobs_accepts_minus_one_and_positive_values() -> None:
-    cfg_auto = GeneratorConfig.from_dict({"filter": {"n_jobs": -1}})
-    cfg_single = GeneratorConfig.from_dict({"filter": {"n_jobs": 1}})
-    cfg_multi = GeneratorConfig.from_dict({"filter": {"n_jobs": 8}})
-
-    assert cfg_auto.filter.n_jobs == -1
-    assert cfg_single.filter.n_jobs == 1
-    assert cfg_multi.filter.n_jobs == 8
-
-
-@pytest.mark.parametrize("value", [0, -2, True])
-def test_filter_n_jobs_rejects_invalid_values(value: int | bool) -> None:
-    with pytest.raises(ValueError, match=r"filter\.n_jobs must"):
-        GeneratorConfig.from_dict({"filter": {"n_jobs": value}})
+@pytest.mark.parametrize("field_name", ["threshold", "n_jobs", "easy_skill_threshold"])
+def test_removed_filter_fields_are_rejected(field_name: str) -> None:
+    with pytest.raises(ValueError, match=r"Removed filter fields are not supported"):
+        GeneratorConfig.from_dict({"filter": {field_name: 1}})
 
 
 def test_validate_generation_constraints_revalidates_mutated_missingness_state() -> None:

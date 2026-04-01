@@ -59,6 +59,42 @@ _STEERING_FRACTION_TOLERANCE = 1e-6
 _STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_SLICE_V1 = (
     "anti_memorization_piecewise_classification_slice_v1"
 )
+_REMOVED_FILTER_FIELDS = frozenset(
+    {
+        "threshold",
+        "n_estimators",
+        "max_depth",
+        "min_samples_leaf",
+        "max_leaf_nodes",
+        "max_features",
+        "n_bootstrap",
+        "ease_k_small",
+        "easy_skill_threshold",
+        "easy_gain_threshold",
+        "hard_skill_threshold",
+        "stump_skill_threshold",
+        "use_lineage_veto",
+        "classification_kappa_threshold",
+        "classification_require_prediction_diversity",
+        "n_jobs",
+    }
+)
+_SUPPORTED_FILTER_FIELDS = (
+    "filter.enabled",
+    "filter.min_target_indegree",
+    "filter.min_target_relevant_feature_count",
+    "filter.min_target_relevant_feature_fraction",
+    "filter.max_attempts",
+)
+
+
+def _raise_removed_filter_fields(field_names: set[str]) -> None:
+    removed = ", ".join(f"filter.{field_name}" for field_name in sorted(field_names))
+    supported = ", ".join(_SUPPORTED_FILTER_FIELDS)
+    raise ValueError(
+        f"Removed filter fields are not supported: {removed}. "
+        f"Structural-only filtering supports only {supported}."
+    )
 
 
 def _build_anti_memorization_piecewise_v1_definition() -> dict[str, Any]:
@@ -587,47 +623,8 @@ def _normalize_benchmark_fields(_benchmark: BenchmarkConfig) -> None:
 def _normalize_filter_fields(filter_cfg: FilterConfig) -> None:
     """Stage 1: normalize filter scalar fields."""
 
-    filter_cfg.ease_k_small = _validate_int_field(
-        field_name="filter.ease_k_small",
-        value=filter_cfg.ease_k_small,
-        minimum=1,
-    )
-    filter_cfg.easy_skill_threshold = _validate_finite_float_field(
-        field_name="filter.easy_skill_threshold",
-        value=filter_cfg.easy_skill_threshold,
-        lo=0.0,
-        hi=1.0,
-        lo_inclusive=True,
-        hi_inclusive=True,
-        expectation="a finite value in [0, 1]",
-    )
-    filter_cfg.easy_gain_threshold = _validate_finite_float_field(
-        field_name="filter.easy_gain_threshold",
-        value=filter_cfg.easy_gain_threshold,
-        lo=0.0,
-        hi=1.0,
-        lo_inclusive=True,
-        hi_inclusive=True,
-        expectation="a finite value in [0, 1]",
-    )
-    filter_cfg.hard_skill_threshold = _validate_finite_float_field(
-        field_name="filter.hard_skill_threshold",
-        value=filter_cfg.hard_skill_threshold,
-        lo=0.0,
-        hi=1.0,
-        lo_inclusive=True,
-        hi_inclusive=True,
-        expectation="a finite value in [0, 1]",
-    )
-    filter_cfg.stump_skill_threshold = _validate_optional_finite_float_field(
-        field_name="filter.stump_skill_threshold",
-        value=filter_cfg.stump_skill_threshold,
-        lo=0.0,
-        hi=1.0,
-        lo_inclusive=True,
-        hi_inclusive=True,
-        expectation="a finite value in [0, 1]",
-    )
+    if not isinstance(filter_cfg.enabled, bool):
+        raise ValueError(f"filter.enabled must be a boolean, got {filter_cfg.enabled!r}.")
     filter_cfg.min_target_indegree = _validate_int_field(
         field_name="filter.min_target_indegree",
         value=filter_cfg.min_target_indegree,
@@ -647,36 +644,11 @@ def _normalize_filter_fields(filter_cfg: FilterConfig) -> None:
         hi_inclusive=True,
         expectation="a finite value in [0, 1]",
     )
-    filter_cfg.classification_kappa_threshold = _validate_finite_float_field(
-        field_name="filter.classification_kappa_threshold",
-        value=filter_cfg.classification_kappa_threshold,
-        lo=-1.0,
-        hi=1.0,
-        lo_inclusive=True,
-        hi_inclusive=True,
-        expectation="a finite value in [-1, 1]",
-    )
-    if not isinstance(filter_cfg.classification_require_prediction_diversity, bool):
-        raise ValueError(
-            "filter.classification_require_prediction_diversity must be a boolean, "
-            f"got {filter_cfg.classification_require_prediction_diversity!r}."
-        )
     filter_cfg.max_attempts = _validate_int_field(
         field_name="filter.max_attempts",
         value=filter_cfg.max_attempts,
         minimum=1,
     )
-    if not isinstance(filter_cfg.use_lineage_veto, bool):
-        raise ValueError(
-            f"filter.use_lineage_veto must be a boolean, got {filter_cfg.use_lineage_veto!r}."
-        )
-    filter_cfg.n_jobs = _validate_int_field(
-        field_name="filter.n_jobs",
-        value=filter_cfg.n_jobs,
-        minimum=-1,
-    )
-    if filter_cfg.n_jobs == 0:
-        raise ValueError("filter.n_jobs must be -1 or an integer >= 1, got 0.")
 
 
 def _normalize_steering_preset(value: object) -> str | None:
@@ -1443,25 +1415,10 @@ class BenchmarkConfig:
 @dataclass(slots=True)
 class FilterConfig:
     enabled: bool = False
-    n_estimators: int = 25
-    max_depth: int = 6
-    min_samples_leaf: int = 1
-    max_leaf_nodes: int | None = None
-    max_features: str | int | float = "auto"
-    n_bootstrap: int = 200
-    ease_k_small: int = 16
-    easy_skill_threshold: float = 0.8
-    easy_gain_threshold: float = 0.1
-    hard_skill_threshold: float = 0.0
-    stump_skill_threshold: float | None = None
-    use_lineage_veto: bool = True
     min_target_indegree: int = 1
     min_target_relevant_feature_count: int = 2
     min_target_relevant_feature_fraction: float = 0.05
-    classification_kappa_threshold: float = 0.0
-    classification_require_prediction_diversity: bool = True
     max_attempts: int = 3
-    n_jobs: int = 1
 
 
 @dataclass(slots=True)
@@ -1538,11 +1495,9 @@ class GeneratorConfig:
         diagnostics = DiagnosticsConfig(**(data.get("diagnostics") or {}))
         benchmark = BenchmarkConfig(**(data.get("benchmark") or {}))
         filter_payload = dict(data.get("filter") or {})
-        if "threshold" in filter_payload:
-            raise ValueError(
-                "filter.threshold has been removed. Use filter.easy_skill_threshold, "
-                "filter.easy_gain_threshold, and filter.hard_skill_threshold instead."
-            )
+        removed_filter_fields = set(filter_payload).intersection(_REMOVED_FILTER_FIELDS)
+        if removed_filter_fields:
+            _raise_removed_filter_fields(removed_filter_fields)
         filter_cfg = FilterConfig(**filter_payload)
         seed = data.get("seed", 1)
         return cls(

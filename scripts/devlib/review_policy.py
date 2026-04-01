@@ -123,10 +123,7 @@ PYTEST_TARGETS_BY_PREFIX = (
     ),
     (
         "src/dagzoo/filtering/",
-        (
-            "tests/test_extra_trees_filter.py",
-            "tests/test_deferred_filter.py",
-        ),
+        ("tests/test_deferred_filter.py",),
     ),
     (
         "src/dagzoo/diagnostics/",

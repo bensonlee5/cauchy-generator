@@ -60,9 +60,10 @@ Every generate run writes:
 - `effective_config_trace.yaml`
 
 `dagzoo generate` now only generates. If you want accept/reject decisions, run
-`dagzoo filter` as a separate replay stage over the emitted shards. Deferred
-filtering now defaults to one sklearn worker; set `filter.n_jobs: -1`
-explicitly when you want the older all-core behavior.
+`dagzoo filter` as a separate replay stage over the emitted shards.
+`filter.enabled` controls deferred replay and benchmark filter measurement, but
+generation still uses `filter.min_target_*` plus `filter.max_attempts` when it
+resamples layouts for structural validity.
 
 ______________________________________________________________________
 

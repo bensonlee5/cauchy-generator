@@ -10,6 +10,27 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.19.0] - 2026-04-01
+
+### Changed
+
+- **BREAKING:** Deferred filtering is structural-only. `dagzoo filter`,
+  benchmark filter replay, and diversity-audit filter replay now accept or
+  reject datasets from lineage reachability and target-validity checks only.
+- **BREAKING:** Removed the learned-filter config fields
+  `threshold`, `n_estimators`, `max_depth`, `min_samples_leaf`,
+  `max_leaf_nodes`, `max_features`, `n_bootstrap`, `ease_k_small`,
+  `easy_skill_threshold`, `easy_gain_threshold`, `hard_skill_threshold`,
+  `stump_skill_threshold`, `use_lineage_veto`,
+  `classification_kappa_threshold`,
+  `classification_require_prediction_diversity`, and `n_jobs`. Config loading
+  and `dagzoo filter --set` now fail fast when those fields are present.
+- Filter-enabled replay now requires `metadata.lineage` in shard sidecars
+  because the structural path no longer falls back to a learned probe.
+- Deferred-filter manifests, summaries, and benchmark filter summaries now use
+  `filter_mode=structural_v1` and emit structural reason counts instead of
+  learned-filter skill/stump diagnostics.
+
 ## [0.18.0] - 2026-04-01
 
 ### Changed

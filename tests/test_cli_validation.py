@@ -387,7 +387,7 @@ def test_diversity_audit_cli_rejects_swapped_warn_and_fail_thresholds() -> None:
     assert int(exc.value.code) == 2
 
 
-def test_filter_cli_rejects_invalid_n_jobs() -> None:
+def test_filter_cli_rejects_removed_n_jobs_flag() -> None:
     with pytest.raises(SystemExit) as exc:
         main(
             [
@@ -435,7 +435,7 @@ def test_filter_cli_rejects_removed_threshold_flag() -> None:
     assert int(exc.value.code) == 2
 
 
-def test_filter_cli_passes_ease_overrides_to_runner(
+def test_filter_cli_passes_structural_overrides_to_runner(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     captured: dict[str, object] = {}
@@ -469,19 +469,13 @@ def test_filter_cli_passes_ease_overrides_to_runner(
             "--out",
             str(tmp_path / "filter_out"),
             "--set",
-            "filter.n_jobs=4",
+            "filter.min_target_indegree=0",
             "--set",
-            "filter.ease_k_small=8",
+            "filter.min_target_relevant_feature_count=1",
             "--set",
-            "filter.easy_skill_threshold=0.7",
+            "filter.min_target_relevant_feature_fraction=0.2",
             "--set",
-            "filter.easy_gain_threshold=0.15",
-            "--set",
-            "filter.hard_skill_threshold=0.05",
-            "--set",
-            "filter.stump_skill_threshold=0.6",
-            "--set",
-            "filter.use_lineage_veto=false",
+            "filter.max_attempts=5",
         ]
     )
 
@@ -491,17 +485,14 @@ def test_filter_cli_passes_ease_overrides_to_runner(
     assert kwargs["out_dir"] == str(tmp_path / "filter_out")
     assert kwargs["curated_out_dir"] is None
     assert kwargs["path_overrides"] == (
-        ("filter.n_jobs", 4),
-        ("filter.ease_k_small", 8),
-        ("filter.easy_skill_threshold", 0.7),
-        ("filter.easy_gain_threshold", 0.15),
-        ("filter.hard_skill_threshold", 0.05),
-        ("filter.stump_skill_threshold", 0.6),
-        ("filter.use_lineage_veto", False),
+        ("filter.min_target_indegree", 0),
+        ("filter.min_target_relevant_feature_count", 1),
+        ("filter.min_target_relevant_feature_fraction", 0.2),
+        ("filter.max_attempts", 5),
     )
 
 
-def test_filter_cli_passes_lineage_veto_enable_override_to_runner(
+def test_filter_cli_passes_structural_override_to_runner(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     captured: dict[str, object] = {}
@@ -535,15 +526,15 @@ def test_filter_cli_passes_lineage_veto_enable_override_to_runner(
             "--out",
             str(tmp_path / "filter_out"),
             "--set",
-            "filter.use_lineage_veto=true",
+            "filter.min_target_indegree=2",
         ]
     )
 
     assert code == 0
-    assert captured["kwargs"]["path_overrides"] == (("filter.use_lineage_veto", True),)
+    assert captured["kwargs"]["path_overrides"] == (("filter.min_target_indegree", 2),)
 
 
-def test_filter_cli_leaves_lineage_veto_override_unset_by_default(
+def test_filter_cli_leaves_structural_overrides_unset_by_default(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     captured: dict[str, object] = {}

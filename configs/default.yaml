@@ -62,15 +62,7 @@ benchmark:
       warmup_datasets: 50
 filter:
   enabled: false
-  n_estimators: 25
-  max_depth: 6
-  max_features: auto
-  n_bootstrap: 200
-  ease_k_small: 16
-  easy_skill_threshold: 0.8
-  easy_gain_threshold: 0.1
-  hard_skill_threshold: 0.0
-  stump_skill_threshold: null
-  use_lineage_veto: true
+  min_target_indegree: 1
+  min_target_relevant_feature_count: 2
+  min_target_relevant_feature_fraction: 0.05
   max_attempts: 3
-  n_jobs: 1

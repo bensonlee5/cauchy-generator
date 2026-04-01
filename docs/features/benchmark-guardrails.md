@@ -99,9 +99,9 @@ dagzoo benchmark \
   --out-dir benchmarks/results/smoke_filter
 ```
 
-This preset intentionally sets `filter.use_lineage_veto=false` and
-`filter.stump_skill_threshold=0.04` so the smoke run measures learned-filter
-throughput and yield instead of being dominated by structural no-path vetoes.
+This preset measures the structural replay path directly, so the smoke run's
+filter throughput and yield reflect lineage-based acceptance instead of a
+separate learned-filter stage.
 
 Inspect these `summary.json` preset-result fields first:
 

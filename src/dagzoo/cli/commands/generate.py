@@ -188,7 +188,9 @@ def run_generate_command(args: argparse.Namespace) -> int:
     if bool(config.filter.enabled):
         raise_usage_error(
             "Inline filtering has been removed from generate. Set filter.enabled=false and run "
-            "`dagzoo filter --in <shard_dir> --out <out_dir>` after generation."
+            "`dagzoo filter --in <shard_dir> --out <out_dir>` after generation. "
+            "Generation still uses filter.min_target_* and filter.max_attempts while "
+            "resampling structurally valid layouts."
         )
     hw = detect_hardware(resolved_device)
     trace_events = list(resolved["trace_events"])

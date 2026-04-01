@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-dagzoo is a high-throughput synthetic tabular data generator built around causal structure. It generates reproducible datasets from latent DAGs mapped to observable tabular features. Core dependencies: numpy, torch, pyarrow, scikit-learn, pyyaml.
+dagzoo is a high-throughput synthetic tabular data generator built around causal structure. It generates reproducible datasets from latent DAGs mapped to observable tabular features. Core dependencies: numpy, torch, pyarrow, pyyaml.
 
 ## Commands
 
@@ -75,7 +75,7 @@ YAML config → config_resolution.py (hardware detect + policy + CLI overrides)
   → layout.py (sample DAG, assign features to nodes)
   → fixed_layout_batched.py (build execution plans, topological node traversal)
   → noise_runtime.py + postprocess.py (noise injection, train/test split, missingness)
-  → filtering/deferred_filter.py (optional ExtraTrees acceptance)
+  → filtering/deferred_filter.py (optional structural replay acceptance)
   → io/parquet_writer.py (write shards + metadata)
 ```
 
@@ -95,7 +95,7 @@ The canonical entry is `core/dataset.py` → `core/fixed_layout_runtime.py`. One
 | `src/dagzoo/functions/`   | Mechanism families (linear, nn, tree, gp, etc.)            |
 | `src/dagzoo/converters/`  | Latent-to-observable converters (numeric, categorical)     |
 | `src/dagzoo/sampling/`    | Noise families, missingness, correlated sampling           |
-| `src/dagzoo/filtering/`   | Deferred ExtraTrees filtering                              |
+| `src/dagzoo/filtering/`   | Deferred structural filtering                              |
 | `src/dagzoo/io/`          | Parquet writer, lineage artifacts, schema                  |
 | `src/dagzoo/bench/`       | Benchmark suite, scenario evaluation, regression detection |
 | `src/dagzoo/diagnostics/` | Coverage aggregation, effective diversity audit            |

@@ -1,27 +1,14 @@
 # Linear Tracker Operations
 
-`dagzoo` uses Linear as its live tracker. This document covers the repo-owned
-tracker tooling for migration, workflow-state bootstrap, and recurring repo
-audit seeding.
+`dagzoo` uses Linear as its live tracker. This document covers the current
+tracker contract and repo-owned guidance that contributors should follow while
+working against the project.
 
-## What lives in this repo
+The historical GitHub-to-Linear migration and bootstrap scripts were removed
+after the cutover completed. Tracker work now happens directly in Linear rather
+than through repo-owned one-shot tooling.
 
-- `scripts/linear/github_to_linear.py`: one-shot GitHub Issues -> Linear
-  migration and GitHub cutover tool.
-- `scripts/linear/seed_harness_backlog.py`: seeds the harness-engineering epic,
-  child tickets, and weekly audit issue body.
-- `AGENTS.md`: canonical operating contract for autonomous contributors.
-- `docs/development/harness_audit.md`: weekly repo-audit rubric.
-- `docs/development/issue_authoring.md`: issue-writing standard for
-  implementation-ready work.
-
-## Required environment
-
-- A Linear API key file passed with `--linear-api-key-file`.
-- `uv`: used to run the repo scripts in the project environment.
-- `gh`: required by the GitHub migration/cutover flow.
-
-## Target tracker
+## Canonical Tracker State
 
 - Linear project URL:
   `https://linear.app/bl-personal/project/dagzoo-4867d49bb182/overview`
@@ -38,8 +25,23 @@ Canonical workflow states for this repo:
 - `Merging`
 - `Done`
 
-The migration tool bootstraps any missing workflow states on the owning team
-before importing issues.
+## Issue Hygiene
+
+Implementation-ready issues should follow
+[`docs/development/issue_authoring.md`](issue_authoring.md) and include:
+
+- `Summary`
+- `Why`
+- `Scope`
+- `Acceptance Criteria`
+- `Validation`
+
+Additional repo expectations:
+
+- Keep one coherent behavior change or refactor seam per issue when possible.
+- Call out user-facing changes explicitly, including docs-update expectations.
+- Keep roadmap references in
+  [`docs/development/roadmap.md`](roadmap.md) aligned with the active tracker.
 
 ## Weekly Repo Audit
 
@@ -53,54 +55,19 @@ Default recurring audit contract:
 - Creation state: `Todo`
 - Remediation issues: `Backlog`, label `harness`
 
-Use `scripts/linear/seed_harness_backlog.py` to seed the harness epic, child
-tickets, and weekly audit issue body. If Linear recurrence is not available
-through the API, configure the final recurrence in the Linear UI after seeding.
+When the weekly audit finds a new gap:
 
-Dry-run the seed flow first:
+1. Search the current Linear project for an open issue covering the same work.
+2. Reuse that issue if it already exists.
+3. Otherwise create a new remediation issue that references the audit, starts
+   in `Backlog`, and includes acceptance criteria plus validation.
 
-```bash
-uv run python scripts/linear/seed_harness_backlog.py \
-  --linear-api-key-file ~/.linear/linear_api_key.txt \
-  --project-slug 4867d49bb182 \
-  --dry-run
-```
+## Related Docs
 
-## Migrating GitHub issues to Linear
-
-Dry-run a subset first:
-
-```bash
-uv run python scripts/linear/github_to_linear.py \
-  --repo bensonlee5/dagzoo \
-  --linear-api-key-file ~/.linear/linear_api_key.txt \
-  --project-slug 4867d49bb182 \
-  --mapping-path reference/linear_issue_map_2026-03-08.json \
-  --issue-number 148 \
-  --issue-number 146 \
-  --issue-number 175 \
-  --dry-run
-```
-
-Run the full migration and GitHub cutover:
-
-```bash
-uv run python scripts/linear/github_to_linear.py \
-  --repo bensonlee5/dagzoo \
-  --linear-api-key-file ~/.linear/linear_api_key.txt \
-  --project-slug 4867d49bb182 \
-  --mapping-path reference/linear_issue_map_2026-03-08.json \
-  --mode all
-```
-
-## Migration defaults
-
-- All open GitHub issues migrate to Linear `Backlog`.
-- All closed GitHub issues migrate to Linear `Done`.
-- GitHub labels `P0`, `P1`, and `P2` map to Linear priorities `Urgent`,
-  `High`, and `Normal`.
-- Non-priority GitHub labels are created or reused as Linear labels.
-- GitHub issues labeled `epic` become parent issues when their bodies
-  explicitly reference child issue numbers.
-- After cutover, GitHub issues are commented with the Linear successor URL and
-  remaining open issues are closed.
+- `AGENTS.md`: canonical operating contract for autonomous contributors.
+- [`docs/development/harness_audit.md`](harness_audit.md): weekly repo-audit
+  rubric.
+- [`docs/development/issue_authoring.md`](issue_authoring.md): issue-writing
+  standard for implementation-ready work.
+- [`docs/development/roadmap.md`](roadmap.md): canonical planning state and
+  tracker-link inventory.

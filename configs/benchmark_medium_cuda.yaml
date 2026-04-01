@@ -46,11 +46,4 @@ benchmark:
       warmup_datasets: 50
 filter:
   enabled: false
-  n_estimators: 25
-  max_depth: 6
-  max_features: auto
-  n_bootstrap: 200
-  easy_skill_threshold: 0.8
-  easy_gain_threshold: 0.1
-  hard_skill_threshold: 0.0
   max_attempts: 3

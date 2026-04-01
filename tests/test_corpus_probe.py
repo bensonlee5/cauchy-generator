@@ -127,14 +127,7 @@ def test_run_corpus_probe_streams_filter_enabled_analysis(
             filter_rejections_total=1,
             filter_rejected_datasets=1,
             accepted_true_fraction=2.0 / 3.0,
-            skill_small_mean=0.82,
-            skill_full_mean=0.9,
-            skill_gain_mean=0.08,
-            skill_small_lb95_mean=0.78,
-            skill_gain_ub95_mean=0.09,
-            skill_full_ub95_mean=0.93,
-            stump_skill_mean=0.45,
-            reason_counts={"too_hard_garbage": 1},
+            reason_counts={"no_feature_target_path": 1},
         )
 
     monkeypatch.setattr(
@@ -164,7 +157,8 @@ def test_run_corpus_probe_streams_filter_enabled_analysis(
     assert result.filter_datasets_per_minute == 30.0
     assert result.filter_accepted_datasets_per_minute == pytest.approx(20.0)
     assert result.coverage_summary["num_datasets"] == 2
-    assert result.filter_summary["reason_counts"] == {"too_hard_garbage": 1}
+    assert result.filter_summary["filter_mode"] == "structural_v1"
+    assert result.filter_summary["reason_counts"] == {"no_feature_target_path": 1}
 
 
 def test_run_corpus_probe_uses_shared_probe_seed_for_generation_and_report(
