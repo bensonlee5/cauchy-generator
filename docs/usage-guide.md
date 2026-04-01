@@ -48,7 +48,10 @@ under the resolved output directory.
 `dagzoo generate` defaults to fully heterogeneous per-dataset plan sampling, so
 datasets in the same run may differ in feature schema, lineage assignments, and
 target node choice. Set `runtime.layout_mode: fixed` when you want one shared
-fixed-layout plan across the run.
+fixed-layout plan across the run. On Apple hardware, heterogeneous
+`device=auto` now resolves to CPU instead of MPS because the public
+heterogeneous path is typically faster there; pass `--device mps` only when you
+want to force the MPS backend explicitly.
 Inline filtering is removed from `dagzoo generate`. Keep `filter.enabled: false`
 for generate flows, then run `dagzoo filter` as a separate replay stage on the
 emitted shards when you want acceptance decisions.
@@ -128,6 +131,7 @@ Default mode:
 - samples a layout and execution plan per dataset
 - preserves one stable `request_run` id across the run
 - emits `group_ids.cohort` instead of `group_ids.layout_plan`
+- on Apple hardware, `device=auto` prefers CPU over MPS for this mode
 
 Opt-in fixed mode:
 

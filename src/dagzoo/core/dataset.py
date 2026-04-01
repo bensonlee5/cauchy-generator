@@ -419,6 +419,7 @@ def generate_batch_iter(
             config,
             seed=seed,
             device=device,
+            prefer_cpu_for_mps_auto=True,
         )
     )
     request_run_split_group = heterogeneous_request_run_split_group(

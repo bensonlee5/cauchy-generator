@@ -13,7 +13,11 @@ from dagzoo.bench.constants import (
 )
 from dagzoo.config import GeneratorConfig, clone_generator_config
 from dagzoo.core.dataset import _iter_prepared_canonical_batch_iter, generate_batch_iter
-from dagzoo.core.fixed_layout.runtime import prepare_canonical_fixed_layout_run
+from dagzoo.core.fixed_layout.prepare import realize_generation_config_for_run
+from dagzoo.core.fixed_layout.runtime import (
+    _generate_batch_with_heterogeneous_layout_iter,
+    prepare_canonical_fixed_layout_run,
+)
 from dagzoo.hardware import detect_hardware
 from dagzoo.hardware_policy import (
     resolve_cuda_fixed_layout_target_cells_limits,
@@ -40,6 +44,14 @@ _RAW_BATCH_METRIC_KEYS: tuple[str, ...] = (
     "converter_cpu_time_seconds",
     "feature_materialization_elapsed_seconds",
     "feature_materialization_cpu_time_seconds",
+    "heterogeneous_descriptor_resolution_elapsed_seconds",
+    "heterogeneous_descriptor_resolution_cpu_time_seconds",
+    "heterogeneous_split_resolution_elapsed_seconds",
+    "heterogeneous_split_resolution_cpu_time_seconds",
+    "heterogeneous_postprocess_elapsed_seconds",
+    "heterogeneous_postprocess_cpu_time_seconds",
+    "heterogeneous_metadata_finalization_elapsed_seconds",
+    "heterogeneous_metadata_finalization_cpu_time_seconds",
 )
 
 
@@ -186,6 +198,22 @@ def _consume_generation(
             on_bundle(bundle)
 
 
+def _empty_raw_batch_metric_totals() -> dict[str, float]:
+    """Return a zero-initialized runtime-metric accumulator."""
+
+    return {key: 0.0 for key in _RAW_BATCH_METRIC_KEYS}
+
+
+def _accumulate_raw_batch_metrics(
+    totals: dict[str, float],
+    metrics: dict[str, float],
+) -> None:
+    """Accumulate one runtime-metric payload into benchmark totals."""
+
+    for key in _RAW_BATCH_METRIC_KEYS:
+        totals[key] += float(metrics.get(key, 0.0) or 0.0)
+
+
 def iter_throughput_measure_bundles(
     config: GeneratorConfig,
     *,
@@ -208,6 +236,72 @@ def iter_throughput_measure_bundles(
         ),
     )
     yield from _iter_prepared_canonical_batch_iter(prepared, num_datasets=num_datasets)
+
+
+def run_heterogeneous_throughput_benchmark(
+    config: GeneratorConfig,
+    *,
+    num_datasets: int,
+    warmup_datasets: int = 10,
+    device: str | None = None,
+    on_bundle: Callable[[DatasetBundle], object] | None = None,
+) -> dict[str, Any]:
+    """Measure end-to-end throughput for the public heterogeneous generation path."""
+
+    run_config = clone_generator_config(config, revalidate=False)
+    run_config.runtime.layout_mode = "heterogeneous"
+    _, _run_seed, _requested_device, resolved_device = realize_generation_config_for_run(
+        run_config,
+        seed=_throughput_measure_seed(config),
+        device=device,
+        prefer_cpu_for_mps_auto=True,
+    )
+    timing_device = str(resolved_device)
+    if warmup_datasets > 0:
+        for _bundle in _generate_batch_with_heterogeneous_layout_iter(
+            run_config,
+            num_datasets=warmup_datasets,
+            seed=_throughput_warmup_seed(config),
+            device=device,
+        ):
+            pass
+
+    _synchronize_accelerator(timing_device)
+    start = time.perf_counter()
+    start_cpu = time.process_time()
+    raw_batch_metric_totals = _empty_raw_batch_metric_totals()
+
+    def _on_raw_batch_metrics(metrics: dict[str, float]) -> None:
+        _accumulate_raw_batch_metrics(raw_batch_metric_totals, metrics)
+
+    for bundle in _generate_batch_with_heterogeneous_layout_iter(
+        run_config,
+        num_datasets=num_datasets,
+        seed=_throughput_measure_seed(config),
+        device=device,
+        on_raw_batch_metrics=_on_raw_batch_metrics,
+    ):
+        if on_bundle is not None:
+            on_bundle(bundle)
+    _synchronize_accelerator(timing_device)
+    elapsed = time.perf_counter() - start
+    cpu_time_seconds = time.process_time() - start_cpu
+    dps = num_datasets / elapsed if elapsed > 0 else 0.0
+    dpm = dps * SECONDS_PER_MINUTE
+    return {
+        "preset": config.benchmark.preset_name,
+        "num_datasets": num_datasets,
+        "warmup_datasets": warmup_datasets,
+        "elapsed_seconds": elapsed,
+        "cpu_time_seconds": cpu_time_seconds,
+        "prepare_elapsed_seconds": 0.0,
+        "prepare_cpu_time_seconds": 0.0,
+        "datasets_per_second": dps,
+        "datasets_per_minute": dpm,
+        "slo_pass_100_datasets_per_min": dpm >= THROUGHPUT_SLO_DATASETS_PER_MINUTE,
+        "generation_mode": "heterogeneous_grouped",
+        **raw_batch_metric_totals,
+    }
 
 
 def run_throughput_benchmark(
@@ -235,7 +329,7 @@ def run_throughput_benchmark(
     _synchronize_accelerator(timing_device)
     start = time.perf_counter()
     start_cpu = time.process_time()
-    raw_batch_metric_totals = {key: 0.0 for key in _RAW_BATCH_METRIC_KEYS}
+    raw_batch_metric_totals = _empty_raw_batch_metric_totals()
     prepared = prepare_canonical_fixed_layout_run(
         run_config,
         num_datasets=num_datasets,
@@ -251,8 +345,7 @@ def run_throughput_benchmark(
     prepare_cpu_time_seconds = time.process_time() - start_cpu
 
     def _on_raw_batch_metrics(metrics: dict[str, float]) -> None:
-        for key in _RAW_BATCH_METRIC_KEYS:
-            raw_batch_metric_totals[key] += float(metrics.get(key, 0.0) or 0.0)
+        _accumulate_raw_batch_metrics(raw_batch_metric_totals, metrics)
 
     for bundle in _iter_prepared_canonical_batch_iter(
         prepared,

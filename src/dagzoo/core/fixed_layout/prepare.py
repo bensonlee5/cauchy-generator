@@ -65,12 +65,17 @@ def realize_generation_config_for_run(
     *,
     seed: int | None = None,
     device: str | None = None,
+    prefer_cpu_for_mps_auto: bool = False,
 ) -> tuple[GeneratorConfig, int, str, str]:
     """Resolve one canonical single-run config with rows fixed for the full run."""
 
     run_seed = _resolve_run_seed(config, seed)
     requested_device = (device or config.runtime.device or "auto").lower()
-    resolved_device = _resolve_device(config, device)
+    resolved_device = _resolve_device(
+        config,
+        device,
+        prefer_cpu_for_mps_auto=prefer_cpu_for_mps_auto,
+    )
 
     if config.stress.profile is not None:
         config.validate_generation_constraints()

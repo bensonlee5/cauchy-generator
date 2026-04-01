@@ -31,6 +31,7 @@ from dagzoo.diagnostics import (
 )
 from dagzoo.diagnostics_targets import build_diagnostics_aggregation_config
 from dagzoo.filtering.deferred_filter import MANIFEST_FILENAME, SUMMARY_FILENAME
+from dagzoo.hardware import detect_hardware
 from dagzoo.io.parquet_writer import write_packed_parquet_shards_stream
 from dagzoo.io.shard_contract import RUN_CONTEXT_FILENAME
 
@@ -177,17 +178,19 @@ def run_generate_command(args: argparse.Namespace) -> int:
 
     resolved_config = resolved["config"]
     seed = args.seed if args.seed is not None else resolved_config.seed
+    prefer_cpu_for_mps_auto = str(resolved_config.runtime.layout_mode) != "fixed"
     config, run_seed, requested_device, resolved_device = realize_generation_config_for_run(
         resolved_config,
         seed=seed,
         device=str(resolved["requested_device"]),
+        prefer_cpu_for_mps_auto=prefer_cpu_for_mps_auto,
     )
     if bool(config.filter.enabled):
         raise_usage_error(
             "Inline filtering has been removed from generate. Set filter.enabled=false and run "
             "`dagzoo filter --in <shard_dir> --out <out_dir>` after generation."
         )
-    hw = resolved["hardware"]
+    hw = detect_hardware(resolved_device)
     trace_events = list(resolved["trace_events"])
     append_config_diff_events(
         resolved_config,

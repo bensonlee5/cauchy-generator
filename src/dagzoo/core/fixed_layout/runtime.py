@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
@@ -19,6 +20,7 @@ from dagzoo.core.generation_context import (
 from dagzoo.core.generation_runtime import (
     _build_fixed_schema_finalization_context,
     _finalize_generated_chunk_preserve_schema,
+    _finalize_generated_chunk_variable_schema,
     _finalize_generated_tensors,
     _FixedSchemaFinalizationContext,
     _resolve_split_indices,
@@ -96,7 +98,7 @@ class _ResolvedDatasetDescriptor:
     effective_config: GeneratorConfig
     effective_plan: _FixedLayoutPlan
     effective_shift: ShiftRuntimeParams
-    finalization_context: _FixedSchemaFinalizationContext
+    finalization_context: _FixedSchemaFinalizationContext | None
 
 
 class InvalidStructuralLayoutError(ValueError):
@@ -714,20 +716,13 @@ def _resolve_heterogeneous_dataset_descriptor(
         "execution_plan",
     ]
     effective_shift = resolve_shift_runtime_params(effective_config)
-    finalization_context = _build_fixed_schema_finalization_context(
-        effective_config,
-        effective_plan.layout,
-        n_train=int(effective_plan.n_train),
-        n_test=int(effective_plan.n_test),
-        shift_params=effective_shift,
-    )
     return _ResolvedDatasetDescriptor(
         dataset_index=int(dataset_index),
         dataset_root=dataset_root,
         effective_config=effective_config,
         effective_plan=effective_plan,
         effective_shift=effective_shift,
-        finalization_context=finalization_context,
+        finalization_context=None,
     )
 
 
@@ -767,6 +762,8 @@ def _generate_heterogeneous_bundle_with_plan_candidates(
     candidate_attempts = _plan_candidate_attempt_budget(config)
     candidate_start = max(0, int(start_candidate_attempt))
     for candidate_attempt in range(candidate_start, candidate_attempts):
+        descriptor_start = time.perf_counter()
+        descriptor_start_cpu = time.process_time()
         descriptor = _resolve_heterogeneous_dataset_descriptor(
             config,
             requested_device=requested_device,
@@ -777,6 +774,17 @@ def _generate_heterogeneous_bundle_with_plan_candidates(
             num_datasets=num_datasets,
             dataset_root=dataset_root,
         )
+        if on_raw_batch_metrics is not None:
+            on_raw_batch_metrics(
+                {
+                    "heterogeneous_descriptor_resolution_elapsed_seconds": (
+                        time.perf_counter() - descriptor_start
+                    ),
+                    "heterogeneous_descriptor_resolution_cpu_time_seconds": (
+                        time.process_time() - descriptor_start_cpu
+                    ),
+                }
+            )
         try:
             bundle = _generate_fixed_layout_bundle_with_retries(
                 descriptor.effective_config,
@@ -927,11 +935,22 @@ def _generate_batch_with_dynamic_steering_iter(
                         except InfeasibleStratifiedSplitError:
                             split_indices = None
                         resolved_split_indices.append(split_indices)
+                representative_context = representative.finalization_context
+                raw_contexts_by_batch = [entry.finalization_context for entry in group_descriptors]
+                if representative_context is None or any(
+                    context is None for context in raw_contexts_by_batch
+                ):
+                    raise RuntimeError(
+                        "Fixed-layout steering descriptors must include finalization contexts."
+                    )
+                contexts_by_batch = [
+                    context for context in raw_contexts_by_batch if context is not None
+                ]
                 finalized_group = _finalize_generated_chunk_preserve_schema(
                     representative.effective_config,
                     representative.effective_plan.layout,
-                    context=representative.finalization_context,
-                    contexts_by_batch=[entry.finalization_context for entry in group_descriptors],
+                    context=representative_context,
+                    contexts_by_batch=contexts_by_batch,
                     configs_by_batch=[entry.effective_config for entry in group_descriptors],
                     dataset_roots=group_dataset_roots,
                     attempt=grouped_batch.attempt,
@@ -1066,6 +1085,7 @@ def _generate_batch_with_heterogeneous_layout_iter(
             config,
             seed=seed,
             device=device,
+            prefer_cpu_for_mps_auto=True,
         )
     )
     run_root = KeyedRng(run_seed)
@@ -1081,6 +1101,8 @@ def _generate_batch_with_heterogeneous_layout_iter(
     dataset_index = 0
     while dataset_index < num_datasets:
         chunk_size = min(effective_batch_size, num_datasets - dataset_index)
+        descriptor_start = time.perf_counter()
+        descriptor_start_cpu = time.process_time()
         descriptors = [
             _resolve_heterogeneous_dataset_descriptor(
                 realized_config,
@@ -1094,6 +1116,17 @@ def _generate_batch_with_heterogeneous_layout_iter(
             )
             for offset in range(chunk_size)
         ]
+        if on_raw_batch_metrics is not None:
+            on_raw_batch_metrics(
+                {
+                    "heterogeneous_descriptor_resolution_elapsed_seconds": (
+                        time.perf_counter() - descriptor_start
+                    ),
+                    "heterogeneous_descriptor_resolution_cpu_time_seconds": (
+                        time.process_time() - descriptor_start_cpu
+                    ),
+                }
+            )
         raw_batch_by_offset: list[DatasetBundle | None] = [None] * chunk_size
         recoverable_failure_by_offset: list[RecoverableGenerationFailure | None] = [
             None
@@ -1136,46 +1169,37 @@ def _generate_batch_with_heterogeneous_layout_iter(
                     recoverable_failure_by_offset[offset] = recoverable_failure
                 continue
             for grouped_batch in grouped_raw_batches:
-                if on_raw_batch_metrics is not None:
-                    on_raw_batch_metrics(dict(getattr(grouped_batch, "runtime_metrics", {})))
                 group_dataset_offsets = [
                     cohort_offsets[int(chunk_offset)]
                     for chunk_offset in grouped_batch.chunk_offsets
                 ]
+                group_descriptors = [descriptors[offset] for offset in group_dataset_offsets]
+                group_runtime_metrics = dict(getattr(grouped_batch, "runtime_metrics", {}))
+                finalized_group, finalized_failures = _finalize_generated_chunk_variable_schema(
+                    representative.effective_plan.layout,
+                    configs_by_batch=[entry.effective_config for entry in group_descriptors],
+                    shift_params_by_batch=[entry.effective_shift for entry in group_descriptors],
+                    dataset_roots=[entry.dataset_root for entry in group_descriptors],
+                    attempt=grouped_batch.attempt,
+                    attempts_used=grouped_batch.attempt + 1,
+                    device=grouped_batch.effective_resolved_device,
+                    n_train=int(representative.effective_plan.n_train),
+                    n_test=int(representative.effective_plan.n_test),
+                    requested_device=requested_device,
+                    resolved_device=grouped_batch.effective_resolved_device,
+                    device_fallback_reason=grouped_batch.device_fallback_reason,
+                    x=grouped_batch.x_batch,
+                    y=grouped_batch.y_batch,
+                    aux_meta_batch=grouped_batch.aux_meta_batch,
+                    noise_runtime_selection=grouped_batch.selection,
+                    dtype=dtype,
+                    runtime_metrics_out=group_runtime_metrics,
+                )
+                if on_raw_batch_metrics is not None:
+                    on_raw_batch_metrics(group_runtime_metrics)
                 for local_index, offset in enumerate(group_dataset_offsets):
-                    descriptor = descriptors[offset]
-                    try:
-                        raw_batch_by_offset[offset] = _finalize_generated_tensors(
-                            descriptor.effective_config,
-                            descriptor.effective_plan.layout,
-                            dataset_seed=descriptor.dataset_root.child_seed(),
-                            attempt=grouped_batch.attempt,
-                            attempts_used=grouped_batch.attempt + 1,
-                            dataset_root=descriptor.dataset_root,
-                            device=grouped_batch.effective_resolved_device,
-                            n_train=int(descriptor.effective_plan.n_train),
-                            n_test=int(descriptor.effective_plan.n_test),
-                            requested_device=requested_device,
-                            resolved_device=grouped_batch.effective_resolved_device,
-                            device_fallback_reason=grouped_batch.device_fallback_reason,
-                            x=grouped_batch.x_batch[local_index],
-                            y=grouped_batch.y_batch[local_index],
-                            aux_meta=grouped_batch.aux_meta_batch[local_index],
-                            shift_params=descriptor.effective_shift,
-                            noise_runtime_selection=grouped_batch.selection,
-                            dtype=dtype,
-                            preserve_feature_schema=False,
-                            finalization_context=descriptor.finalization_context,
-                        )
-                    except ValueError as exc:
-                        recoverable_failure = classify_recoverable_generation_failure(
-                            exc,
-                            degeneracy_retry_scope=RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE,
-                        )
-                        if recoverable_failure is None:
-                            raise
-                        recoverable_failure_by_offset[offset] = recoverable_failure
-                        raw_batch_by_offset[offset] = None
+                    raw_batch_by_offset[offset] = finalized_group[local_index]
+                    recoverable_failure_by_offset[offset] = finalized_failures[local_index]
 
         for offset, descriptor in enumerate(descriptors):
             bundle = raw_batch_by_offset[offset]
@@ -1502,9 +1526,7 @@ def _generate_fixed_layout_bundle_with_retries(
                 noise_spec=noise_spec,
                 runtime_metrics_out=runtime_metrics,
             )
-            if on_raw_batch_metrics is not None:
-                on_raw_batch_metrics(dict(runtime_metrics))
-            return _finalize_generated_tensors(
+            bundle = _finalize_generated_tensors(
                 config,
                 plan.layout,
                 dataset_seed=dataset_seed,
@@ -1525,7 +1547,11 @@ def _generate_fixed_layout_bundle_with_retries(
                 dtype=dtype,
                 preserve_feature_schema=preserve_feature_schema,
                 finalization_context=finalization_context,
+                runtime_metrics_out=runtime_metrics,
             )
+            if on_raw_batch_metrics is not None:
+                on_raw_batch_metrics(dict(runtime_metrics))
+            return bundle
         except ValueError as exc:
             recoverable_failure = classify_recoverable_generation_failure(exc)
             if recoverable_failure is None:

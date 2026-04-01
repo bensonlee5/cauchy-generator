@@ -82,7 +82,9 @@ sample = next(iter(loader))
 same config surface as the CLI: either `recipe:<name>` or a YAML path.
 Public generation defaults to fully heterogeneous per-dataset layouts; set
 `runtime.layout_mode: fixed` when you want aligned schema and faster
-fixed-layout batching within one run.
+fixed-layout batching within one run. On Apple hardware, heterogeneous
+`device=auto` now prefers CPU over MPS; pass `device="mps"` explicitly when
+you want the MPS backend.
 
 ______________________________________________________________________
 

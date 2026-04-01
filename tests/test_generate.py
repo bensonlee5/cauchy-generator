@@ -39,6 +39,7 @@ from dagzoo.core.fixed_layout.runtime import (
     _sample_fixed_layout_candidate,
     prepare_canonical_fixed_layout_run,
 )
+from dagzoo.core.generation_context import _resolve_device
 from dagzoo.core.generation_runtime import (
     _build_fixed_schema_finalization_context,
     _finalize_generated_chunk_preserve_schema,
@@ -4183,6 +4184,75 @@ def test_generate_batch_iter_auto_surfaces_mps_batch_generation_failure(
     assert calls == ["mps"]
 
 
+def test_resolve_device_prefers_cpu_for_mps_auto_when_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_heterogeneous_regression_config()
+    monkeypatch.setattr("dagzoo.core.generation_context.torch.cuda.is_available", lambda: False)
+    monkeypatch.setattr(
+        "dagzoo.core.generation_context.torch.backends.mps.is_available",
+        lambda: True,
+    )
+
+    assert _resolve_device(cfg, "auto", prefer_cpu_for_mps_auto=True) == "cpu"
+    assert _resolve_device(cfg, "auto", prefer_cpu_for_mps_auto=False) == "mps"
+    assert _resolve_device(cfg, "mps", prefer_cpu_for_mps_auto=True) == "mps"
+
+
+def test_resolve_device_auto_still_prefers_cuda_before_cpu_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_heterogeneous_regression_config()
+    monkeypatch.setattr("dagzoo.core.generation_context.torch.cuda.is_available", lambda: True)
+    monkeypatch.setattr(
+        "dagzoo.core.generation_context.torch.backends.mps.is_available",
+        lambda: True,
+    )
+
+    assert _resolve_device(cfg, "auto", prefer_cpu_for_mps_auto=True) == "cuda"
+
+
+def test_generate_batch_iter_heterogeneous_auto_passes_cpu_preference_to_device_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_heterogeneous_regression_config()
+    cfg.runtime.device = "auto"
+    resolve_calls: list[bool] = []
+    bundle = DatasetBundle(
+        X_train=torch.zeros((cfg.dataset.n_train, 2), dtype=torch.float32),
+        y_train=torch.zeros(cfg.dataset.n_train, dtype=torch.float32),
+        X_test=torch.zeros((cfg.dataset.n_test, 2), dtype=torch.float32),
+        y_test=torch.zeros(cfg.dataset.n_test, dtype=torch.float32),
+        feature_types=["num", "num"],
+        metadata={"filter": {"mode": "deferred", "status": "not_run"}},
+        runtime_metrics={},
+    )
+
+    def _stub_resolve_device(
+        _config: GeneratorConfig,
+        _device_override: str | None,
+        *,
+        prefer_cpu_for_mps_auto: bool = False,
+    ) -> str:
+        resolve_calls.append(bool(prefer_cpu_for_mps_auto))
+        return "cpu" if prefer_cpu_for_mps_auto else "mps"
+
+    monkeypatch.setattr("dagzoo.core.fixed_layout.prepare._resolve_device", _stub_resolve_device)
+    monkeypatch.setattr(
+        "dagzoo.core.dataset._generate_batch_with_heterogeneous_layout_iter",
+        lambda *_args, **_kwargs: iter([bundle]),
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.dataset._annotate_heterogeneous_batch_metadata",
+        lambda emitted_bundle, **_kwargs: emitted_bundle,
+    )
+
+    emitted = next(generate_batch_iter(cfg, num_datasets=1, seed=123, device="auto"))
+
+    assert emitted is bundle
+    assert resolve_calls == [True]
+
+
 def test_auto_does_not_fallback_to_numpy_if_torch_runtime_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4998,9 +5068,15 @@ def test_heterogeneous_runtime_skips_to_next_candidate_on_all_constant_features(
         ],
     )
     monkeypatch.setattr(
-        "dagzoo.core.fixed_layout.runtime._finalize_generated_tensors",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            InvalidFeatureMatrixError("all_constant_features")
+        "dagzoo.core.fixed_layout.runtime._finalize_generated_chunk_variable_schema",
+        lambda *_args, **_kwargs: (
+            [None],
+            [
+                classify_recoverable_generation_failure(
+                    InvalidFeatureMatrixError("all_constant_features"),
+                    degeneracy_retry_scope=RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE,
+                )
+            ],
         ),
     )
 
@@ -5131,9 +5207,15 @@ def test_heterogeneous_runtime_skips_to_next_candidate_on_constant_pathway_outpu
         ],
     )
     monkeypatch.setattr(
-        "dagzoo.core.fixed_layout.runtime._finalize_generated_tensors",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            RetryableDegeneracyError("constant_pathway_output")
+        "dagzoo.core.fixed_layout.runtime._finalize_generated_chunk_variable_schema",
+        lambda *_args, **_kwargs: (
+            [None],
+            [
+                classify_recoverable_generation_failure(
+                    RetryableDegeneracyError("constant_pathway_output"),
+                    degeneracy_retry_scope=RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE,
+                )
+            ],
         ),
     )
 
@@ -5264,9 +5346,15 @@ def test_heterogeneous_runtime_keeps_same_plan_retries_for_invalid_class_split(
         ],
     )
     monkeypatch.setattr(
-        "dagzoo.core.fixed_layout.runtime._finalize_generated_tensors",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            InvalidClassSplitError("invalid_class_split")
+        "dagzoo.core.fixed_layout.runtime._finalize_generated_chunk_variable_schema",
+        lambda *_args, **_kwargs: (
+            [None],
+            [
+                classify_recoverable_generation_failure(
+                    InvalidClassSplitError("invalid_class_split"),
+                    degeneracy_retry_scope=RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE,
+                )
+            ],
         ),
     )
 
