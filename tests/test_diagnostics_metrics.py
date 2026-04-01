@@ -331,12 +331,17 @@ def test_compute_wins_ratio_proxy_uses_bootstrap_wins_ratio(
     x = torch.arange(6, dtype=torch.float32).reshape(-1, 1)
     y = x[:, 0].clone()
 
-    def _stub_fit(*, x_test: np.ndarray, **_kwargs) -> np.ndarray:
-        return np.asarray(x_test[:, :1], dtype=np.float32)
+    def _stub_ridge_predict(
+        x_train: torch.Tensor,
+        y_train: torch.Tensor,
+        x_test: torch.Tensor,
+    ) -> torch.Tensor:
+        _ = x_train, y_train
+        return x_test.to(dtype=torch.float64)
 
     monkeypatch.setattr(
-        "dagzoo.core.metrics_torch._fit_extra_trees_predictions",
-        _stub_fit,
+        "dagzoo.core.metrics_torch._ridge_predict",
+        _stub_ridge_predict,
     )
 
     wins_ratio = _compute_wins_ratio_proxy(x=x, y=y, task="regression")

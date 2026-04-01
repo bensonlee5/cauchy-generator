@@ -6288,6 +6288,10 @@ def test_generate_one_keyed_replay_layout_root_path_replays_layout_signature() -
             r"metadata\.resolved_device must be a non-empty string",
         ),
         (
+            lambda bundle: bundle.metadata.pop("layout_plan_seed"),
+            r"metadata\.layout_plan_seed must be an integer",
+        ),
+        (
             lambda bundle: bundle.metadata.__setitem__(
                 "layout_signature", "wrong-layout-signature"
             ),
@@ -6312,22 +6316,6 @@ def test_replay_emitted_fixed_layout_plan_rejects_invalid_metadata(
 
     with pytest.raises(ValueError, match=match):
         _replay_emitted_fixed_layout_plan(cfg, bundle)
-
-
-def test_replay_emitted_fixed_layout_plan_recomputes_missing_layout_plan_seed() -> None:
-    cfg = _tiny_regression_config()
-    bundle = deepcopy(generate_one(cfg, seed=4321, device="cpu"))
-    keyed_replay = deepcopy(bundle.metadata["keyed_replay"])
-
-    bundle.metadata.pop("layout_plan_seed")
-    replayed_plan = _replay_emitted_fixed_layout_plan(cfg, bundle)
-
-    assert (
-        int(replayed_plan.plan_seed)
-        == KeyedRng(int(bundle.metadata["seed"]))
-        .keyed(*keyed_replay["layout_root_path"])
-        .child_seed()
-    )
 
 
 def test_generate_batch_graph_steering_preserves_base_replay_roots_and_replays_plan() -> None:

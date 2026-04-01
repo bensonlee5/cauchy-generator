@@ -43,7 +43,9 @@ def _validate_public_generation_config(config: GeneratorConfig) -> None:
     if bool(config.filter.enabled):
         raise ValueError(
             "Inline filtering has been removed from generate. Set filter.enabled=false and run "
-            "`dagzoo filter --in <shard_dir> --out <out_dir>` after generation."
+            "`dagzoo filter --in <shard_dir> --out <out_dir>` after generation. "
+            "Generation still uses filter.min_target_* and filter.max_attempts while "
+            "resampling structurally valid layouts."
         )
     if str(config.runtime.layout_mode) == str(LAYOUT_MODE_FIXED):
         raise ValueError(

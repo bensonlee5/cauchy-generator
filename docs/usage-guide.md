@@ -56,7 +56,9 @@ heterogeneous path is typically faster there; pass `--device mps` only when you
 want to force the MPS backend explicitly.
 Inline filtering is removed from `dagzoo generate`. Keep `filter.enabled: false`
 for generate flows, then run `dagzoo filter` as a separate replay stage on the
-emitted shards when you want acceptance decisions.
+emitted shards when you want acceptance decisions. Generation still reuses
+`filter.min_target_*` and `filter.max_attempts` while resampling layouts for
+structural validity.
 Generate configs must not include `runtime.worker_count` or
 `runtime.worker_index`.
 
@@ -64,15 +66,13 @@ ______________________________________________________________________
 
 ## 2. Deferred filtering (`dagzoo filter`)
 
-Deferred filtering replays the small-shot ease filter from shard metadata and
-lineage artifacts. The main tuning knobs are `ease_k_small`,
-`easy_skill_threshold`, `easy_gain_threshold`, `hard_skill_threshold`, the
-optional `stump_skill_threshold`, and `use_lineage_veto`. Replay-time CLI
-overrides include both `--lineage-veto` and `--no-lineage-veto` when you need
-to force structural veto behavior instead of inheriting the embedded shard
-config. The default filter execution now uses one sklearn worker
-(`filter.n_jobs: 1`); set `filter.n_jobs: -1` explicitly when you want the
-older all-core behavior.
+Deferred filtering replays structural lineage-validity checks from shard
+metadata and lineage artifacts. The public tuning knobs are
+`min_target_indegree`, `min_target_relevant_feature_count`, and
+`min_target_relevant_feature_fraction`. `dagzoo filter --set` only accepts
+`filter.<field>` overrides for those thresholds plus `filter.enabled` and
+`filter.max_attempts`. Filter-enabled replay now requires `metadata.lineage` in
+the shard sidecars because there is no learned-filter fallback.
 
 ```bash
 dagzoo filter --in data/run1 --out data/run1_filter
@@ -343,11 +343,10 @@ values in one command, set device selection in each preset/config instead of
 passing a shared CLI device override.
 
 Artifact-producing deferred filtering is disabled, but filter-enabled benchmark
-configs and `dagzoo diversity-audit` runs still replay filter metrics
-analytically.
-The canonical `preset_filter_benchmark_smoke` run intentionally sets
-`filter.use_lineage_veto=false` so the benchmark measures learned-filter
-throughput and acceptance yield instead of structural no-path rejection.
+configs and `dagzoo diversity-audit` runs still replay structural filter
+metrics analytically. The canonical `preset_filter_benchmark_smoke` run uses
+the same structural replay path as `dagzoo filter`, so throughput and
+acceptance yield reflect lineage-based acceptance directly.
 
 Detailed guide: [Benchmark Workflows and Guardrails](features/benchmark-guardrails.md)
 

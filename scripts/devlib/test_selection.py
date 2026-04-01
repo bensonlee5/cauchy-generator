@@ -66,10 +66,7 @@ PACKAGE_PYTEST_TARGETS: dict[str, tuple[str, ...]] = {
         "tests/test_parquet_writer.py",
         "tests/test_generate_handoff.py",
     ),
-    "dagzoo.filtering": (
-        "tests/test_extra_trees_filter.py",
-        "tests/test_deferred_filter.py",
-    ),
+    "dagzoo.filtering": ("tests/test_deferred_filter.py",),
     "dagzoo.diagnostics": (
         "tests/test_diagnostics_coverage.py",
         "tests/test_diagnostics_metrics.py",

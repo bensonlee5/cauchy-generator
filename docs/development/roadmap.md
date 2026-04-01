@@ -36,9 +36,7 @@ Related docs:
 If any other document disagrees with this file, this file is authoritative.
 
 Active roadmap execution is linked through the GitHub epics referenced in this
-file. Historical Linear chains remain reference context only. The
-GitHub-to-Linear migration map is committed at
-`reference/linear_issue_map_2026-03-08.json`.
+file. Historical Linear chains remain inline reference context only.
 
 ## PFN Utility Prioritization Lens
 
@@ -356,7 +354,7 @@ Use the canonical docs instead:
 - Pillar alignment: tabular realism, causal structural integrity
 - Goal: land a stable many-class rollout envelope while keeping filter behavior and label handling interpretable.
 - Linear tracking: historical epic `BL-17`; completion chain `BL-18 -> BL-19 -> BL-20 -> BL-21`; closure note `BL-31`
-- Repo touchpoints: `src/dagzoo/config/`, `src/dagzoo/converters/categorical.py`, `src/dagzoo/filtering/extra_trees_filter.py`, `docs/features/many-class.md`
+- Repo touchpoints: `src/dagzoo/config/`, `src/dagzoo/converters/categorical.py`, `src/dagzoo/filtering/structural_filter.py`, `docs/features/many-class.md`
 - Delivered scope:
   - `dataset.n_classes_max <= 32` is enforced as the supported rollout envelope.
   - Converter and postprocess paths are hardened for the current many-class range.

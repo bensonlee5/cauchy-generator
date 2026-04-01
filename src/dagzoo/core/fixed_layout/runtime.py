@@ -341,12 +341,9 @@ def _replay_emitted_fixed_layout_plan(
         raise ValueError("metadata.resolved_device must be a non-empty string.")
     layout_plan_seed = metadata.get("layout_plan_seed")
     if isinstance(layout_plan_seed, bool) or not isinstance(layout_plan_seed, int):
-        plan_seed_root_path = (
-            layout_root_path
-            if normalized_steering_layout_root_path is None
-            else normalized_steering_layout_root_path
+        raise ValueError(
+            "metadata.layout_plan_seed must be an integer to replay a fixed-layout plan."
         )
-        layout_plan_seed = run_root.keyed(*plan_seed_root_path).child_seed()
 
     plan = _FixedLayoutPlan(
         layout=layout,

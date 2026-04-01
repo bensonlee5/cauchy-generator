@@ -183,19 +183,3 @@ def write_effective_diversity_artifacts(
         "summary_json": summary_json,
         "summary_md": summary_md,
     }
-
-
-def format_effective_diversity_run_markdown(report: dict[str, Any]) -> str:
-    """Backward-compatible alias for the rewritten audit markdown renderer."""
-
-    return format_effective_diversity_markdown(report)
-
-
-def write_effective_diversity_run_artifacts(
-    report: dict[str, Any],
-    *,
-    out_dir: str | Path,
-) -> dict[str, Path]:
-    """Backward-compatible alias for the rewritten audit artifact writer."""
-
-    return write_effective_diversity_artifacts(report, out_dir=out_dir)

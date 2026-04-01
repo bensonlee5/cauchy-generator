@@ -28,10 +28,10 @@ from dagzoo.filtering.deferred_filter_artifacts import (
 )
 from dagzoo.filtering.deferred_filter_replay import (
     _build_filter_metadata,
+    _resolve_filter_config,
     _resolve_filter_seed,
-    _resolve_task_and_filter_config,
 )
-from dagzoo.filtering.extra_trees_filter import _apply_extra_trees_filter_numpy
+from dagzoo.filtering.structural_filter import STRUCTURAL_FILTER_MODE, apply_structural_filter
 from dagzoo.io.parquet_writer import (
     _require_pyarrow,
     pq,
@@ -305,48 +305,19 @@ def _iter_packed_split_datasets(split_path: Path) -> Iterator[_PackedSplitDatase
 
 def _filter_dataset(
     *,
-    x_train: np.ndarray,
-    y_train: np.ndarray,
-    x_test: np.ndarray,
-    y_test: np.ndarray,
-    task: str,
-    seed: int,
     lineage_payload: Mapping[str, Any] | None,
     lineage_base_dir: Path | None,
     filter_cfg: FilterConfig,
 ) -> tuple[bool, dict[str, Any], float]:
-    """Replay ExtraTrees filter on persisted train/test rows for one dataset."""
+    """Replay structural filter on persisted lineage metadata for one dataset."""
 
     start = time.perf_counter()
-    accepted, details = _apply_extra_trees_filter_numpy(
-        x_train.astype(np.float32, copy=False),
-        y_train.astype(np.int64 if task == "classification" else np.float32, copy=False),
-        x_test.astype(np.float32, copy=False),
-        y_test.astype(np.int64 if task == "classification" else np.float32, copy=False),
-        task=task,
-        seed=seed,
+    accepted, details = apply_structural_filter(
         lineage_payload=lineage_payload,
         lineage_base_dir=lineage_base_dir,
-        n_estimators=filter_cfg.n_estimators,
-        max_depth=filter_cfg.max_depth,
-        min_samples_leaf=filter_cfg.min_samples_leaf,
-        max_leaf_nodes=filter_cfg.max_leaf_nodes,
-        max_features=filter_cfg.max_features,
-        n_bootstrap=filter_cfg.n_bootstrap,
-        ease_k_small=filter_cfg.ease_k_small,
-        easy_skill_threshold=filter_cfg.easy_skill_threshold,
-        easy_gain_threshold=filter_cfg.easy_gain_threshold,
-        hard_skill_threshold=filter_cfg.hard_skill_threshold,
-        stump_skill_threshold=filter_cfg.stump_skill_threshold,
-        use_lineage_veto=filter_cfg.use_lineage_veto,
         min_target_indegree=filter_cfg.min_target_indegree,
         min_target_relevant_feature_count=filter_cfg.min_target_relevant_feature_count,
         min_target_relevant_feature_fraction=filter_cfg.min_target_relevant_feature_fraction,
-        classification_kappa_threshold=filter_cfg.classification_kappa_threshold,
-        classification_require_prediction_diversity=(
-            filter_cfg.classification_require_prediction_diversity
-        ),
-        n_jobs=filter_cfg.n_jobs,
     )
     elapsed_seconds = max(0.0, time.perf_counter() - start)
     return bool(accepted), dict(details), float(elapsed_seconds)
@@ -359,7 +330,7 @@ def run_deferred_filter(
     curated_out_dir: str | Path | None = None,
     path_overrides: tuple[tuple[str, Any], ...] = (),
 ) -> DeferredFilterRunResult:
-    """Replay ExtraTrees filter over persisted shard outputs."""
+    """Replay structural filtering over persisted shard outputs."""
 
     _require_pyarrow()
 
@@ -485,19 +456,13 @@ def run_deferred_filter(
                             split_path=test_path,
                         )
 
-                        task, filter_cfg = _resolve_task_and_filter_config(
+                        filter_cfg = _resolve_filter_config(
                             metadata_payload=metadata_payload,
                             path_overrides=path_overrides,
                         )
                         seed = _resolve_filter_seed(metadata_payload, dataset_index=dataset_index)
 
                         accepted, filter_details, elapsed_seconds = _filter_dataset(
-                            x_train=train_split.x,
-                            y_train=train_split.y,
-                            x_test=test_split.x,
-                            y_test=test_split.y,
-                            task=task,
-                            seed=seed,
                             lineage_payload=(
                                 metadata_payload.get("lineage")
                                 if isinstance(metadata_payload.get("lineage"), Mapping)
@@ -587,7 +552,7 @@ def run_deferred_filter(
             "input_dir": str(input_path.resolve()),
             "out_dir": str(output_path.resolve()),
             "manifest_path": str(manifest_path.resolve()),
-            "filter_mode": "small_shot_ease_v1",
+            "filter_mode": STRUCTURAL_FILTER_MODE,
             "total_datasets": int(total_datasets),
             "accepted_datasets": int(accepted_total),
             "rejected_datasets": int(rejected_total),

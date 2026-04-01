@@ -114,7 +114,8 @@ KeyedRng(run_seed)
 Generation retries cover split-validity and generation exceptions only.
 
 - Retries are bounded by `filter.max_attempts` (retry budget reused from
-  config).
+  config), and generation reuses `filter.min_target_*` thresholds when it
+  resamples layouts for structural validity regardless of `filter.enabled`.
 - Emitted metadata records `attempt_used` and generation-attempt
   counters.
 - Generated outputs mark `metadata.filter.mode=deferred` and
@@ -123,7 +124,7 @@ Generation retries cover split-validity and generation exceptions only.
 Data-quality acceptance is a separate deferred stage:
 
 - Generated outputs still carry deferred-filter metadata for traceability.
-- `dagzoo filter` replays the small-shot ease ExtraTrees probe over emitted
+- `dagzoo filter` replays structural lineage-validity checks over emitted
   shards and writes accepted/rejected outcomes after generation.
 - Request-driven handoff currently publishes generated shards only.
 
@@ -247,7 +248,7 @@ flowchart TB
 
     subgraph FilterPath [filter]
         direction TB
-        FilterCmd[dagzoo filter] --> Replay[replay ExtraTrees over shards]
+        FilterCmd[dagzoo filter] --> Replay[replay structural lineage checks over shards]
         Replay --> FilterArtifacts[write manifest + summary + optional curated shards]
     end
     Bundle --> FilterCmd
@@ -413,11 +414,11 @@ These are related but distinct runtime surfaces.
 - **node pipeline**: per-node transform and converter execution path.
 - **converter spec**: instruction for extracting observable feature slices.
 - **target node**: the latent DAG node selected to emit the raw target column.
-- **deferred filter**: ExtraTrees-based post-generation gate that rejects
-  trivial small-shot tasks, pure garbage tasks, and optional structural
-  no-path cases.
-- **small-shot skill**: normalized held-out skill of the filter probe relative
-  to a constant baseline.
+- **deferred filter**: structural post-generation gate that replays lineage
+  reachability and target-validity checks over emitted shards.
+- **filter rejection reason**: explicit structural reject code such as
+  `target_root` or `no_feature_target_path` recorded in filter manifests and
+  summaries.
 - **shift runtime params**: resolved graph/mechanism/noise drift
   controls.
 - **noise runtime selection**: per-dataset resolved noise family/params.
