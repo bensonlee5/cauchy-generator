@@ -11,6 +11,10 @@ Public config references accepted by the main user-facing surfaces are:
 That contract applies to `dagzoo generate`, `dagzoo benchmark --preset custom`,
 `dagzoo diversity-audit`, and `build_dataloader(...)`.
 
+This page is the readable overview. The exhaustive field-by-field catalog lives
+in [export-contract-fields.md](export-contract-fields.md) and is generated from
+`reference/export_contract_inventory.yaml`.
+
 ______________________________________________________________________
 
 ## DatasetBundle (in-memory)
@@ -103,6 +107,7 @@ as `tab-foundry`.
 | `throughput`          | object | Generation-stage elapsed time plus datasets-per-minute context                    |
 | `hardware`            | object | Requested/resolved device context plus applied hardware policy                    |
 | `diversity_artifacts` | object | Nullable paths for handoff-associated diversity report artifacts                  |
+| `provenance`          | object | Generated-corpus provenance summary derived from emitted metadata                 |
 | `defaults`            | object | Canonical downstream-consumption defaults                                         |
 
 Current `identity` keys:
@@ -134,6 +139,10 @@ Current `generate_invocation.overrides` keys:
 - `diagnostics`
 - `diagnostics_out_dir`
 - `handoff_root`
+- `set_overrides`
+
+`generate_invocation.overrides.set_overrides` is a list of explicit
+`[path, value]` override pairs passed through the CLI `--set` surface.
 
 Current `artifacts` keys:
 
@@ -158,6 +167,19 @@ Current `diversity_artifacts` keys:
 
 - `summary_json_path`
 - `summary_md_path`
+
+Current `provenance` keys:
+
+- `posterior_predictive_factorization`
+- `target_parent_prior`
+- `target_parent_near_max_band_min_fraction`
+- `target_parent_below_sqrt_prob`
+- `target_parent_midrange_prob`
+- `target_parent_count_range`
+- `target_parent_fraction_range`
+- `target_parent_regimes_present`
+- `teacher_conditional_export`
+- `teacher_conditional_metric_definition`
 
 Current `defaults` keys:
 
@@ -236,14 +258,18 @@ Each line contains:
 | `dataset_id`                 | str         | Optional stable canonical dataset identifier derived from run/layout grouping plus dataset provenance |
 | `run_num_datasets`           | int         | Optional canonical run length used to replay the saved bundle                                         |
 | `attempt_used`               | int         | Generation attempt index (0-based)                                                                    |
+| `generation_attempts`        | object      | Attempt-count summary for generation and deferred-filter retries                                      |
 | `lineage`                    | object      | DAG lineage record (see Lineage below)                                                                |
 | `prior`                      | object      | Realized default-prior semantics for feature generation and the conditional target head               |
+| `posterior_predictive`       | object      | Posterior-predictive export flags and teacher-metric definition                                       |
 | `shift`                      | object      | Resolved shift settings and realized observability signals                                            |
 | `noise_distribution`         | object      | Resolved noise-family selection and effective sampling params                                         |
-| `config`                     | object      | Full serialized generator configuration                                                               |
+| `config`                     | object      | Full serialized generator configuration; see the field catalog for the recursive leaf-level contract  |
 | `filter`                     | object      | Filter results (see below)                                                                            |
 | `class_structure`            | object      | Present only for classification (see below)                                                           |
 | `missingness`                | object      | Present only when missingness is enabled                                                              |
+| `target_parent_summary`      | object      | Flattened target-parent summary derived from lineage assignments                                      |
+| `teacher_conditionals`       | object      | Test-split teacher probabilities and optimal label-target log loss when export is available           |
 | `layout_mode`                | str         | Optional canonical layout metadata (`"fixed"` for canonical generation outputs)                       |
 | `layout_plan_seed`           | int         | Optional internal seed used to sample the shared per-run layout                                       |
 | `layout_signature`           | str         | Optional deterministic fingerprint for the shared sampled layout                                      |
@@ -271,6 +297,9 @@ For downstream train/validation/test assignment, use
 reconstructing groups from raw layout metadata. `request_run` keeps all
 datasets from one canonical run together; `layout_plan` keeps all datasets that
 share the same fixed-layout execution plan together.
+
+The exhaustive recursive contract for `metadata.config.*` and the other nested
+sub-objects on this page lives in [export-contract-fields.md](export-contract-fields.md).
 
 ### `split_groups` sub-object
 
@@ -362,6 +391,53 @@ telemetry such as `enabled`, `accepted`, `backend`, `filter_mode`,
 `lineage_veto_applied`, and `reason`. The same small-shot-ease fields also
 appear in deferred-filter summaries and benchmark filter summaries.
 
+### Generation Attempts sub-object
+
+Present for all generated bundles.
+
+| Key                     | Type          | Description                                                  |
+| ----------------------- | ------------- | ------------------------------------------------------------ |
+| `total_attempts`        | int           | Total generation attempts used for the emitted dataset       |
+| `retry_count`           | int           | `total_attempts - 1` for generation retries                  |
+| `filter_attempts`       | int           | Deferred-filter replay attempts applied so far               |
+| `filter_rejections`     | int           | Deferred-filter rejections applied so far                    |
+| `filter_rejection_rate` | float or null | Deferred-filter rejection rate when replay filtering has run |
+
+Fresh `dagzoo generate` outputs report generation retries here and leave the
+deferred-filter counters at zero / `null`.
+
+### Posterior Predictive sub-object
+
+Present for all generated bundles.
+
+| Key                                  | Type | Description                                             |
+| ------------------------------------ | ---- | ------------------------------------------------------- |
+| `factorization`                      | str  | Posterior-predictive factorization identifier           |
+| `teacher_conditional_export_enabled` | bool | Whether teacher-conditional export was requested        |
+| `teacher_conditionals_available`     | bool | Whether a valid teacher-conditional payload was emitted |
+| `metric_definition`                  | str  | Current teacher-relative metric definition              |
+
+Current teacher-relative metrics use the label-target definition
+`label-target log loss per test cell`.
+
+### Teacher Conditionals sub-object
+
+Present only for classification datasets when teacher-conditional export was
+requested and a valid emitted-label-aligned teacher payload is available.
+
+| Key                              | Type                | Description                                                          |
+| -------------------------------- | ------------------- | -------------------------------------------------------------------- |
+| `schema_version`                 | int                 | Teacher-conditional schema version                                   |
+| `target_split`                   | str                 | Split covered by the exported probabilities; currently `"test"`      |
+| `class_labels`                   | list[int]           | Emitted class-label axis aligned to the exported probability columns |
+| `test_probs`                     | list\[list[float]\] | Per-test-row teacher probability vectors aligned to emitted labels   |
+| `optimal_log_loss_per_test_cell` | float               | Teacher-optimal label-target log loss over emitted `y_test`          |
+
+Teacher-conditionals are exported in emitted label space, not sampled-class
+space. Absent sampled classes are dropped, surviving class columns are
+reordered into emitted label order, and the rows are renormalized before the
+test split is written.
+
 ### Class Structure sub-object (classification only)
 
 Present only for classification datasets.
@@ -374,6 +450,19 @@ Present only for classification datasets.
 | `train_test_class_match` | bool        | Whether train and test class sets are identical    |
 | `min_label`              | int or null | Minimum emitted class label                        |
 | `max_label`              | int or null | Maximum emitted class label                        |
+
+### Target Parent Summary sub-object
+
+Present when lineage target-parent assignments are available.
+
+| Key              | Type      | Description                                      |
+| ---------------- | --------- | ------------------------------------------------ |
+| `count`          | int       | Realized emitted target-parent count             |
+| `fraction`       | float     | Realized emitted target-parent fraction          |
+| `prior`          | str       | Authored target-parent prior                     |
+| `regime`         | str       | Realized target-parent regime                    |
+| `sqrt_threshold` | int       | Authored sqrt-threshold control for the prior    |
+| `features`       | list[int] | Emitted feature indices that fed the target head |
 
 ### Fixed-layout metadata
 
@@ -464,44 +553,48 @@ Current top-level keys are:
 - `quantiles`
 - `max_values_per_metric`
 - `mechanism_family_summary`
-- `steering`
 - `metrics`
 
-### `steering` sub-object
+`coverage_summary.json` does not currently emit a top-level `steering` section.
+Steering-related contract details live in the emitted per-dataset metadata and
+in the benchmark/coverage code paths that consume it.
 
-Present in `coverage_summary.json`. Always emitted; when steering is disabled it
-reports `enabled=false` and an empty `stages` list.
+### `mechanism_family_summary` sub-object
 
-| Key                 | Type         | Description                                                             |
-| ------------------- | ------------ | ----------------------------------------------------------------------- |
-| `enabled`           | bool         | Whether steering was enabled for the run                                |
-| `authoring_form`    | str          | `disabled`, `preset`, or `explicit_stages`                              |
-| `preset`            | str or null  | Steering preset name when present                                       |
-| `stage_count`       | int          | Number of normalized steering stages                                    |
-| `resolution_checks` | object       | Requested-versus-emitted consistency counters for the generated bundles |
-| `stages`            | list[object] | Per-stage requested authoring plus realized steering and metric summary |
+Present in `coverage_summary.json`.
 
-Each `stages[*]` entry contains:
+| Key                                | Type   | Description                                          |
+| ---------------------------------- | ------ | ---------------------------------------------------- |
+| `metadata_coverage_rate`           | float  | Fraction of bundles with mechanism-family metadata   |
+| `bundles_with_metadata`            | int    | Number of bundles contributing mechanism metadata    |
+| `sampled_family_counts`            | object | Aggregated realized per-family function-plan counts  |
+| `dataset_presence_rate_by_family`  | object | Fraction of datasets where one family appeared       |
+| `sampled_variant_counts`           | object | Aggregated realized per-variant function-plan counts |
+| `dataset_presence_rate_by_variant` | object | Fraction of datasets where one variant appeared      |
+| `mean_total_function_plans`        | float  | Mean total function-plan count across the corpus     |
 
-- `index`, `name`, `fraction`
-- `requested`
-- `dataset_count`
-- `dataset_index_range`
-- `progress_range`
-- `requested_effective`
-- `realized`
-- `metrics`
+### `metrics` sub-object
 
-`requested` preserves the normalized authored stage payload. `requested_effective`
-summarizes the effective per-dataset steering resolution for bundles assigned to
-that stage, while `realized` summarizes the emitted missingness, shift, and
-noise metadata actually observed in those bundles. `metrics` reuses the same
-coverage-metric summary shape as the top-level `metrics` section, scoped to one
-stage.
+`metrics` is a map from metric name to a summary object with:
 
-`coverage_summary.md` renders the same steering analysis as a condensed
-human-readable section and does not introduce additional contract fields beyond
-the JSON artifact described here.
+- `count`
+- `missing_count`
+- `observed_min`
+- `observed_max`
+- `mean`
+- `std`
+- `sampled_count`
+- `sampled_fraction`
+- `quantiles`
+- `histogram`
+- `underrepresented_bins`
+- `target_band`
+
+The exhaustive field list for `coverage_summary.json`, including every nested
+metric path, lives in [export-contract-fields.md](export-contract-fields.md).
+
+`coverage_summary.md` renders the same JSON contract as a condensed
+human-readable report and does not introduce additional persisted fields.
 
 ______________________________________________________________________
 

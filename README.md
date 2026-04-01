@@ -148,6 +148,11 @@ dagzoo generate --config recipe:default-baseline --num-datasets 25 --out data/de
 That run lands under `data/default_baseline/` because the path is passed to
 `--out`.
 
+The human-facing export-contract overview lives in
+`docs/output-format.md`. The exhaustive field-by-field catalog lives in
+`docs/export-contract-fields.md` and is generated from
+`reference/export_contract_inventory.yaml`.
+
 ### What Lands on Disk
 
 After that generate command finishes, this is the kind of layout you should
@@ -170,6 +175,7 @@ The `shard_*` directories hold the generated datasets. `effective_config.yaml`
 records the fully resolved config for the run, and
 `effective_config_trace.yaml` records where overrides came from so the run is
 reproducible. The full artifact contract lives in `docs/output-format.md`.
+The exhaustive field catalog lives in `docs/export-contract-fields.md`.
 
 ## Docs
 
@@ -177,6 +183,7 @@ reproducible. The full artifact contract lives in `docs/output-format.md`.
 - [Reference Packs](docs/reference-packs.md)
 - [Advanced Controls](docs/usage-guide.md)
 - [Artifacts & API](docs/output-format.md)
+- [Export Contract Fields](docs/export-contract-fields.md)
 - [How It Works](docs/how-it-works.md)
 - [Feature Guides](https://bensonlee5.github.io/dagzoo/docs/features/)
 

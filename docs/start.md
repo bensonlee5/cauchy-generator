@@ -88,4 +88,5 @@ ______________________________________________________________________
 - Want the published catalog and citations: [reference-packs.md](reference-packs.md)
 - Need custom generation controls: [usage-guide.md](usage-guide.md)
 - Need artifact and API contracts: [output-format.md](output-format.md)
+- Need the exhaustive field catalog: [export-contract-fields.md](export-contract-fields.md)
 - Want the runtime model: [how-it-works.md](how-it-works.md)

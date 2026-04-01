@@ -38,9 +38,11 @@ from dagzoo.core.fixed_layout.runtime import (
     prepare_canonical_fixed_layout_run,
 )
 from dagzoo.core.generation_runtime import (
+    _attach_teacher_conditionals_for_test_split,
     _build_fixed_schema_finalization_context,
     _finalize_generated_chunk_preserve_schema,
     _finalize_generated_tensors,
+    _remap_teacher_conditionals_to_emitted_labels,
     _resolve_split_indices,
     _teacher_conditionals_metadata,
 )
@@ -2123,6 +2125,128 @@ def test_teacher_conditionals_metadata_rejects_malformed_aux_metadata(
     y_test = torch.tensor([0, 1], dtype=torch.int64)
 
     assert _teacher_conditionals_metadata(y_test=y_test, aux_meta=aux_meta) is None
+
+
+def test_remap_teacher_conditionals_reorders_columns_for_emitted_label_permutation() -> None:
+    aux_meta = {
+        "teacher_conditional_class_labels": [0, 1],
+        "teacher_conditional_full_probs": [
+            [0.90, 0.10],
+            [0.20, 0.80],
+            [0.70, 0.30],
+            [0.40, 0.60],
+        ],
+    }
+    train_idx = torch.tensor([0, 1], dtype=torch.int64)
+    test_idx = torch.tensor([2, 3], dtype=torch.int64)
+
+    _remap_teacher_conditionals_to_emitted_labels(
+        aux_meta=aux_meta,
+        train_idx=train_idx,
+        test_idx=test_idx,
+        y_train_raw=torch.tensor([0, 1], dtype=torch.int64),
+        y_test_raw=torch.tensor([1, 0], dtype=torch.int64),
+        y_train_emitted=torch.tensor([1, 0], dtype=torch.int64),
+        y_test_emitted=torch.tensor([0, 1], dtype=torch.int64),
+    )
+    _attach_teacher_conditionals_for_test_split(aux_meta, test_idx=test_idx)
+    teacher_conditionals = _teacher_conditionals_metadata(
+        y_test=torch.tensor([0, 1], dtype=torch.int64),
+        aux_meta=aux_meta,
+    )
+
+    assert teacher_conditionals is not None
+    assert teacher_conditionals["class_labels"] == [0, 1]
+    np.testing.assert_allclose(
+        np.asarray(aux_meta["teacher_conditional_full_probs"], dtype=np.float64),
+        np.asarray(
+            [
+                [0.10, 0.90],
+                [0.80, 0.20],
+                [0.30, 0.70],
+                [0.60, 0.40],
+            ],
+            dtype=np.float64,
+        ),
+        atol=1e-6,
+        rtol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(teacher_conditionals["test_probs"], dtype=np.float64),
+        np.asarray([[0.30, 0.70], [0.60, 0.40]], dtype=np.float64),
+        atol=1e-6,
+        rtol=1e-6,
+    )
+    expected = float((-np.log(np.asarray([0.30, 0.40], dtype=np.float64).clip(1e-12, 1.0))).mean())
+    assert teacher_conditionals["optimal_log_loss_per_test_cell"] == pytest.approx(expected)
+
+
+def test_remap_teacher_conditionals_drops_absent_classes_and_renormalizes() -> None:
+    aux_meta = {
+        "teacher_conditional_class_labels": [0, 1, 2],
+        "teacher_conditional_full_probs": [
+            [0.10, 0.20, 0.70],
+            [0.20, 0.50, 0.30],
+            [0.70, 0.10, 0.20],
+            [0.25, 0.25, 0.50],
+        ],
+    }
+    train_idx = torch.tensor([0, 1], dtype=torch.int64)
+    test_idx = torch.tensor([2, 3], dtype=torch.int64)
+
+    _remap_teacher_conditionals_to_emitted_labels(
+        aux_meta=aux_meta,
+        train_idx=train_idx,
+        test_idx=test_idx,
+        y_train_raw=torch.tensor([0, 2], dtype=torch.int64),
+        y_test_raw=torch.tensor([2, 0], dtype=torch.int64),
+        y_train_emitted=torch.tensor([1, 0], dtype=torch.int64),
+        y_test_emitted=torch.tensor([0, 1], dtype=torch.int64),
+    )
+    _attach_teacher_conditionals_for_test_split(aux_meta, test_idx=test_idx)
+    teacher_conditionals = _teacher_conditionals_metadata(
+        y_test=torch.tensor([0, 1], dtype=torch.int64),
+        aux_meta=aux_meta,
+    )
+
+    assert teacher_conditionals is not None
+    assert aux_meta["teacher_conditional_class_labels"] == [0, 1]
+    full_probs = np.asarray(aux_meta["teacher_conditional_full_probs"], dtype=np.float64)
+    np.testing.assert_allclose(full_probs.sum(axis=1), 1.0, atol=1e-6, rtol=1e-6)
+    np.testing.assert_allclose(
+        full_probs,
+        np.asarray(
+            [
+                [0.875, 0.125],
+                [0.600, 0.400],
+                [0.2222222222, 0.7777777778],
+                [0.6666666667, 0.3333333333],
+            ],
+            dtype=np.float64,
+        ),
+        atol=1e-6,
+        rtol=1e-6,
+    )
+    np.testing.assert_allclose(
+        np.asarray(teacher_conditionals["test_probs"], dtype=np.float64),
+        full_probs[2:],
+        atol=1e-6,
+        rtol=1e-6,
+    )
+    expected = float(
+        (
+            -np.log(
+                np.asarray(
+                    [
+                        full_probs[2, 0],
+                        full_probs[3, 1],
+                    ],
+                    dtype=np.float64,
+                ).clip(1e-12, 1.0)
+            )
+        ).mean()
+    )
+    assert teacher_conditionals["optimal_log_loss_per_test_cell"] == pytest.approx(expected)
 
 
 def test_sample_layout_near_dense_target_parent_prior_has_mode_at_max() -> None:

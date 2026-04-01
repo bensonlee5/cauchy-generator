@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from conftest import load_repo_config
 from golden_support import (
     assert_normalized_json_equal,
     assert_normalized_text_equal,
+    load_golden_json,
     normalize_benchmark_summary,
     normalize_benchmark_summary_markdown,
     normalize_coverage_summary,
@@ -13,6 +15,7 @@ from golden_support import (
 )
 
 from dagzoo.bench.report import write_suite_json, write_suite_markdown
+from dagzoo.core.dataset import generate_batch
 from dagzoo.core.generate_handoff import write_generate_handoff_manifest
 from dagzoo.diagnostics.coverage import (
     CoverageAggregationConfig,
@@ -20,6 +23,33 @@ from dagzoo.diagnostics.coverage import (
     write_coverage_summary_json,
 )
 from dagzoo.diagnostics.types import DatasetMetrics
+from dagzoo.io.parquet_writer import write_packed_parquet_shards_stream
+
+
+def _flatten_path_tokens(value: object, prefix: tuple[str, ...] = ()) -> list[tuple[str, ...]]:
+    flattened: list[tuple[str, ...]] = []
+    if prefix:
+        flattened.append(prefix)
+    if isinstance(value, dict):
+        for key, child in value.items():
+            flattened.extend(_flatten_path_tokens(child, prefix + (str(key),)))
+    elif isinstance(value, list):
+        for child in value:
+            flattened.extend(_flatten_path_tokens(child, prefix + ("[]",)))
+    return flattened
+
+
+def _format_tokens(tokens: tuple[str, ...]) -> str:
+    parts: list[str] = []
+    for token in tokens:
+        if token == "[]":
+            if parts:
+                parts[-1] = f"{parts[-1]}[]"
+            else:
+                parts.append("[]")
+            continue
+        parts.append(token)
+    return ".".join(parts)
 
 
 def _benchmark_summary_fixture(tmp_path: Path) -> dict[str, object]:
@@ -333,3 +363,27 @@ def test_coverage_summary_contract_golden(tmp_path: Path) -> None:
         "coverage_summary.json",
         normalizer=normalize_coverage_summary,
     )
+
+
+def test_generated_metadata_record_paths_contract_golden(tmp_path: Path) -> None:
+    cfg = load_repo_config()
+    cfg.runtime.device = "cpu"
+    cfg.filter.enabled = False
+    cfg.dataset.task = "classification"
+    cfg.dataset.n_train = 16
+    cfg.dataset.n_test = 8
+    cfg.dataset.n_features_min = 8
+    cfg.dataset.n_features_max = 8
+    cfg.graph.n_nodes_min = 2
+    cfg.graph.n_nodes_max = 6
+    cfg.diagnostics.teacher_conditional_export = True
+    cfg.dataset.missing_rate = 0.1
+    cfg.dataset.missing_mechanism = "mcar"
+
+    batch = generate_batch(cfg, num_datasets=1, seed=123, device="cpu")
+    write_packed_parquet_shards_stream(batch, tmp_path, shard_size=8, compression="zstd")
+    record = json.loads((tmp_path / "shard_00000" / "metadata.ndjson").read_text().splitlines()[0])
+
+    actual_paths = sorted({_format_tokens(tokens) for tokens in _flatten_path_tokens(record)})
+
+    assert actual_paths == load_golden_json("generated_metadata_record_paths.json")
