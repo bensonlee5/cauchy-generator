@@ -155,28 +155,6 @@ def _dense_lineage_payload() -> dict[str, object]:
     }
 
 
-def _valid_dense_lineage_payload() -> dict[str, object]:
-    return {
-        "schema_name": "dagzoo.dag_lineage",
-        "schema_version": LINEAGE_SCHEMA_VERSION_DENSE,
-        "graph": {
-            "n_nodes": 3,
-            "adjacency": [
-                [0, 0, 1],
-                [0, 0, 1],
-                [0, 0, 0],
-            ],
-        },
-        "assignments": {
-            "feature_to_node": [0, 1],
-            "target_to_node": 2,
-            "target_relevant_features": [0, 1],
-            "target_relevant_feature_count": 2,
-            "target_relevant_feature_fraction": 1.0,
-        },
-    }
-
-
 def _write_split_table(
     path,
     *,
