@@ -357,9 +357,9 @@ a SHA-256 checksum recorded in the compact lineage payload.
 **Postprocessing invariants**:
 
 - Default public generation may vary emitted feature schema across one run.
-- Explicit fixed mode (`runtime.layout_mode: fixed`) preserves emitted feature
-  schema across the run: constant-column removal and feature-column permutation
-  are disabled.
+- Stratified mode (`runtime.layout_mode: stratified`) still preserves
+  heterogeneous semantics; constant-column removal and feature-column
+  permutation remain dataset-local even when compatible strata are batched.
 - Numeric features are clipped and standardized to approximately zero mean and
   unit variance.
 - Classification target classes are randomly permuted; label indices carry no

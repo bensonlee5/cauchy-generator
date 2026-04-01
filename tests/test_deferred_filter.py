@@ -273,6 +273,7 @@ def test_run_deferred_filter_writes_manifest_and_summary(
     _ = write_packed_parquet_shards_stream(bundles, in_dir, shard_size=2, compression="zstd")
 
     def _stub_filter(*_args, **_kwargs):
+        assert int(_kwargs["n_jobs"]) == 1
         seed = int(_kwargs["seed"])
         accepted = bool(seed % 2)
         details = {"skill_full": 0.9 if accepted else -0.1, "filter_mode": "small_shot_ease_v1"}

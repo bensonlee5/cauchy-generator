@@ -39,6 +39,7 @@ from dagzoo.core.fixed_layout.runtime import (
     _sample_fixed_layout_candidate,
     prepare_canonical_fixed_layout_run,
 )
+from dagzoo.core.generation_context import _resolve_device
 from dagzoo.core.generation_runtime import (
     _build_fixed_schema_finalization_context,
     _finalize_generated_chunk_preserve_schema,
@@ -76,7 +77,7 @@ from dagzoo.types import DatasetBundle
 
 def _tiny_config() -> GeneratorConfig:
     cfg = load_repo_config()
-    cfg.runtime.layout_mode = "fixed"
+    cfg.runtime.layout_mode = "stratified"
     cfg.dataset.n_features_min = 8
     cfg.dataset.n_features_max = 8
     cfg.graph.n_nodes_min = 2
@@ -116,6 +117,12 @@ def _tiny_heterogeneous_regression_config() -> GeneratorConfig:
     cfg.dataset.n_features_max = 10
     cfg.graph.n_nodes_min = 2
     cfg.graph.n_nodes_max = 8
+    return cfg
+
+
+def _tiny_stratified_regression_config() -> GeneratorConfig:
+    cfg = _tiny_heterogeneous_regression_config()
+    cfg.runtime.layout_mode = "stratified"
     return cfg
 
 
@@ -202,6 +209,57 @@ def test_generate_batch_heterogeneous_request_run_identity_is_run_stable() -> No
 
     assert len(set(request_run_a)) == 1
     assert request_run_a == request_run_b
+
+
+def test_generate_batch_stratified_run_is_reproducible_and_tagged() -> None:
+    cfg = _tiny_stratified_regression_config()
+
+    batch_a = generate_batch(cfg, num_datasets=4, seed=321, device="cpu")
+    batch_b = generate_batch(cfg, num_datasets=4, seed=321, device="cpu")
+
+    assert [bundle.metadata["layout_mode"] for bundle in batch_a] == ["stratified"] * 4
+    for bundle_a, bundle_b in zip(batch_a, batch_b, strict=True):
+        assert bundle_a.metadata["dataset_id"] == bundle_b.metadata["dataset_id"]
+        assert bundle_a.metadata["split_groups"] == bundle_b.metadata["split_groups"]
+        assert bundle_a.feature_types == bundle_b.feature_types
+        assert torch.equal(bundle_a.X_train, bundle_b.X_train)
+        assert torch.equal(bundle_a.y_train, bundle_b.y_train)
+        assert torch.equal(bundle_a.X_test, bundle_b.X_test)
+        assert torch.equal(bundle_a.y_test, bundle_b.y_test)
+
+
+def test_generate_batch_stratified_matches_heterogeneous_outputs_for_same_seed() -> None:
+    heterogeneous = _tiny_heterogeneous_regression_config()
+    stratified = _tiny_stratified_regression_config()
+
+    heterogeneous_batch = generate_batch(heterogeneous, num_datasets=6, seed=912, device="cpu")
+    stratified_batch = generate_batch(stratified, num_datasets=6, seed=912, device="cpu")
+
+    for heterogeneous_bundle, stratified_bundle in zip(
+        heterogeneous_batch,
+        stratified_batch,
+        strict=True,
+    ):
+        assert (
+            heterogeneous_bundle.metadata["dataset_id"] == stratified_bundle.metadata["dataset_id"]
+        )
+        assert (
+            heterogeneous_bundle.metadata["split_groups"]
+            == stratified_bundle.metadata["split_groups"]
+        )
+        assert heterogeneous_bundle.feature_types == stratified_bundle.feature_types
+        assert torch.equal(heterogeneous_bundle.X_train, stratified_bundle.X_train)
+        assert torch.equal(heterogeneous_bundle.y_train, stratified_bundle.y_train)
+        assert torch.equal(heterogeneous_bundle.X_test, stratified_bundle.X_test)
+        assert torch.equal(heterogeneous_bundle.y_test, stratified_bundle.y_test)
+
+
+def test_generate_batch_rejects_removed_public_fixed_layout_mode() -> None:
+    cfg = _tiny_regression_config()
+    cfg.runtime.layout_mode = "fixed"
+
+    with pytest.raises(ValueError, match="runtime\\.layout_mode: stratified"):
+        list(generate_batch_iter(cfg, num_datasets=2, seed=5, device="cpu"))
 
 
 def test_generate_batch_heterogeneous_run_can_vary_structural_schema() -> None:
@@ -328,29 +386,6 @@ def test_generate_batch_dynamic_steering_changes_metadata_over_dataset_order() -
         "laplace": pytest.approx(0.3),
         "student_t": pytest.approx(0.2),
     }
-
-
-def test_generate_batch_dynamic_steering_graph_stage_preserves_fixed_layout_schema() -> None:
-    cfg = _tiny_regression_config()
-    cfg.steering.enabled = True
-    cfg.steering.preset = "anti_memorization_piecewise_v1"
-    cfg.validate_generation_constraints()
-
-    batch = generate_batch(cfg, num_datasets=5, seed=1, device="cpu")
-
-    layout_signatures = [str(bundle.metadata["layout_signature"]) for bundle in batch]
-    feature_type_signatures = [
-        tuple(str(value) for value in bundle.feature_types) for bundle in batch
-    ]
-    feature_counts = [int(bundle.metadata["n_features"]) for bundle in batch]
-    steering_layout_roots = [
-        bundle.metadata["keyed_replay"].get("steering_layout_root_path") for bundle in batch
-    ]
-
-    assert any(root is not None for root in steering_layout_roots)
-    assert len(set(layout_signatures)) >= 1
-    assert len(set(feature_type_signatures)) == 1
-    assert len(set(feature_counts)) == 1
 
 
 def test_generate_batch_with_plan_iter_batches_steering_missingness_changes(
@@ -2068,12 +2103,7 @@ def test_generate_batch_rows_range_is_seed_reproducible() -> None:
         assert int(bundle_a.X_test.shape[0]) == 256
         assert int(bundle_b.X_test.shape[0]) == 256
         assert (
-            bundle_a.metadata["layout_plan_signature"]
-            == batch_a[0].metadata["layout_plan_signature"]
-        )
-        assert (
-            bundle_b.metadata["layout_plan_signature"]
-            == batch_b[0].metadata["layout_plan_signature"]
+            bundle_a.metadata["layout_plan_signature"] == bundle_b.metadata["layout_plan_signature"]
         )
 
 
@@ -3403,11 +3433,11 @@ def test_generate_batch_metadata_preserves_run_seed_and_dataset_indices() -> Non
     dataset_seeds = [int(bundle.metadata["dataset_seed"]) for bundle in batch]
     dataset_ids = [str(bundle.metadata["dataset_id"]) for bundle in batch]
     request_run_groups = [bundle.metadata["split_groups"]["request_run"] for bundle in batch]
-    layout_plan_groups = [bundle.metadata["split_groups"]["layout_plan"] for bundle in batch]
+    cohort_groups = [bundle.metadata["split_groups"]["cohort"] for bundle in batch]
     assert len(set(dataset_seeds)) == 3
     assert len(set(dataset_ids)) == 3
     assert len(set(request_run_groups)) == 1
-    assert len(set(layout_plan_groups)) == 1
+    assert len(set(cohort_groups)) == 3
 
 
 def test_generate_one_request_run_identity_changes_with_noise_contract() -> None:
@@ -3426,8 +3456,8 @@ def test_generate_one_request_run_identity_changes_with_noise_contract() -> None
         == bundle_drifted.metadata["layout_plan_signature"]
     )
     assert (
-        bundle_base.metadata["split_groups"]["layout_plan"]
-        == bundle_drifted.metadata["split_groups"]["layout_plan"]
+        bundle_base.metadata["split_groups"]["cohort"]
+        != bundle_drifted.metadata["split_groups"]["cohort"]
     )
     assert (
         bundle_base.metadata["split_groups"]["request_run"]
@@ -3453,8 +3483,8 @@ def test_generate_one_request_run_identity_changes_with_realized_row_shape() -> 
         == bundle_drifted.metadata["layout_plan_signature"]
     )
     assert (
-        bundle_base.metadata["split_groups"]["layout_plan"]
-        == bundle_drifted.metadata["split_groups"]["layout_plan"]
+        bundle_base.metadata["split_groups"]["cohort"]
+        != bundle_drifted.metadata["split_groups"]["cohort"]
     )
     assert (
         bundle_base.metadata["split_groups"]["request_run"]
@@ -3506,13 +3536,13 @@ def test_generate_batch_request_run_identity_changes_with_fixed_layout_target_ce
         == batch_drifted[0].metadata["layout_plan_signature"]
     )
     assert (
-        batch_base[0].metadata["split_groups"]["layout_plan"]
-        == batch_drifted[0].metadata["split_groups"]["layout_plan"]
+        batch_base[0].metadata["split_groups"]["cohort"]
+        == batch_drifted[0].metadata["split_groups"]["cohort"]
     )
-    assert not np.array_equal(
+    np.testing.assert_allclose(
         np.asarray(batch_base[0].X_train), np.asarray(batch_drifted[0].X_train)
     )
-    assert not np.array_equal(
+    np.testing.assert_allclose(
         np.asarray(batch_base[0].y_train), np.asarray(batch_drifted[0].y_train)
     )
     assert (
@@ -4183,6 +4213,75 @@ def test_generate_batch_iter_auto_surfaces_mps_batch_generation_failure(
     assert calls == ["mps"]
 
 
+def test_resolve_device_prefers_cpu_for_mps_auto_when_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_heterogeneous_regression_config()
+    monkeypatch.setattr("dagzoo.core.generation_context.torch.cuda.is_available", lambda: False)
+    monkeypatch.setattr(
+        "dagzoo.core.generation_context.torch.backends.mps.is_available",
+        lambda: True,
+    )
+
+    assert _resolve_device(cfg, "auto", prefer_cpu_for_mps_auto=True) == "cpu"
+    assert _resolve_device(cfg, "auto", prefer_cpu_for_mps_auto=False) == "mps"
+    assert _resolve_device(cfg, "mps", prefer_cpu_for_mps_auto=True) == "mps"
+
+
+def test_resolve_device_auto_still_prefers_cuda_before_cpu_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_heterogeneous_regression_config()
+    monkeypatch.setattr("dagzoo.core.generation_context.torch.cuda.is_available", lambda: True)
+    monkeypatch.setattr(
+        "dagzoo.core.generation_context.torch.backends.mps.is_available",
+        lambda: True,
+    )
+
+    assert _resolve_device(cfg, "auto", prefer_cpu_for_mps_auto=True) == "cuda"
+
+
+def test_generate_batch_iter_heterogeneous_auto_passes_cpu_preference_to_device_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_heterogeneous_regression_config()
+    cfg.runtime.device = "auto"
+    resolve_calls: list[bool] = []
+    bundle = DatasetBundle(
+        X_train=torch.zeros((cfg.dataset.n_train, 2), dtype=torch.float32),
+        y_train=torch.zeros(cfg.dataset.n_train, dtype=torch.float32),
+        X_test=torch.zeros((cfg.dataset.n_test, 2), dtype=torch.float32),
+        y_test=torch.zeros(cfg.dataset.n_test, dtype=torch.float32),
+        feature_types=["num", "num"],
+        metadata={"filter": {"mode": "deferred", "status": "not_run"}},
+        runtime_metrics={},
+    )
+
+    def _stub_resolve_device(
+        _config: GeneratorConfig,
+        _device_override: str | None,
+        *,
+        prefer_cpu_for_mps_auto: bool = False,
+    ) -> str:
+        resolve_calls.append(bool(prefer_cpu_for_mps_auto))
+        return "cpu" if prefer_cpu_for_mps_auto else "mps"
+
+    monkeypatch.setattr("dagzoo.core.fixed_layout.prepare._resolve_device", _stub_resolve_device)
+    monkeypatch.setattr(
+        "dagzoo.core.dataset._generate_batch_with_heterogeneous_layout_iter",
+        lambda *_args, **_kwargs: iter([bundle]),
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.dataset._annotate_heterogeneous_batch_metadata",
+        lambda emitted_bundle, **_kwargs: emitted_bundle,
+    )
+
+    emitted = next(generate_batch_iter(cfg, num_datasets=1, seed=123, device="auto"))
+
+    assert emitted is bundle
+    assert resolve_calls == [True]
+
+
 def test_auto_does_not_fallback_to_numpy_if_torch_runtime_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4605,6 +4704,7 @@ def test_resolve_split_indices_prefers_cuda_before_cpu_fallback(
 def test_stratified_split_ensures_valid_class_split_with_many_classes() -> None:
     """High n_classes with low n_test should not fail with stratified splitting."""
     cfg = _tiny_config()
+    cfg.runtime.layout_mode = "stratified"
     cfg.dataset.task = "classification"
     cfg.dataset.n_classes_min = 10
     cfg.dataset.n_classes_max = 10
@@ -4632,6 +4732,7 @@ def test_stratified_split_ensures_valid_class_split_with_many_classes() -> None:
 
 def test_metadata_n_classes_uses_realized_class_count_for_classification() -> None:
     cfg = _tiny_config()
+    cfg.runtime.layout_mode = "stratified"
     cfg.dataset.task = "classification"
     cfg.dataset.n_classes_min = 32
     cfg.dataset.n_classes_max = 32
@@ -4673,6 +4774,7 @@ def test_generate_retries_when_stratified_split_is_infeasible(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cfg = _tiny_config()
+    cfg.runtime.layout_mode = "stratified"
     cfg.dataset.task = "classification"
     cfg.filter.max_attempts = 2
 
@@ -4998,9 +5100,15 @@ def test_heterogeneous_runtime_skips_to_next_candidate_on_all_constant_features(
         ],
     )
     monkeypatch.setattr(
-        "dagzoo.core.fixed_layout.runtime._finalize_generated_tensors",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            InvalidFeatureMatrixError("all_constant_features")
+        "dagzoo.core.fixed_layout.runtime._finalize_generated_chunk_variable_schema",
+        lambda *_args, **_kwargs: (
+            [None],
+            [
+                classify_recoverable_generation_failure(
+                    InvalidFeatureMatrixError("all_constant_features"),
+                    degeneracy_retry_scope=RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE,
+                )
+            ],
         ),
     )
 
@@ -5131,9 +5239,15 @@ def test_heterogeneous_runtime_skips_to_next_candidate_on_constant_pathway_outpu
         ],
     )
     monkeypatch.setattr(
-        "dagzoo.core.fixed_layout.runtime._finalize_generated_tensors",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            RetryableDegeneracyError("constant_pathway_output")
+        "dagzoo.core.fixed_layout.runtime._finalize_generated_chunk_variable_schema",
+        lambda *_args, **_kwargs: (
+            [None],
+            [
+                classify_recoverable_generation_failure(
+                    RetryableDegeneracyError("constant_pathway_output"),
+                    degeneracy_retry_scope=RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE,
+                )
+            ],
         ),
     )
 
@@ -5264,9 +5378,15 @@ def test_heterogeneous_runtime_keeps_same_plan_retries_for_invalid_class_split(
         ],
     )
     monkeypatch.setattr(
-        "dagzoo.core.fixed_layout.runtime._finalize_generated_tensors",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            InvalidClassSplitError("invalid_class_split")
+        "dagzoo.core.fixed_layout.runtime._finalize_generated_chunk_variable_schema",
+        lambda *_args, **_kwargs: (
+            [None],
+            [
+                classify_recoverable_generation_failure(
+                    InvalidClassSplitError("invalid_class_split"),
+                    degeneracy_retry_scope=RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE,
+                )
+            ],
         ),
     )
 
@@ -6029,6 +6149,7 @@ def test_generate_fixed_layout_bundle_with_retries_reuses_cached_finalization_co
         dtype: torch.dtype,
         preserve_feature_schema: bool = False,
         finalization_context=None,
+        runtime_metrics_out: dict[str, float] | None = None,
     ) -> DatasetBundle:
         _ = attempt
         _ = attempts_used
@@ -6046,6 +6167,7 @@ def test_generate_fixed_layout_bundle_with_retries_reuses_cached_finalization_co
         _ = noise_runtime_selection
         _ = dtype
         _ = preserve_feature_schema
+        _ = runtime_metrics_out
         seen_contexts.append(finalization_context)
         return DatasetBundle(
             X_train=torch.zeros((cfg.dataset.n_train, 2), dtype=torch.float32),
@@ -6103,13 +6225,11 @@ def test_generate_one_replays_from_emitted_metadata_seed() -> None:
 
     bundle = generate_one(cfg, seed=4321, device="cpu")
     replayed = generate_one(cfg, seed=int(bundle.metadata["seed"]), device="cpu")
+    keyed_replay = bundle.metadata["keyed_replay"]
 
     assert int(bundle.metadata["seed"]) == 4321
-    assert int(bundle.metadata["layout_plan_seed"]) == KeyedRng(4321).child_seed(
-        "plan_candidate",
-        0,
-        "layout",
-    )
+    expected_layout_plan_seed = KeyedRng(4321).keyed(*keyed_replay["layout_root_path"]).child_seed()
+    assert int(bundle.metadata["layout_plan_seed"]) == expected_layout_plan_seed
     assert int(replayed.metadata["seed"]) == 4321
     np.testing.assert_allclose(np.asarray(bundle.X_train), np.asarray(replayed.X_train), atol=1e-6)
     np.testing.assert_allclose(np.asarray(bundle.X_test), np.asarray(replayed.X_test), atol=1e-6)
@@ -6129,7 +6249,7 @@ def test_generate_one_keyed_replay_layout_root_path_replays_layout_signature() -
         "cpu",
     )
 
-    assert keyed_replay["layout_root_path"] == ["plan_candidate", 0, "layout"]
+    assert keyed_replay["layout_root_path"] == ["dataset", 0, "plan_candidate", 0, "layout"]
     assert _layout_signature(replayed_layout) == str(bundle.metadata["layout_signature"])
 
 
@@ -6226,24 +6346,17 @@ def test_generate_batch_graph_steering_preserves_base_replay_roots_and_replays_p
     assert "steering_execution_plan_root_path" not in base_keyed_replay
     assert "steering_layout_root_path" not in batch[4].metadata["keyed_replay"]
     assert "steering_execution_plan_root_path" not in batch[4].metadata["keyed_replay"]
-    assert steered_keyed_replay["layout_root_path"] == ["plan_candidate", 0, "layout"]
+    assert steered_keyed_replay["layout_root_path"] == ["dataset", 2, "plan_candidate", 0, "layout"]
     assert steered_keyed_replay["execution_plan_root_path"] == [
+        "dataset",
+        2,
         "plan_candidate",
         0,
         "execution_plan",
     ]
-    assert steered_keyed_replay["steering_layout_root_path"] == [
-        "dataset",
-        2,
-        "steering",
-        "layout",
-    ]
-    assert steered_keyed_replay["steering_execution_plan_root_path"] == [
-        "dataset",
-        2,
-        "steering",
-        "execution_plan",
-    ]
+    assert "steering_layout_root_path" not in steered_keyed_replay
+    assert "steering_execution_plan_root_path" not in steered_keyed_replay
+    assert replayed_plan.layout_signature == steered_bundle.metadata["layout_signature"]
     assert int(steered_bundle.metadata["layout_plan_schema_version"]) == 10
     assert str(steered_bundle.metadata["layout_execution_contract"]) == "chunk_batched_v3"
     assert str(replayed_plan.layout_signature) == str(steered_bundle.metadata["layout_signature"])

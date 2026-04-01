@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import time
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -19,11 +20,14 @@ from dagzoo.core.noise_runtime import (
 )
 from dagzoo.core.shift import ShiftRuntimeParams
 from dagzoo.core.validation import (
+    RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE,
     InfeasibleStratifiedSplitError,
     InvalidClassSplitError,
+    RecoverableGenerationFailure,
     RetryableDegeneracyError,
     _classification_split_valid,
     _stratified_split_indices,
+    classify_recoverable_generation_failure,
     validate_pathway_output,
 )
 from dagzoo.postprocess.postprocess import (
@@ -46,6 +50,18 @@ class _FixedSchemaFinalizationContext:
     feature_index_map: list[int]
     base_metadata: dict[str, Any]
     missingness_enabled: bool
+
+
+def _accumulate_runtime_metric(
+    runtime_metrics_out: dict[str, float] | None,
+    key: str,
+    value: float,
+) -> None:
+    """Accumulate one optional generation runtime metric."""
+
+    if runtime_metrics_out is None:
+        return
+    runtime_metrics_out[key] = float(runtime_metrics_out.get(key, 0.0)) + float(value)
 
 
 def _config_payload_for_metadata(
@@ -522,6 +538,238 @@ def _finalize_generated_chunk_preserve_schema(
     return results
 
 
+def _finalize_generated_chunk_variable_schema(
+    layout: LayoutPlan,
+    *,
+    configs_by_batch: Sequence[GeneratorConfig],
+    shift_params_by_batch: Sequence[ShiftRuntimeParams],
+    dataset_roots: list[KeyedRng],
+    attempt: int,
+    attempts_used: int,
+    device: str,
+    n_train: int,
+    n_test: int,
+    requested_device: str,
+    resolved_device: str,
+    device_fallback_reason: str | None,
+    x: torch.Tensor,
+    y: torch.Tensor,
+    aux_meta_batch: list[dict[str, Any]],
+    noise_runtime_selection: NoiseRuntimeSelection,
+    dtype: torch.dtype,
+    runtime_metrics_out: dict[str, float] | None = None,
+) -> tuple[list[DatasetBundle | None], list[RecoverableGenerationFailure | None]]:
+    """Finalize one heterogeneous raw chunk while preserving per-dataset retry semantics."""
+
+    if int(x.shape[0]) != len(dataset_roots) or int(y.shape[0]) != len(dataset_roots):
+        raise ValueError("Chunk tensors must align with provided dataset roots.")
+    if len(configs_by_batch) != len(dataset_roots):
+        raise ValueError("configs_by_batch must align with provided dataset roots.")
+    if len(shift_params_by_batch) != len(dataset_roots):
+        raise ValueError("shift_params_by_batch must align with provided dataset roots.")
+    if len(aux_meta_batch) != len(dataset_roots):
+        raise ValueError("aux_meta_batch must align with provided dataset roots.")
+
+    results: list[DatasetBundle | None] = [None] * len(dataset_roots)
+    failures: list[RecoverableGenerationFailure | None] = [None] * len(dataset_roots)
+    valid_positions: list[int] = []
+    train_idx_list: list[torch.Tensor] = []
+    test_idx_list: list[torch.Tensor] = []
+
+    split_start = time.perf_counter()
+    split_start_cpu = time.process_time()
+    for batch_index, dataset_root in enumerate(dataset_roots):
+        attempt_root = dataset_root.keyed("attempt", attempt)
+        try:
+            train_idx, test_idx = _resolve_split_indices(
+                y[batch_index],
+                task=str(configs_by_batch[batch_index].dataset.task),
+                n_train=n_train,
+                keyed_rng=attempt_root.keyed("split"),
+            )
+        except InfeasibleStratifiedSplitError as exc:
+            failures[batch_index] = classify_recoverable_generation_failure(
+                InvalidClassSplitError("invalid_class_split"),
+                degeneracy_retry_scope=RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE,
+            )
+            if failures[batch_index] is None:
+                raise InvalidClassSplitError("invalid_class_split") from exc
+            continue
+
+        valid_positions.append(int(batch_index))
+        train_idx_list.append(train_idx)
+        test_idx_list.append(test_idx)
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "heterogeneous_split_resolution_elapsed_seconds",
+        time.perf_counter() - split_start,
+    )
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "heterogeneous_split_resolution_cpu_time_seconds",
+        time.process_time() - split_start_cpu,
+    )
+
+    if not valid_positions:
+        return results, failures
+
+    valid_index = torch.as_tensor(valid_positions, dtype=torch.long, device=x.device)
+    x_valid = x.index_select(0, valid_index)
+    y_valid = y.index_select(0, valid_index)
+    train_idx = torch.stack([idx.to(device=x.device) for idx in train_idx_list])
+    test_idx = torch.stack([idx.to(device=x.device) for idx in test_idx_list])
+
+    x_train_t = torch.gather(
+        x_valid,
+        1,
+        train_idx.unsqueeze(-1).expand(-1, -1, int(x.shape[2])),
+    )
+    x_test_t = torch.gather(
+        x_valid,
+        1,
+        test_idx.unsqueeze(-1).expand(-1, -1, int(x.shape[2])),
+    )
+    y_train_t = torch.gather(y_valid, 1, train_idx)
+    y_test_t = torch.gather(y_valid, 1, test_idx)
+
+    processed_batches: list[
+        tuple[
+            int,
+            GeneratorConfig,
+            ShiftRuntimeParams,
+            KeyedRng,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            list[str],
+            list[int],
+        ]
+    ] = []
+    postprocess_start = time.perf_counter()
+    postprocess_start_cpu = time.process_time()
+    for local_index, batch_index in enumerate(valid_positions):
+        dataset_root = dataset_roots[batch_index]
+        attempt_root = dataset_root.keyed("attempt", attempt)
+        per_dataset_config = configs_by_batch[batch_index]
+        per_dataset_shift = shift_params_by_batch[batch_index]
+        try:
+            (
+                x_train,
+                y_train,
+                x_test,
+                y_test,
+                feature_types,
+                feature_index_map,
+            ) = postprocess_dataset(
+                x_train_t[local_index],
+                y_train_t[local_index],
+                x_test_t[local_index],
+                y_test_t[local_index],
+                list(layout.feature_types),
+                str(per_dataset_config.dataset.task),
+                attempt_root.keyed("postprocess"),
+                device,
+                return_feature_index_map=True,
+                preserve_feature_schema=False,
+            )
+        except (InvalidClassSplitError, RetryableDegeneracyError) as exc:
+            failures[batch_index] = classify_recoverable_generation_failure(
+                exc,
+                degeneracy_retry_scope=RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE,
+            )
+            if failures[batch_index] is None:
+                raise
+            continue
+        processed_batches.append(
+            (
+                int(batch_index),
+                per_dataset_config,
+                per_dataset_shift,
+                dataset_root,
+                x_train,
+                y_train,
+                x_test,
+                y_test,
+                [str(feature_type) for feature_type in feature_types],
+                [int(index) for index in feature_index_map],
+            )
+        )
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "heterogeneous_postprocess_elapsed_seconds",
+        time.perf_counter() - postprocess_start,
+    )
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "heterogeneous_postprocess_cpu_time_seconds",
+        time.process_time() - postprocess_start_cpu,
+    )
+
+    metadata_start = time.perf_counter()
+    metadata_start_cpu = time.process_time()
+    for (
+        batch_index,
+        per_dataset_config,
+        per_dataset_shift,
+        dataset_root,
+        x_train,
+        y_train,
+        x_test,
+        y_test,
+        feature_types,
+        feature_index_map,
+    ) in processed_batches:
+        context = _build_fixed_schema_finalization_context(
+            per_dataset_config,
+            layout,
+            n_train=n_train,
+            n_test=n_test,
+            shift_params=per_dataset_shift,
+            feature_types=feature_types,
+            feature_index_map=feature_index_map,
+        )
+        try:
+            results[batch_index] = _finalize_processed_bundle(
+                per_dataset_config,
+                layout,
+                context=context,
+                dataset_seed=dataset_root.child_seed(),
+                attempt=attempt,
+                attempts_used=attempts_used,
+                attempt_root=dataset_root.keyed("attempt", attempt),
+                device=device,
+                requested_device=requested_device,
+                resolved_device=resolved_device,
+                device_fallback_reason=device_fallback_reason,
+                x_train=x_train,
+                y_train=y_train,
+                x_test=x_test,
+                y_test=y_test,
+                aux_meta=aux_meta_batch[batch_index],
+                noise_runtime_selection=noise_runtime_selection,
+                dtype=dtype,
+            )
+        except (InvalidClassSplitError, RetryableDegeneracyError) as exc:
+            failures[batch_index] = classify_recoverable_generation_failure(
+                exc,
+                degeneracy_retry_scope=RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE,
+            )
+            if failures[batch_index] is None:
+                raise
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "heterogeneous_metadata_finalization_elapsed_seconds",
+        time.perf_counter() - metadata_start,
+    )
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "heterogeneous_metadata_finalization_cpu_time_seconds",
+        time.process_time() - metadata_start_cpu,
+    )
+    return results, failures
+
+
 def _finalize_generated_tensors(
     config: GeneratorConfig,
     layout: LayoutPlan,
@@ -544,10 +792,13 @@ def _finalize_generated_tensors(
     dtype: torch.dtype,
     preserve_feature_schema: bool = False,
     finalization_context: _FixedSchemaFinalizationContext | None = None,
+    runtime_metrics_out: dict[str, float] | None = None,
 ) -> DatasetBundle:
     """Finalize one raw `x`/`y` pair into the standard dataset bundle contract."""
 
     attempt_root = dataset_root.keyed("attempt", attempt)
+    split_start = time.perf_counter()
+    split_start_cpu = time.process_time()
     try:
         train_idx, test_idx = _resolve_split_indices(
             y,
@@ -557,6 +808,16 @@ def _finalize_generated_tensors(
         )
     except InfeasibleStratifiedSplitError as exc:
         raise InvalidClassSplitError("invalid_class_split") from exc
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "heterogeneous_split_resolution_elapsed_seconds",
+        time.perf_counter() - split_start,
+    )
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "heterogeneous_split_resolution_cpu_time_seconds",
+        time.process_time() - split_start_cpu,
+    )
 
     x_train_t, y_train_t, x_test_t, y_test_t = _split_raw_tensors(
         x,
@@ -567,6 +828,8 @@ def _finalize_generated_tensors(
 
     feature_types: list[str]
     feature_index_map: list[int]
+    postprocess_start = time.perf_counter()
+    postprocess_start_cpu = time.process_time()
     if preserve_feature_schema:
         x_train = x_train_t
         x_test = x_test_t
@@ -599,6 +862,18 @@ def _finalize_generated_tensors(
             preserve_feature_schema=False,
         )
         feature_types = [str(feature_type) for feature_type in postprocessed_feature_types]
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "heterogeneous_postprocess_elapsed_seconds",
+        time.perf_counter() - postprocess_start,
+    )
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "heterogeneous_postprocess_cpu_time_seconds",
+        time.process_time() - postprocess_start_cpu,
+    )
+    metadata_start = time.perf_counter()
+    metadata_start_cpu = time.process_time()
     if (
         finalization_context is not None
         and list(feature_types) == list(finalization_context.feature_types)
@@ -615,7 +890,7 @@ def _finalize_generated_tensors(
             feature_types=feature_types,
             feature_index_map=feature_index_map,
         )
-    return _finalize_processed_bundle(
+    bundle = _finalize_processed_bundle(
         config,
         layout,
         context=context,
@@ -635,3 +910,14 @@ def _finalize_generated_tensors(
         noise_runtime_selection=noise_runtime_selection,
         dtype=dtype,
     )
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "heterogeneous_metadata_finalization_elapsed_seconds",
+        time.perf_counter() - metadata_start,
+    )
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "heterogeneous_metadata_finalization_cpu_time_seconds",
+        time.process_time() - metadata_start_cpu,
+    )
+    return bundle

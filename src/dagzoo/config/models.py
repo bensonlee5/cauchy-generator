@@ -1461,7 +1461,7 @@ class FilterConfig:
     classification_kappa_threshold: float = 0.0
     classification_require_prediction_diversity: bool = True
     max_attempts: int = 3
-    n_jobs: int = -1
+    n_jobs: int = 1
 
 
 @dataclass(slots=True)

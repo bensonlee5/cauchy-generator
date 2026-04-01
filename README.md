@@ -115,6 +115,11 @@ sample = next(iter(loader))
 print(sample["X_train"].shape)
 ```
 
+Large heterogeneous runs can switch to `runtime.layout_mode: stratified` to let
+the generator batch compatible `(n_rows, n_features)` strata without collapsing
+datasets onto one shared layout. Public `runtime.layout_mode: fixed` is no
+longer supported.
+
 ## Public Surface
 
 If you're new, start with the named recipes. The public surface is small on
@@ -141,6 +146,9 @@ dagzoo generate --config recipe:default-baseline --num-datasets 25 --out data/de
 
 That run lands under `data/default_baseline/` because the path is passed to
 `--out`.
+On Apple hardware, the fully heterogeneous public path now resolves
+`--device auto` to CPU instead of MPS because that path is typically faster on
+CPU there. Pass `--device mps` explicitly when you want to force MPS.
 
 The human-facing export-contract overview lives in
 `docs/output-format.md`. The exhaustive field-by-field catalog lives in

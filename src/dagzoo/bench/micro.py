@@ -60,7 +60,6 @@ def _micro_config(config: GeneratorConfig) -> GeneratorConfig:
     c.dataset.n_features_max = min(MICRO_CONFIG_N_FEATURES_CAP, c.dataset.n_features_max)
     c.graph.n_nodes_min = min(MICRO_CONFIG_N_NODES_CAP, c.graph.n_nodes_min)
     c.graph.n_nodes_max = min(MICRO_CONFIG_N_NODES_CAP, c.graph.n_nodes_max)
-    c.runtime.layout_mode = "fixed"
     return c
 
 
@@ -121,26 +120,47 @@ def run_microbenchmarks(
             "cpu",
         )
 
-    micro_cfg = _micro_config(config)
+    stratified_micro_cfg = _micro_config(config)
+    stratified_micro_cfg.runtime.layout_mode = "stratified"
+    heterogeneous_micro_cfg = _micro_config(config)
+    heterogeneous_micro_cfg.runtime.layout_mode = "heterogeneous"
     generate_one_ms: float | None
+    generate_one_heterogeneous_ms: float | None
     if include_generate_one:
 
-        def run_generate_one() -> None:
+        def run_generate_one_stratified() -> None:
             _ = generate_one(
-                micro_cfg,
-                seed=micro_root.child_seed("generate_one"),
+                stratified_micro_cfg,
+                seed=micro_root.child_seed("generate_one", "stratified"),
                 device=device,
             )
 
         generate_one_ms = _time_ms(
-            run_generate_one, repeats, device=device or micro_cfg.runtime.device
+            run_generate_one_stratified,
+            repeats,
+            device=device or stratified_micro_cfg.runtime.device,
+        )
+
+        def run_generate_one_heterogeneous() -> None:
+            _ = generate_one(
+                heterogeneous_micro_cfg,
+                seed=micro_root.child_seed("generate_one", "heterogeneous"),
+                device=device,
+            )
+
+        generate_one_heterogeneous_ms = _time_ms(
+            run_generate_one_heterogeneous,
+            repeats,
+            device=device or heterogeneous_micro_cfg.runtime.device,
         )
     else:
         generate_one_ms = None
+        generate_one_heterogeneous_ms = None
 
     return {
         "micro_repeats": int(max(1, repeats)),
         "micro_random_function_linear_ms": _time_ms(run_linear, repeats),
         "micro_node_pipeline_ms": _time_ms(run_node_pipeline, repeats),
         "micro_generate_one_ms": generate_one_ms,
+        "micro_generate_one_heterogeneous_ms": generate_one_heterogeneous_ms,
     }

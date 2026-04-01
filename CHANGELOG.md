@@ -10,6 +10,42 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.18.0] - 2026-04-01
+
+### Changed
+
+- **BREAKING:** Public generation no longer supports `runtime.layout_mode: fixed`.
+  Use `runtime.layout_mode: stratified` for throughput-sensitive heterogeneous
+  runs while preserving per-dataset layout and plan diversity.
+- Added public `runtime.layout_mode: stratified`, a rolling-window
+  heterogeneous scheduler that groups datasets by exact `(n_rows, n_features)`
+  strata, sizes stratum microbatches from the target-cell budget, and records
+  stratification fill/fallback metrics for throughput probes.
+- Added `run_stratified_throughput_benchmark(...)` so throughput tooling can
+  measure the new public stratified path separately from the fully
+  heterogeneous baseline.
+- Deferred filtering now defaults `filter.n_jobs` to `1` instead of `-1`.
+  Explicit `filter.n_jobs: -1` remains supported for users who still want the
+  prior all-core sklearn behavior.
+
+## [0.17.1] - 2026-04-01
+
+### Changed
+
+- Heterogeneous public generation on Apple hardware now resolves
+  `device=auto` to CPU instead of MPS. Explicit `device=mps` requests are
+  unchanged, and fixed-layout generation keeps the existing device-resolution
+  path.
+- Heterogeneous grouped execution now defers per-dataset finalization-context
+  construction until after postprocessing, avoiding eager metadata work that
+  was usually invalidated by feature dropping and permutation.
+- Heterogeneous runtime instrumentation now records descriptor-resolution,
+  split-resolution, postprocess, and metadata-finalization stage timings for
+  throughput probes.
+- Added heterogeneous-specific throughput and microbenchmark coverage so the
+  benchmark helpers can expose the public heterogeneous bottlenecks alongside
+  the existing fixed-layout measurements.
+
 ## [0.17.0] - 2026-03-31
 
 ### Changed

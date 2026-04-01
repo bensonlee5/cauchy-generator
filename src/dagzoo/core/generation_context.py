@@ -42,7 +42,12 @@ def _resolve_run_seed(config: GeneratorConfig, seed_override: int | None) -> int
     return validate_seed32(seed_override, field_name="seed")
 
 
-def _resolve_device(config: GeneratorConfig, device_override: str | None) -> str:
+def _resolve_device(
+    config: GeneratorConfig,
+    device_override: str | None,
+    *,
+    prefer_cpu_for_mps_auto: bool = False,
+) -> str:
     """Resolve runtime device and hard-fail on unavailable explicit accelerators."""
 
     requested = (device_override or config.runtime.device or "auto").lower()
@@ -51,6 +56,8 @@ def _resolve_device(config: GeneratorConfig, device_override: str | None) -> str
         if torch.cuda.is_available():
             return "cuda"
         if mps_ok:
+            if prefer_cpu_for_mps_auto:
+                return "cpu"
             return "mps"
         return "cpu"
     if requested == "cpu":

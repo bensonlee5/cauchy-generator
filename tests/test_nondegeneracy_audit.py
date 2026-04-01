@@ -60,7 +60,7 @@ def _structured_input(rows: int, dim: int) -> torch.Tensor:
 
 def _fixed_audit_config():
     cfg = load_repo_config()
-    cfg.runtime.layout_mode = "fixed"
+    cfg.runtime.layout_mode = "stratified"
     cfg.runtime.device = "cpu"
     cfg.filter.enabled = False
     cfg.filter.max_attempts = 16

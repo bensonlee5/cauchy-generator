@@ -129,6 +129,7 @@ def test_filter_stage_metric_replays_filter_and_reports_counts(
 
     def _stub_filter(*_args, **_kwargs):
         replay_seeds.append(int(_kwargs["seed"]))
+        assert int(_kwargs["n_jobs"]) == 1
         return bool(int(_kwargs["seed"]) % 2), {"n_valid_oob": 128}
 
     monkeypatch.setattr("dagzoo.bench.stage_metrics._apply_extra_trees_filter_numpy", _stub_filter)

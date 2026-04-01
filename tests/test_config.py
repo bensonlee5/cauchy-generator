@@ -89,7 +89,7 @@ def test_load_default_config() -> None:
     assert cfg.filter.min_target_relevant_feature_fraction == pytest.approx(0.05)
     assert cfg.filter.classification_kappa_threshold == pytest.approx(0.0)
     assert cfg.filter.classification_require_prediction_diversity is True
-    assert cfg.filter.n_jobs == -1
+    assert cfg.filter.n_jobs == 1
     assert cfg.dataset.missing_rate == 0.0
     assert cfg.dataset.missing_mechanism == MISSINGNESS_MECHANISM_NONE
     assert cfg.dataset.missing_mar_observed_fraction == 0.5
@@ -153,13 +153,19 @@ def test_runtime_layout_mode_accepts_supported_values_and_rejects_invalid() -> N
     assert GeneratorConfig.from_dict(
         {"runtime": {"layout_mode": "heterogeneous"}}
     ).runtime.layout_mode == ("heterogeneous")
+    assert GeneratorConfig.from_dict(
+        {"runtime": {"layout_mode": "stratified"}}
+    ).runtime.layout_mode == ("stratified")
     assert GeneratorConfig.from_dict({"runtime": {"layout_mode": "fixed"}}).runtime.layout_mode == (
         "fixed"
     )
 
     with pytest.raises(
         ValueError,
-        match=r"Unsupported runtime\.layout_mode 'dynamic'. Expected heterogeneous or fixed.",
+        match=(
+            r"Unsupported runtime\.layout_mode 'dynamic'. Expected heterogeneous, "
+            r"stratified, or fixed."
+        ),
     ):
         GeneratorConfig.from_dict({"runtime": {"layout_mode": "dynamic"}})
 

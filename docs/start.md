@@ -60,7 +60,9 @@ Every generate run writes:
 - `effective_config_trace.yaml`
 
 `dagzoo generate` now only generates. If you want accept/reject decisions, run
-`dagzoo filter` as a separate replay stage over the emitted shards.
+`dagzoo filter` as a separate replay stage over the emitted shards. Deferred
+filtering now defaults to one sklearn worker; set `filter.n_jobs: -1`
+explicitly when you want the older all-core behavior.
 
 ______________________________________________________________________
 
@@ -81,8 +83,11 @@ sample = next(iter(loader))
 `build_dataloader(...)` is the recommended programmatic entrypoint. It uses the
 same config surface as the CLI: either `recipe:<name>` or a YAML path.
 Public generation defaults to fully heterogeneous per-dataset layouts; set
-`runtime.layout_mode: fixed` when you want aligned schema and faster
-fixed-layout batching within one run.
+`runtime.layout_mode: stratified` when you want large-run heterogeneous
+generation to batch compatible `(n_rows, n_features)` strata without forcing a
+shared layout. On Apple hardware, heterogeneous and stratified `device=auto`
+now prefer CPU over MPS; pass `device="mps"` explicitly when you want the MPS
+backend.
 
 ______________________________________________________________________
 

@@ -79,3 +79,4 @@ filter:
   classification_kappa_threshold: 0.0
   classification_require_prediction_diversity: true
   max_attempts: 3
+  n_jobs: 1
