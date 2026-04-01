@@ -26,13 +26,13 @@ def normalize_layout_mode(value: object) -> LayoutMode:
 
     if isinstance(value, bool) or not isinstance(value, str):
         raise ValueError(
-            f"Unsupported runtime.layout_mode '{value}'. Expected heterogeneous or fixed."
+            f"Unsupported runtime.layout_mode '{value}'. Expected heterogeneous, stratified, or fixed."
         )
     normalized = value.strip().lower()
     result = _LAYOUT_MODE_VALUE_MAP.get(normalized)
     if result is None:
         raise ValueError(
-            f"Unsupported runtime.layout_mode '{value}'. Expected heterogeneous or fixed."
+            f"Unsupported runtime.layout_mode '{value}'. Expected heterogeneous, stratified, or fixed."
         )
     return result
 

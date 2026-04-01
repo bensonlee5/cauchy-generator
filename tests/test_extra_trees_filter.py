@@ -142,7 +142,27 @@ def test_extra_trees_filter_is_deterministic_for_fixed_seed() -> None:
     assert details_a == details_b
     assert details_a["backend"] == "extra_trees_cpu"
     assert details_a["filter_mode"] == "small_shot_ease_v1"
-    assert int(details_a["n_jobs"]) == -1
+    assert int(details_a["n_jobs"]) == 1
+
+
+def test_extra_trees_filter_accepts_explicit_minus_one_n_jobs() -> None:
+    x_train, y_train, x_test, y_test = _make_regression_split()
+    accepted, details = apply_extra_trees_filter(
+        x_train,
+        y_train,
+        x_test,
+        y_test,
+        task="regression",
+        seed=123,
+        n_estimators=8,
+        max_depth=5,
+        n_bootstrap=33,
+        ease_k_small=8,
+        n_jobs=-1,
+    )
+
+    assert isinstance(accepted, bool)
+    assert int(details["n_jobs"]) == -1
 
 
 @pytest.mark.parametrize("task", ["classification", "regression"])

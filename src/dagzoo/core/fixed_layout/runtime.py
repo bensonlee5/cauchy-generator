@@ -110,6 +110,8 @@ class InvalidStructuralLayoutError(ValueError):
 
 
 _MIN_STRUCTURAL_PLAN_CANDIDATE_ATTEMPTS = 5
+_STRATIFIED_LOOKAHEAD_MULTIPLIER = 8
+_MIN_STRATIFIED_LOOKAHEAD = 32
 
 
 def _noise_config_signature(config: GeneratorConfig) -> tuple[object, ...]:
@@ -145,6 +147,39 @@ def _raw_generation_cohort_key(
         *_noise_config_signature(descriptor.effective_config),
         float(descriptor.effective_shift.variance_sigma_multiplier),
     )
+
+
+def _descriptor_row_count(descriptor: _ResolvedDatasetDescriptor) -> int:
+    return int(descriptor.effective_plan.n_train) + int(descriptor.effective_plan.n_test)
+
+
+def _stratified_descriptor_key(
+    descriptor: _ResolvedDatasetDescriptor,
+) -> tuple[int, int]:
+    return (
+        _descriptor_row_count(descriptor),
+        int(descriptor.effective_plan.layout.n_features),
+    )
+
+
+def _accumulate_optional_runtime_metric(
+    metrics: dict[str, float],
+    key: str,
+    value: float,
+) -> None:
+    metrics[key] = float(metrics.get(key, 0.0)) + float(value)
+
+
+def _size_bucket_metric_key(prefix: str, size: int) -> str:
+    if size <= 1:
+        return f"{prefix}_bucket_1_count"
+    if size <= 3:
+        return f"{prefix}_bucket_2_3_count"
+    if size <= 7:
+        return f"{prefix}_bucket_4_7_count"
+    if size <= 15:
+        return f"{prefix}_bucket_8_15_count"
+    return f"{prefix}_bucket_16_plus_count"
 
 
 def _structural_validity_checks(config: GeneratorConfig) -> StructuralValidityConfig:
@@ -1069,6 +1104,225 @@ def _resolve_heterogeneous_batch_size(
     return resolved if effective_cap is None else min(resolved, effective_cap)
 
 
+def _resolve_stratified_microbatch_size(
+    config: GeneratorConfig,
+    *,
+    n_rows: int,
+    n_features: int,
+    num_datasets: int,
+    batch_size: int | None,
+) -> int:
+    """Resolve one exact-stratum microbatch size from the target-cell budget."""
+
+    effective_cap = (
+        None
+        if config.runtime.fixed_layout_batch_size_cap is None
+        else max(1, int(config.runtime.fixed_layout_batch_size_cap))
+    )
+    if batch_size is not None:
+        resolved = max(1, min(int(batch_size), int(num_datasets)))
+        return resolved if effective_cap is None else min(resolved, effective_cap)
+
+    per_dataset_cells = max(1, int(n_rows) * max(1, int(n_features)))
+    auto_batch = max(1, int(_effective_fixed_layout_target_cells(config)) // per_dataset_cells)
+    resolved = max(1, min(int(num_datasets), int(auto_batch)))
+    return resolved if effective_cap is None else min(resolved, effective_cap)
+
+
+def _resolve_stratified_lookahead_size(
+    config: GeneratorConfig,
+    *,
+    rows_seed: int,
+    num_datasets: int,
+    batch_size: int | None,
+) -> int:
+    """Resolve the descriptor lookahead window for stratified scheduling."""
+
+    base_batch_size = _resolve_heterogeneous_batch_size(
+        config,
+        rows_seed=rows_seed,
+        num_datasets=num_datasets,
+        batch_size=batch_size,
+    )
+    return max(
+        1,
+        min(
+            int(num_datasets),
+            max(_MIN_STRATIFIED_LOOKAHEAD, int(base_batch_size) * _STRATIFIED_LOOKAHEAD_MULTIPLIER),
+        ),
+    )
+
+
+def _resolve_heterogeneous_descriptor_window(
+    config: GeneratorConfig,
+    *,
+    requested_device: str,
+    resolved_device: str,
+    rows_seed: int,
+    dataset_index: int,
+    window_size: int,
+    num_datasets: int,
+    run_root: KeyedRng,
+) -> tuple[list[_ResolvedDatasetDescriptor], dict[str, float]]:
+    """Resolve one contiguous descriptor window for heterogeneous-style execution."""
+
+    descriptor_start = time.perf_counter()
+    descriptor_start_cpu = time.process_time()
+    descriptors = [
+        _resolve_heterogeneous_dataset_descriptor(
+            config,
+            requested_device=requested_device,
+            resolved_device=resolved_device,
+            rows_seed=rows_seed,
+            plan_candidate_attempt=0,
+            dataset_index=dataset_index + offset,
+            num_datasets=num_datasets,
+            dataset_root=run_root.keyed("dataset", dataset_index + offset),
+        )
+        for offset in range(window_size)
+    ]
+    return descriptors, {
+        "heterogeneous_descriptor_resolution_elapsed_seconds": (
+            time.perf_counter() - descriptor_start
+        ),
+        "heterogeneous_descriptor_resolution_cpu_time_seconds": (
+            time.process_time() - descriptor_start_cpu
+        ),
+    }
+
+
+def _execute_heterogeneous_descriptor_chunk(
+    config: GeneratorConfig,
+    *,
+    descriptors: list[_ResolvedDatasetDescriptor],
+    requested_device: str,
+    resolved_device: str,
+    rows_seed: int,
+    num_datasets: int,
+    dtype: torch.dtype,
+    layout_mode: str,
+    on_raw_batch_metrics: Callable[[dict[str, float]], None] | None = None,
+) -> list[tuple[_ResolvedDatasetDescriptor, DatasetBundle]]:
+    """Execute one already-resolved heterogeneous-style descriptor chunk."""
+
+    chunk_size = len(descriptors)
+    raw_batch_by_offset: list[DatasetBundle | None] = [None] * chunk_size
+    recoverable_failure_by_offset: list[RecoverableGenerationFailure | None] = [None] * chunk_size
+    cohort_offsets_by_key: dict[tuple[object, ...], list[int]] = {}
+    cohort_order: list[tuple[object, ...]] = []
+    for offset, descriptor in enumerate(descriptors):
+        cohort_key = _raw_generation_cohort_key(descriptor)
+        if cohort_key not in cohort_offsets_by_key:
+            cohort_offsets_by_key[cohort_key] = []
+            cohort_order.append(cohort_key)
+        cohort_offsets_by_key[cohort_key].append(int(offset))
+
+    for cohort_key in cohort_order:
+        cohort_offsets = cohort_offsets_by_key[cohort_key]
+        cohort_descriptors = [descriptors[offset] for offset in cohort_offsets]
+        representative = cohort_descriptors[0]
+        grouped_noise_runtime = _group_noise_runtime_chunk(
+            representative.effective_config,
+            dataset_roots=[entry.dataset_root for entry in cohort_descriptors],
+            attempts=[0] * len(cohort_descriptors),
+        )
+        try:
+            grouped_raw_batches = _generate_grouped_raw_batches(
+                representative.effective_config,
+                representative.effective_plan.layout,
+                execution_plan=representative.effective_plan.execution_plan,
+                grouped_noise_runtime=grouped_noise_runtime,
+                requested_device=requested_device,
+                resolved_device=resolved_device,
+                noise_sigma_multiplier=float(
+                    representative.effective_shift.variance_sigma_multiplier
+                ),
+            )
+        except ValueError as exc:
+            recoverable_failure = classify_recoverable_generation_failure(exc)
+            if recoverable_failure is None:
+                raise
+            for offset in cohort_offsets:
+                recoverable_failure_by_offset[offset] = recoverable_failure
+            continue
+        for grouped_batch in grouped_raw_batches:
+            group_dataset_offsets = [
+                cohort_offsets[int(chunk_offset)] for chunk_offset in grouped_batch.chunk_offsets
+            ]
+            group_descriptors = [descriptors[offset] for offset in group_dataset_offsets]
+            group_runtime_metrics = dict(getattr(grouped_batch, "runtime_metrics", {}))
+            finalized_group, finalized_failures = _finalize_generated_chunk_variable_schema(
+                representative.effective_plan.layout,
+                configs_by_batch=[entry.effective_config for entry in group_descriptors],
+                shift_params_by_batch=[entry.effective_shift for entry in group_descriptors],
+                dataset_roots=[entry.dataset_root for entry in group_descriptors],
+                attempt=grouped_batch.attempt,
+                attempts_used=grouped_batch.attempt + 1,
+                device=grouped_batch.effective_resolved_device,
+                n_train=int(representative.effective_plan.n_train),
+                n_test=int(representative.effective_plan.n_test),
+                requested_device=requested_device,
+                resolved_device=grouped_batch.effective_resolved_device,
+                device_fallback_reason=grouped_batch.device_fallback_reason,
+                x=grouped_batch.x_batch,
+                y=grouped_batch.y_batch,
+                aux_meta_batch=grouped_batch.aux_meta_batch,
+                noise_runtime_selection=grouped_batch.selection,
+                dtype=dtype,
+                runtime_metrics_out=group_runtime_metrics,
+            )
+            if on_raw_batch_metrics is not None:
+                on_raw_batch_metrics(group_runtime_metrics)
+            for local_index, offset in enumerate(group_dataset_offsets):
+                raw_batch_by_offset[offset] = finalized_group[local_index]
+                recoverable_failure_by_offset[offset] = finalized_failures[local_index]
+
+    completed: list[tuple[_ResolvedDatasetDescriptor, DatasetBundle]] = []
+    for offset, descriptor in enumerate(descriptors):
+        bundle = raw_batch_by_offset[offset]
+        if bundle is None:
+            recoverable_failure = recoverable_failure_by_offset[offset]
+            if (
+                recoverable_failure is not None
+                and recoverable_failure.retry_scope == RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE
+            ):
+                descriptor, bundle = _generate_heterogeneous_bundle_with_plan_candidates(
+                    config,
+                    requested_device=requested_device,
+                    resolved_device=resolved_device,
+                    rows_seed=rows_seed,
+                    dataset_index=int(descriptor.dataset_index),
+                    num_datasets=num_datasets,
+                    dataset_root=descriptor.dataset_root,
+                    initial_descriptor=None,
+                    initial_start_attempt=0,
+                    start_candidate_attempt=_next_plan_candidate_attempt_for_descriptor(descriptor),
+                    on_raw_batch_metrics=on_raw_batch_metrics,
+                )
+            else:
+                descriptor, bundle = _generate_heterogeneous_bundle_with_plan_candidates(
+                    config,
+                    requested_device=requested_device,
+                    resolved_device=resolved_device,
+                    rows_seed=rows_seed,
+                    dataset_index=int(descriptor.dataset_index),
+                    num_datasets=num_datasets,
+                    dataset_root=descriptor.dataset_root,
+                    initial_descriptor=descriptor,
+                    initial_start_attempt=1,
+                    start_candidate_attempt=_next_plan_candidate_attempt_for_descriptor(descriptor),
+                    on_raw_batch_metrics=on_raw_batch_metrics,
+                )
+            descriptors[offset] = descriptor
+        _annotate_fixed_layout_metadata(
+            bundle,
+            plan=descriptor.effective_plan,
+            layout_mode=str(layout_mode),
+        )
+        completed.append((descriptor, bundle))
+    return completed
+
+
 def _generate_batch_with_heterogeneous_layout_iter(
     config: GeneratorConfig,
     *,
@@ -1101,154 +1355,178 @@ def _generate_batch_with_heterogeneous_layout_iter(
     dataset_index = 0
     while dataset_index < num_datasets:
         chunk_size = min(effective_batch_size, num_datasets - dataset_index)
-        descriptor_start = time.perf_counter()
-        descriptor_start_cpu = time.process_time()
-        descriptors = [
-            _resolve_heterogeneous_dataset_descriptor(
-                realized_config,
-                requested_device=requested_device,
-                resolved_device=validated_resolved_device,
-                rows_seed=rows_seed,
-                plan_candidate_attempt=0,
-                dataset_index=dataset_index + offset,
-                num_datasets=num_datasets,
-                dataset_root=run_root.keyed("dataset", dataset_index + offset),
-            )
-            for offset in range(chunk_size)
-        ]
+        descriptors, descriptor_metrics = _resolve_heterogeneous_descriptor_window(
+            realized_config,
+            requested_device=requested_device,
+            resolved_device=validated_resolved_device,
+            rows_seed=rows_seed,
+            dataset_index=dataset_index,
+            window_size=chunk_size,
+            num_datasets=num_datasets,
+            run_root=run_root,
+        )
         if on_raw_batch_metrics is not None:
-            on_raw_batch_metrics(
-                {
-                    "heterogeneous_descriptor_resolution_elapsed_seconds": (
-                        time.perf_counter() - descriptor_start
-                    ),
-                    "heterogeneous_descriptor_resolution_cpu_time_seconds": (
-                        time.process_time() - descriptor_start_cpu
-                    ),
-                }
-            )
-        raw_batch_by_offset: list[DatasetBundle | None] = [None] * chunk_size
-        recoverable_failure_by_offset: list[RecoverableGenerationFailure | None] = [
-            None
-        ] * chunk_size
-        cohort_offsets_by_key: dict[tuple[object, ...], list[int]] = {}
-        cohort_order: list[tuple[object, ...]] = []
-        for offset, descriptor in enumerate(descriptors):
-            cohort_key = _raw_generation_cohort_key(descriptor)
-            if cohort_key not in cohort_offsets_by_key:
-                cohort_offsets_by_key[cohort_key] = []
-                cohort_order.append(cohort_key)
-            cohort_offsets_by_key[cohort_key].append(int(offset))
-
-        for cohort_key in cohort_order:
-            cohort_offsets = cohort_offsets_by_key[cohort_key]
-            cohort_descriptors = [descriptors[offset] for offset in cohort_offsets]
-            representative = cohort_descriptors[0]
-            grouped_noise_runtime = _group_noise_runtime_chunk(
-                representative.effective_config,
-                dataset_roots=[entry.dataset_root for entry in cohort_descriptors],
-                attempts=[0] * len(cohort_descriptors),
-            )
-            try:
-                grouped_raw_batches = _generate_grouped_raw_batches(
-                    representative.effective_config,
-                    representative.effective_plan.layout,
-                    execution_plan=representative.effective_plan.execution_plan,
-                    grouped_noise_runtime=grouped_noise_runtime,
-                    requested_device=requested_device,
-                    resolved_device=validated_resolved_device,
-                    noise_sigma_multiplier=float(
-                        representative.effective_shift.variance_sigma_multiplier
-                    ),
-                )
-            except ValueError as exc:
-                recoverable_failure = classify_recoverable_generation_failure(exc)
-                if recoverable_failure is None:
-                    raise
-                for offset in cohort_offsets:
-                    recoverable_failure_by_offset[offset] = recoverable_failure
-                continue
-            for grouped_batch in grouped_raw_batches:
-                group_dataset_offsets = [
-                    cohort_offsets[int(chunk_offset)]
-                    for chunk_offset in grouped_batch.chunk_offsets
-                ]
-                group_descriptors = [descriptors[offset] for offset in group_dataset_offsets]
-                group_runtime_metrics = dict(getattr(grouped_batch, "runtime_metrics", {}))
-                finalized_group, finalized_failures = _finalize_generated_chunk_variable_schema(
-                    representative.effective_plan.layout,
-                    configs_by_batch=[entry.effective_config for entry in group_descriptors],
-                    shift_params_by_batch=[entry.effective_shift for entry in group_descriptors],
-                    dataset_roots=[entry.dataset_root for entry in group_descriptors],
-                    attempt=grouped_batch.attempt,
-                    attempts_used=grouped_batch.attempt + 1,
-                    device=grouped_batch.effective_resolved_device,
-                    n_train=int(representative.effective_plan.n_train),
-                    n_test=int(representative.effective_plan.n_test),
-                    requested_device=requested_device,
-                    resolved_device=grouped_batch.effective_resolved_device,
-                    device_fallback_reason=grouped_batch.device_fallback_reason,
-                    x=grouped_batch.x_batch,
-                    y=grouped_batch.y_batch,
-                    aux_meta_batch=grouped_batch.aux_meta_batch,
-                    noise_runtime_selection=grouped_batch.selection,
-                    dtype=dtype,
-                    runtime_metrics_out=group_runtime_metrics,
-                )
-                if on_raw_batch_metrics is not None:
-                    on_raw_batch_metrics(group_runtime_metrics)
-                for local_index, offset in enumerate(group_dataset_offsets):
-                    raw_batch_by_offset[offset] = finalized_group[local_index]
-                    recoverable_failure_by_offset[offset] = finalized_failures[local_index]
-
-        for offset, descriptor in enumerate(descriptors):
-            bundle = raw_batch_by_offset[offset]
-            if bundle is None:
-                recoverable_failure = recoverable_failure_by_offset[offset]
-                if (
-                    recoverable_failure is not None
-                    and recoverable_failure.retry_scope
-                    == RECOVERABLE_RETRY_SCOPE_NEXT_PLAN_CANDIDATE
-                ):
-                    descriptor, bundle = _generate_heterogeneous_bundle_with_plan_candidates(
-                        realized_config,
-                        requested_device=requested_device,
-                        resolved_device=validated_resolved_device,
-                        rows_seed=rows_seed,
-                        dataset_index=int(descriptor.dataset_index),
-                        num_datasets=num_datasets,
-                        dataset_root=descriptor.dataset_root,
-                        initial_descriptor=None,
-                        initial_start_attempt=0,
-                        start_candidate_attempt=_next_plan_candidate_attempt_for_descriptor(
-                            descriptor
-                        ),
-                        on_raw_batch_metrics=on_raw_batch_metrics,
-                    )
-                else:
-                    descriptor, bundle = _generate_heterogeneous_bundle_with_plan_candidates(
-                        realized_config,
-                        requested_device=requested_device,
-                        resolved_device=validated_resolved_device,
-                        rows_seed=rows_seed,
-                        dataset_index=int(descriptor.dataset_index),
-                        num_datasets=num_datasets,
-                        dataset_root=descriptor.dataset_root,
-                        initial_descriptor=descriptor,
-                        initial_start_attempt=1,
-                        start_candidate_attempt=_next_plan_candidate_attempt_for_descriptor(
-                            descriptor
-                        ),
-                        on_raw_batch_metrics=on_raw_batch_metrics,
-                    )
-                descriptors[offset] = descriptor
-            _annotate_fixed_layout_metadata(
-                bundle,
-                plan=descriptor.effective_plan,
-                layout_mode="heterogeneous",
-            )
+            on_raw_batch_metrics(descriptor_metrics)
+        for _descriptor, bundle in _execute_heterogeneous_descriptor_chunk(
+            realized_config,
+            descriptors=descriptors,
+            requested_device=requested_device,
+            resolved_device=validated_resolved_device,
+            rows_seed=rows_seed,
+            num_datasets=num_datasets,
+            dtype=dtype,
+            layout_mode="heterogeneous",
+            on_raw_batch_metrics=on_raw_batch_metrics,
+        ):
             yield bundle
         dataset_index += chunk_size
+
+
+def _generate_batch_with_stratified_layout_iter(
+    config: GeneratorConfig,
+    *,
+    num_datasets: int,
+    seed: int | None = None,
+    device: str | None = None,
+    batch_size: int | None = None,
+    on_raw_batch_metrics: Callable[[dict[str, float]], None] | None = None,
+) -> Iterator[DatasetBundle]:
+    """Yield datasets from a stratified heterogeneous scheduler."""
+
+    realized_config, run_seed, requested_device, validated_resolved_device = (
+        realize_generation_config_for_run(
+            config,
+            seed=seed,
+            device=device,
+            prefer_cpu_for_mps_auto=True,
+        )
+    )
+    run_root = KeyedRng(run_seed)
+    rows_seed = run_root.child_seed("rows")
+    dtype = _torch_dtype(realized_config)
+    lookahead_size = _resolve_stratified_lookahead_size(
+        realized_config,
+        rows_seed=rows_seed,
+        num_datasets=num_datasets,
+        batch_size=batch_size,
+    )
+
+    dataset_index = 0
+    while dataset_index < num_datasets:
+        window_size = min(int(lookahead_size), num_datasets - dataset_index)
+        descriptors, descriptor_metrics = _resolve_heterogeneous_descriptor_window(
+            realized_config,
+            requested_device=requested_device,
+            resolved_device=validated_resolved_device,
+            rows_seed=rows_seed,
+            dataset_index=dataset_index,
+            window_size=window_size,
+            num_datasets=num_datasets,
+            run_root=run_root,
+        )
+        if on_raw_batch_metrics is not None:
+            on_raw_batch_metrics(descriptor_metrics)
+
+        scheduler_start = time.perf_counter()
+        scheduler_start_cpu = time.process_time()
+        stratum_offsets_by_key: dict[tuple[int, int], list[int]] = {}
+        stratum_first_index_by_key: dict[tuple[int, int], int] = {}
+        for offset, descriptor in enumerate(descriptors):
+            stratum_key = _stratified_descriptor_key(descriptor)
+            stratum_offsets_by_key.setdefault(stratum_key, []).append(int(offset))
+            stratum_first_index_by_key.setdefault(stratum_key, int(descriptor.dataset_index))
+
+        ordered_strata = sorted(
+            stratum_offsets_by_key,
+            key=lambda key: (
+                -len(stratum_offsets_by_key[key]),
+                int(stratum_first_index_by_key[key]),
+            ),
+        )
+
+        window_metrics: dict[str, float] = {
+            "stratified_descriptor_window_fill_ratio_sum": (
+                float(window_size) / float(max(1, int(lookahead_size)))
+            ),
+            "stratified_descriptor_window_count": 1.0,
+        }
+        bundles_by_dataset_index: dict[int, DatasetBundle] = {}
+
+        for stratum_key in ordered_strata:
+            stratum_offsets = stratum_offsets_by_key[stratum_key]
+            stratum_size = len(stratum_offsets)
+            _accumulate_optional_runtime_metric(
+                window_metrics, "stratified_stratum_size_sum", stratum_size
+            )
+            _accumulate_optional_runtime_metric(window_metrics, "stratified_stratum_count", 1.0)
+            _accumulate_optional_runtime_metric(
+                window_metrics,
+                _size_bucket_metric_key("stratified_stratum_size", stratum_size),
+                1.0,
+            )
+            n_rows, n_features = stratum_key
+            microbatch_size = _resolve_stratified_microbatch_size(
+                realized_config,
+                n_rows=int(n_rows),
+                n_features=int(n_features),
+                num_datasets=stratum_size,
+                batch_size=batch_size,
+            )
+            for start in range(0, stratum_size, max(1, int(microbatch_size))):
+                micro_offsets = stratum_offsets[start : start + max(1, int(microbatch_size))]
+                micro_size = len(micro_offsets)
+                _accumulate_optional_runtime_metric(
+                    window_metrics,
+                    "stratified_executed_microbatch_size_sum",
+                    micro_size,
+                )
+                _accumulate_optional_runtime_metric(
+                    window_metrics,
+                    "stratified_executed_microbatch_count",
+                    1.0,
+                )
+                _accumulate_optional_runtime_metric(
+                    window_metrics,
+                    _size_bucket_metric_key("stratified_microbatch_size", micro_size),
+                    1.0,
+                )
+                if micro_size == 1:
+                    _accumulate_optional_runtime_metric(
+                        window_metrics,
+                        "stratified_scalar_fallback_dataset_count",
+                        1.0,
+                    )
+                micro_descriptors = [descriptors[offset] for offset in micro_offsets]
+                for descriptor, bundle in _execute_heterogeneous_descriptor_chunk(
+                    realized_config,
+                    descriptors=micro_descriptors,
+                    requested_device=requested_device,
+                    resolved_device=validated_resolved_device,
+                    rows_seed=rows_seed,
+                    num_datasets=num_datasets,
+                    dtype=dtype,
+                    layout_mode="stratified",
+                    on_raw_batch_metrics=on_raw_batch_metrics,
+                ):
+                    bundles_by_dataset_index[int(descriptor.dataset_index)] = bundle
+
+        window_metrics["stratified_scheduler_elapsed_seconds"] = (
+            time.perf_counter() - scheduler_start
+        )
+        window_metrics["stratified_scheduler_cpu_time_seconds"] = (
+            time.process_time() - scheduler_start_cpu
+        )
+        if on_raw_batch_metrics is not None:
+            on_raw_batch_metrics(window_metrics)
+
+        for current_index in range(dataset_index, dataset_index + window_size):
+            bundle_candidate = bundles_by_dataset_index.get(int(current_index))
+            if bundle_candidate is None:
+                raise RuntimeError(
+                    "Missing stratified heterogeneous bundle for resolved dataset window."
+                )
+            yield bundle_candidate
+        dataset_index += window_size
 
 
 def _first_valid_classification_attempt_for_dataset(
@@ -1773,7 +2051,9 @@ def _generate_batch_with_plan_iter(
 __all__ = [
     "CanonicalFixedLayoutRun",
     "_fixed_layout_plan_supports_classification_run",
+    "_generate_batch_with_heterogeneous_layout_iter",
     "_generate_batch_with_plan_iter",
+    "_generate_batch_with_stratified_layout_iter",
     "_replay_emitted_fixed_layout_plan",
     "_resolve_fixed_layout_batch_size",
     "_sample_fixed_layout",

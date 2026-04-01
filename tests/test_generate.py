@@ -120,6 +120,12 @@ def _tiny_heterogeneous_regression_config() -> GeneratorConfig:
     return cfg
 
 
+def _tiny_stratified_regression_config() -> GeneratorConfig:
+    cfg = _tiny_heterogeneous_regression_config()
+    cfg.runtime.layout_mode = "stratified"
+    return cfg
+
+
 def _layout_stub(
     *,
     feature_types: list[str],
@@ -203,6 +209,56 @@ def test_generate_batch_heterogeneous_request_run_identity_is_run_stable() -> No
 
     assert len(set(request_run_a)) == 1
     assert request_run_a == request_run_b
+
+
+def test_generate_batch_stratified_run_is_reproducible_and_tagged() -> None:
+    cfg = _tiny_stratified_regression_config()
+
+    batch_a = generate_batch(cfg, num_datasets=4, seed=321, device="cpu")
+    batch_b = generate_batch(cfg, num_datasets=4, seed=321, device="cpu")
+
+    assert [bundle.metadata["layout_mode"] for bundle in batch_a] == ["stratified"] * 4
+    for bundle_a, bundle_b in zip(batch_a, batch_b, strict=True):
+        assert bundle_a.metadata["dataset_id"] == bundle_b.metadata["dataset_id"]
+        assert bundle_a.metadata["split_groups"] == bundle_b.metadata["split_groups"]
+        assert bundle_a.feature_types == bundle_b.feature_types
+        assert torch.equal(bundle_a.X_train, bundle_b.X_train)
+        assert torch.equal(bundle_a.y_train, bundle_b.y_train)
+        assert torch.equal(bundle_a.X_test, bundle_b.X_test)
+        assert torch.equal(bundle_a.y_test, bundle_b.y_test)
+
+
+def test_generate_batch_stratified_matches_heterogeneous_outputs_for_same_seed() -> None:
+    heterogeneous = _tiny_heterogeneous_regression_config()
+    stratified = _tiny_stratified_regression_config()
+
+    heterogeneous_batch = generate_batch(heterogeneous, num_datasets=6, seed=912, device="cpu")
+    stratified_batch = generate_batch(stratified, num_datasets=6, seed=912, device="cpu")
+
+    for heterogeneous_bundle, stratified_bundle in zip(
+        heterogeneous_batch,
+        stratified_batch,
+        strict=True,
+    ):
+        assert (
+            heterogeneous_bundle.metadata["dataset_id"] == stratified_bundle.metadata["dataset_id"]
+        )
+        assert (
+            heterogeneous_bundle.metadata["split_groups"]
+            == stratified_bundle.metadata["split_groups"]
+        )
+        assert heterogeneous_bundle.feature_types == stratified_bundle.feature_types
+        assert torch.equal(heterogeneous_bundle.X_train, stratified_bundle.X_train)
+        assert torch.equal(heterogeneous_bundle.y_train, stratified_bundle.y_train)
+        assert torch.equal(heterogeneous_bundle.X_test, stratified_bundle.X_test)
+        assert torch.equal(heterogeneous_bundle.y_test, stratified_bundle.y_test)
+
+
+def test_generate_batch_rejects_removed_public_fixed_layout_mode() -> None:
+    cfg = _tiny_regression_config()
+
+    with pytest.raises(ValueError, match="runtime\\.layout_mode: stratified"):
+        list(generate_batch_iter(cfg, num_datasets=2, seed=5, device="cpu"))
 
 
 def test_generate_batch_heterogeneous_run_can_vary_structural_schema() -> None:
@@ -4675,6 +4731,7 @@ def test_resolve_split_indices_prefers_cuda_before_cpu_fallback(
 def test_stratified_split_ensures_valid_class_split_with_many_classes() -> None:
     """High n_classes with low n_test should not fail with stratified splitting."""
     cfg = _tiny_config()
+    cfg.runtime.layout_mode = "stratified"
     cfg.dataset.task = "classification"
     cfg.dataset.n_classes_min = 10
     cfg.dataset.n_classes_max = 10
@@ -4702,6 +4759,7 @@ def test_stratified_split_ensures_valid_class_split_with_many_classes() -> None:
 
 def test_metadata_n_classes_uses_realized_class_count_for_classification() -> None:
     cfg = _tiny_config()
+    cfg.runtime.layout_mode = "stratified"
     cfg.dataset.task = "classification"
     cfg.dataset.n_classes_min = 32
     cfg.dataset.n_classes_max = 32
@@ -4743,6 +4801,7 @@ def test_generate_retries_when_stratified_split_is_infeasible(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cfg = _tiny_config()
+    cfg.runtime.layout_mode = "stratified"
     cfg.dataset.task = "classification"
     cfg.filter.max_attempts = 2
 
@@ -6117,6 +6176,7 @@ def test_generate_fixed_layout_bundle_with_retries_reuses_cached_finalization_co
         dtype: torch.dtype,
         preserve_feature_schema: bool = False,
         finalization_context=None,
+        runtime_metrics_out: dict[str, float] | None = None,
     ) -> DatasetBundle:
         _ = attempt
         _ = attempts_used
@@ -6134,6 +6194,7 @@ def test_generate_fixed_layout_bundle_with_retries_reuses_cached_finalization_co
         _ = noise_runtime_selection
         _ = dtype
         _ = preserve_feature_schema
+        _ = runtime_metrics_out
         seen_contexts.append(finalization_context)
         return DatasetBundle(
             X_train=torch.zeros((cfg.dataset.n_train, 2), dtype=torch.float32),

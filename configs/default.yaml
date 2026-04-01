@@ -73,3 +73,4 @@ filter:
   stump_skill_threshold: null
   use_lineage_veto: true
   max_attempts: 3
+  n_jobs: 1

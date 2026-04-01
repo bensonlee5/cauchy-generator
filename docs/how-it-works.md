@@ -332,7 +332,8 @@ Current public postprocess behavior:
 
 - Public generation defaults to heterogeneous per-dataset layouts, so emitted
   schema may vary within one run.
-- Explicit fixed mode preserves emitted schema across the run.
+- Stratified mode batches compatible heterogeneous strata without forcing one
+  emitted schema across the run.
 - Classification runs emit bundles as they are finalized; a later dataset can
   still exhaust the retry budget after earlier bundles have already been
   emitted.

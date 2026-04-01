@@ -10,6 +10,29 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.18.1] - 2026-04-01
+
+### Changed
+
+- Deferred filtering now defaults `filter.n_jobs` to `1` instead of `-1`.
+  Explicit `filter.n_jobs: -1` remains supported for users who still want the
+  prior all-core sklearn behavior.
+
+## [0.18.0] - 2026-04-01
+
+### Changed
+
+- **BREAKING:** Public generation no longer supports `runtime.layout_mode: fixed`.
+  Use `runtime.layout_mode: stratified` for throughput-sensitive heterogeneous
+  runs while preserving per-dataset layout and plan diversity.
+- Added public `runtime.layout_mode: stratified`, a rolling-window
+  heterogeneous scheduler that groups datasets by exact `(n_rows, n_features)`
+  strata, sizes stratum microbatches from the target-cell budget, and records
+  stratification fill/fallback metrics for throughput probes.
+- Added `run_stratified_throughput_benchmark(...)` so throughput tooling can
+  measure the new public stratified path separately from the fully
+  heterogeneous baseline.
+
 ## [0.17.1] - 2026-04-01
 
 ### Changed

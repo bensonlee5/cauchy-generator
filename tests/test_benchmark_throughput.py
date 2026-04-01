@@ -9,6 +9,7 @@ from dagzoo.bench.micro import run_microbenchmarks
 from dagzoo.bench.throughput import (
     run_fixed_layout_target_cells_sweep,
     run_heterogeneous_throughput_benchmark,
+    run_stratified_throughput_benchmark,
     run_throughput_benchmark,
 )
 from dagzoo.config import GeneratorConfig
@@ -601,6 +602,82 @@ def test_run_heterogeneous_throughput_benchmark_aggregates_stage_metrics(monkeyp
     assert result["heterogeneous_split_resolution_elapsed_seconds"] == pytest.approx(0.3)
     assert result["heterogeneous_postprocess_elapsed_seconds"] == pytest.approx(0.2)
     assert result["heterogeneous_metadata_finalization_elapsed_seconds"] == pytest.approx(0.1)
+
+
+def test_run_stratified_throughput_benchmark_aggregates_scheduler_metrics(monkeypatch) -> None:
+    iter_calls: list[tuple[int, int, str | None, bool]] = []
+    sync_calls: list[str | None] = []
+
+    def _stub_realize_generation_config_for_run(
+        config: GeneratorConfig,
+        *,
+        seed: int | None = None,
+        device: str | None = None,
+        prefer_cpu_for_mps_auto: bool = False,
+    ):
+        assert prefer_cpu_for_mps_auto is True
+        return config, int(seed or 0), str(device or config.runtime.device), "cpu"
+
+    def _stub_generate_batch_with_stratified_layout_iter(
+        _config,
+        *,
+        num_datasets: int,
+        seed: int | None = None,
+        device: str | None = None,
+        batch_size: int | None = None,
+        on_raw_batch_metrics=None,
+    ):
+        _ = batch_size
+        iter_calls.append((num_datasets, int(seed or 0), device, on_raw_batch_metrics is not None))
+        if on_raw_batch_metrics is not None:
+            on_raw_batch_metrics(
+                {
+                    "stratified_descriptor_window_fill_ratio_sum": 1.0,
+                    "stratified_descriptor_window_count": 1.0,
+                    "stratified_stratum_size_sum": 6.0,
+                    "stratified_stratum_count": 2.0,
+                    "stratified_executed_microbatch_size_sum": 6.0,
+                    "stratified_executed_microbatch_count": 3.0,
+                    "stratified_scalar_fallback_dataset_count": 1.0,
+                    "stratified_scheduler_elapsed_seconds": 0.25,
+                    "stratified_scheduler_cpu_time_seconds": 0.1,
+                }
+            )
+        yield from range(num_datasets)
+
+    monkeypatch.setattr(
+        "dagzoo.bench.throughput.realize_generation_config_for_run",
+        _stub_realize_generation_config_for_run,
+    )
+    monkeypatch.setattr(
+        "dagzoo.bench.throughput._generate_batch_with_stratified_layout_iter",
+        _stub_generate_batch_with_stratified_layout_iter,
+    )
+    monkeypatch.setattr(
+        "dagzoo.bench.throughput._synchronize_accelerator",
+        lambda device: sync_calls.append(device),
+    )
+
+    cfg = GeneratorConfig()
+    result = run_stratified_throughput_benchmark(
+        cfg,
+        num_datasets=4,
+        warmup_datasets=2,
+        device="auto",
+    )
+
+    assert iter_calls == [
+        (2, KeyedRng(cfg.seed).child_seed("bench", "throughput", "warmup"), "auto", False),
+        (4, KeyedRng(cfg.seed).child_seed("bench", "throughput", "measure"), "auto", True),
+    ]
+    assert sync_calls == ["cpu", "cpu"]
+    assert result["generation_mode"] == "heterogeneous_stratified"
+    assert result["stratified_descriptor_window_fill_ratio_sum"] == pytest.approx(1.0)
+    assert result["stratified_descriptor_window_count"] == pytest.approx(1.0)
+    assert result["stratified_stratum_size_sum"] == pytest.approx(6.0)
+    assert result["stratified_executed_microbatch_size_sum"] == pytest.approx(6.0)
+    assert result["stratified_scalar_fallback_dataset_count"] == pytest.approx(1.0)
+    assert result["stratified_scheduler_elapsed_seconds"] == pytest.approx(0.25)
 
 
 def test_run_microbenchmarks_emits_heterogeneous_generate_one_metric(

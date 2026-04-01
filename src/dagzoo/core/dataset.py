@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
-from dagzoo.config import LAYOUT_MODE_FIXED, GeneratorConfig
+from dagzoo.config import LAYOUT_MODE_FIXED, LAYOUT_MODE_STRATIFIED, GeneratorConfig
 from dagzoo.config.models import SteeringStageConfig, steering_stage_definitions
 from dagzoo.core.fixed_layout.prepare import (
     normalize_fixed_layout_target_cells,
@@ -15,7 +15,7 @@ from dagzoo.core.fixed_layout.runtime import (
     CanonicalFixedLayoutRun,
     _generate_batch_with_heterogeneous_layout_iter,
     _generate_batch_with_plan_iter,
-    prepare_canonical_fixed_layout_run,
+    _generate_batch_with_stratified_layout_iter,
 )
 from dagzoo.core.identity import (
     canonical_dataset_id,
@@ -44,6 +44,11 @@ def _validate_public_generation_config(config: GeneratorConfig) -> None:
         raise ValueError(
             "Inline filtering has been removed from generate. Set filter.enabled=false and run "
             "`dagzoo filter --in <shard_dir> --out <out_dir>` after generation."
+        )
+    if str(config.runtime.layout_mode) == str(LAYOUT_MODE_FIXED):
+        raise ValueError(
+            "Public `runtime.layout_mode: fixed` has been removed. Use "
+            "`runtime.layout_mode: stratified` for throughput-sensitive heterogeneous runs."
         )
 
 
@@ -404,16 +409,6 @@ def generate_batch_iter(
         return
     _validate_public_generation_config(config)
 
-    if str(config.runtime.layout_mode) == str(LAYOUT_MODE_FIXED):
-        prepared = prepare_canonical_fixed_layout_run(
-            config,
-            num_datasets=num_datasets,
-            seed=seed,
-            device=device,
-        )
-        yield from _iter_prepared_canonical_batch_iter(prepared, num_datasets=num_datasets)
-        return
-
     realized_config, run_seed, _requested_device, resolved_device = (
         realize_generation_config_for_run(
             config,
@@ -431,11 +426,20 @@ def generate_batch_iter(
         ),
     )
     for dataset_index, bundle in enumerate(
-        _generate_batch_with_heterogeneous_layout_iter(
-            config,
-            num_datasets=num_datasets,
-            seed=seed,
-            device=device,
+        (
+            _generate_batch_with_stratified_layout_iter(
+                config,
+                num_datasets=num_datasets,
+                seed=seed,
+                device=device,
+            )
+            if str(config.runtime.layout_mode) == str(LAYOUT_MODE_STRATIFIED)
+            else _generate_batch_with_heterogeneous_layout_iter(
+                config,
+                num_datasets=num_datasets,
+                seed=seed,
+                device=device,
+            )
         )
     ):
         yield _annotate_heterogeneous_batch_metadata(

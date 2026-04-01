@@ -47,8 +47,10 @@ Each generate run writes `effective_config.yaml` and `effective_config_trace.yam
 under the resolved output directory.
 `dagzoo generate` defaults to fully heterogeneous per-dataset plan sampling, so
 datasets in the same run may differ in feature schema, lineage assignments, and
-target node choice. Set `runtime.layout_mode: fixed` when you want one shared
-fixed-layout plan across the run. On Apple hardware, heterogeneous
+target node choice. Set `runtime.layout_mode: stratified` when you want the
+generator to batch large heterogeneous runs by exact `(n_rows, n_features)`
+strata while keeping per-dataset layouts and execution plans independent. On
+Apple hardware, heterogeneous and stratified
 `device=auto` now resolves to CPU instead of MPS because the public
 heterogeneous path is typically faster there; pass `--device mps` only when you
 want to force the MPS backend explicitly.
@@ -68,7 +70,9 @@ lineage artifacts. The main tuning knobs are `ease_k_small`,
 optional `stump_skill_threshold`, and `use_lineage_veto`. Replay-time CLI
 overrides include both `--lineage-veto` and `--no-lineage-veto` when you need
 to force structural veto behavior instead of inheriting the embedded shard
-config.
+config. The default filter execution now uses one sklearn worker
+(`filter.n_jobs: 1`); set `filter.n_jobs: -1` explicitly when you want the
+older all-core behavior.
 
 ```bash
 dagzoo filter --in data/run1 --out data/run1_filter
@@ -133,19 +137,19 @@ Default mode:
 - emits `group_ids.cohort` instead of `group_ids.layout_plan`
 - on Apple hardware, `device=auto` prefers CPU over MPS for this mode
 
-Opt-in fixed mode:
+Opt-in stratified mode:
 
-- `runtime.layout_mode: fixed`
-- keeps one shared fixed-layout plan across the run
-- preserves aligned emitted feature schema within that run
-- emits `group_ids.layout_plan`
+- `runtime.layout_mode: stratified`
+- keeps per-dataset layout and execution-plan sampling
+- batches compatible exact `(n_rows, n_features)` strata within a rolling window
+- still emits `group_ids.cohort`
 
 ### PyTorch bridge
 
 Use the PyTorch bridge when you want the same public generation semantics in an
 in-process training loop instead of persisted shard outputs. The bridge follows
 `runtime.layout_mode`, so it defaults to heterogeneous runs and can be pinned to
-fixed mode when you need aligned schema.
+stratified mode for large throughput-sensitive heterogeneous corpora.
 
 `build_dataloader(...)` is the recommended public entrypoint for most users.
 `DagzooDataset` is the lower-level iterable dataset when you need direct

@@ -407,7 +407,7 @@ def _apply_extra_trees_filter_numpy(
     min_target_relevant_feature_fraction: float = 0.05,
     classification_kappa_threshold: float = 0.0,
     classification_require_prediction_diversity: bool = True,
-    n_jobs: int = -1,
+    n_jobs: int = 1,
 ) -> tuple[bool, dict[str, Any]]:
     """Apply the small-shot ease filter from NumPy train/test arrays."""
 
@@ -727,7 +727,7 @@ def apply_extra_trees_filter(
     min_target_relevant_feature_fraction: float = 0.05,
     classification_kappa_threshold: float = 0.0,
     classification_require_prediction_diversity: bool = True,
-    n_jobs: int = -1,
+    n_jobs: int = 1,
 ) -> tuple[bool, dict[str, Any]]:
     """Apply the small-shot ease filter from torch train/test tensors."""
 

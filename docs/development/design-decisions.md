@@ -148,9 +148,10 @@ legacy dynamic engine.
 ### Decision
 
 Public `generate_one`, `generate_batch`, and `generate_batch_iter` now default
-to fully heterogeneous per-dataset layout/plan sampling. Explicit
-`runtime.layout_mode: fixed` keeps the shared fixed-layout path available for
-schema-aligned batching and throughput-sensitive workflows.
+to fully heterogeneous per-dataset layout/plan sampling. Public
+`runtime.layout_mode: stratified` keeps the same per-dataset layout/plan
+semantics while batching large runs by compatible `(n_rows, n_features)`
+strata.
 
 ### Rationale
 
@@ -159,9 +160,9 @@ schema-aligned batching and throughput-sensitive workflows.
   scaffold.
 - **Deterministic reproducibility** — one run seed still yields deterministic
   dataset-level outputs and stable request/cohort identities.
-- **Explicit fixed escape hatch** — users who need aligned columns or higher
-  throughput can still opt into the fixed-layout contract without a separate
-  public workflow.
+- **Explicit stratified escape hatch** — users who need higher throughput on
+  very large heterogeneous corpora can still opt into batching without a
+  separate public workflow or a shared-layout approximation.
 
 ### Alternatives considered
 
