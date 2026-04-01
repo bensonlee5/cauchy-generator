@@ -158,11 +158,12 @@ per dataset. Current record keys are:
 
 ### `group_ids` sub-object
 
-Present for canonical fixed-layout outputs.
+Present when public grouping ids are available.
 
 | Key           | Type | Description                                                    |
 | ------------- | ---- | -------------------------------------------------------------- |
-| `request_run` | str  | Stable grouping key for one canonical run                      |
+| `request_run` | str  | Stable grouping key for one requested public run               |
+| `cohort`      | str  | Stable grouping key for heterogeneous raw-generation cohorts   |
 | `layout_plan` | str  | Stable grouping key for datasets sharing one fixed-layout plan |
 
 ### `target_relevance` sub-object
@@ -211,7 +212,7 @@ handoff_root/
 | Key                  | Type   | Description                                                                          |
 | -------------------- | ------ | ------------------------------------------------------------------------------------ |
 | `schema_name`        | str    | Exact string `dagzoo_generate_handoff_manifest`                                      |
-| `schema_version`     | int    | Exact integer `3`                                                                    |
+| `schema_version`     | int    | Exact integer `4`                                                                    |
 | `identity`           | object | Stable generate-run and corpus ids plus source-family tag                            |
 | `artifacts_relative` | object | Manifest-relative artifact paths for portable downstream consumption                 |
 | `summary`            | object | Generated dataset count                                                              |
@@ -222,6 +223,11 @@ Current `identity` keys:
 - `source_family`
 - `generate_run_id`
 - `generated_corpus_id`
+
+Current `identity.source_family` values:
+
+- `dagzoo.heterogeneous_scm`
+- `dagzoo.fixed_layout_scm`
 
 Current `artifacts_relative` keys:
 
@@ -350,9 +356,10 @@ a SHA-256 checksum recorded in the compact lineage payload.
 
 **Postprocessing invariants**:
 
-- Canonical generation (`generate_one`, `generate_batch`, `generate_batch_iter`)
-  is fixed-layout-backed and preserves emitted feature schema across the run:
-  constant-column removal and feature-column permutation are disabled.
+- Default public generation may vary emitted feature schema across one run.
+- Explicit fixed mode (`runtime.layout_mode: fixed`) preserves emitted feature
+  schema across the run: constant-column removal and feature-column permutation
+  are disabled.
 - Numeric features are clipped and standardized to approximately zero mean and
   unit variance.
 - Classification target classes are randomly permuted; label indices carry no

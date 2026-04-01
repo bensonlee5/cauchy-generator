@@ -37,6 +37,10 @@ from dagzoo.core.validation import (
     _classification_split_valid,
     _stratified_split_indices,
 )
+from dagzoo.filtering.structural_validity import (
+    StructuralValidityConfig,
+    evaluate_layout_structural_validity,
+)
 from dagzoo.rng import KeyedRng
 from dagzoo.types import DatasetBundle
 
@@ -81,8 +85,8 @@ class CanonicalFixedLayoutRun:
 
 
 @dataclass(slots=True)
-class _SteeredDatasetDescriptor:
-    """Resolved steering state and fixed-layout runtime inputs for one dataset."""
+class _ResolvedDatasetDescriptor:
+    """Resolved per-dataset generation state for one public runtime path."""
 
     dataset_index: int
     dataset_root: KeyedRng
@@ -90,6 +94,17 @@ class _SteeredDatasetDescriptor:
     effective_plan: _FixedLayoutPlan
     effective_shift: ShiftRuntimeParams
     finalization_context: _FixedSchemaFinalizationContext
+
+
+class InvalidStructuralLayoutError(ValueError):
+    """Raised when a sampled layout violates always-on structural validity rules."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = str(reason)
+
+
+_MIN_STRUCTURAL_PLAN_CANDIDATE_ATTEMPTS = 5
 
 
 def _noise_config_signature(config: GeneratorConfig) -> tuple[object, ...]:
@@ -111,10 +126,10 @@ def _noise_config_signature(config: GeneratorConfig) -> tuple[object, ...]:
     )
 
 
-def _steered_raw_generation_cohort_key(
-    descriptor: _SteeredDatasetDescriptor,
+def _raw_generation_cohort_key(
+    descriptor: _ResolvedDatasetDescriptor,
 ) -> tuple[object, ...]:
-    """Return the raw-generation contract key for one steered dataset descriptor."""
+    """Return the raw-generation contract key for one resolved dataset descriptor."""
 
     return (
         str(descriptor.effective_plan.layout_signature),
@@ -125,6 +140,31 @@ def _steered_raw_generation_cohort_key(
         *_noise_config_signature(descriptor.effective_config),
         float(descriptor.effective_shift.variance_sigma_multiplier),
     )
+
+
+def _structural_validity_checks(config: GeneratorConfig) -> StructuralValidityConfig:
+    return StructuralValidityConfig(
+        min_target_indegree=int(config.filter.min_target_indegree),
+        min_target_relevant_feature_count=int(config.filter.min_target_relevant_feature_count),
+        min_target_relevant_feature_fraction=float(
+            config.filter.min_target_relevant_feature_fraction
+        ),
+    )
+
+
+def _plan_candidate_attempt_budget(config: GeneratorConfig) -> int:
+    """Return the internal layout-plan sampling retry budget."""
+
+    return max(_MIN_STRUCTURAL_PLAN_CANDIDATE_ATTEMPTS, int(config.filter.max_attempts))
+
+
+def _validate_sampled_layout_structure(config: GeneratorConfig, *, layout: LayoutPlan) -> None:
+    structural_result = evaluate_layout_structural_validity(
+        layout,
+        checks=_structural_validity_checks(config),
+    )
+    if not structural_result.valid:
+        raise InvalidStructuralLayoutError(str(structural_result.reason))
 
 
 def _normalized_keyed_replay_root_path(
@@ -149,14 +189,39 @@ def _normalized_keyed_replay_root_path(
 def _candidate_attempt_from_layout_root_path(layout_root_path: list[str | int]) -> int:
     """Return the fixed-layout candidate attempt encoded in one replay root path."""
 
-    if (
-        len(layout_root_path) >= 3
-        and layout_root_path[0] == "plan_candidate"
-        and isinstance(layout_root_path[1], int)
-        and layout_root_path[2] == "layout"
-    ):
-        return int(layout_root_path[1])
+    for index in range(len(layout_root_path) - 2):
+        if (
+            layout_root_path[index] == "plan_candidate"
+            and isinstance(layout_root_path[index + 1], int)
+            and layout_root_path[index + 2] == "layout"
+        ):
+            return int(layout_root_path[index + 1])
     return 0
+
+
+def _steering_candidate_root_paths(
+    *,
+    dataset_index: int,
+    candidate_attempt: int,
+) -> tuple[list[str | int], list[str | int]]:
+    """Return replay roots for one steering-resampled plan candidate."""
+
+    if int(candidate_attempt) <= 0:
+        return (
+            ["dataset", int(dataset_index), "steering", "layout"],
+            ["dataset", int(dataset_index), "steering", "execution_plan"],
+        )
+    return (
+        ["dataset", int(dataset_index), "steering", "candidate", int(candidate_attempt), "layout"],
+        [
+            "dataset",
+            int(dataset_index),
+            "steering",
+            "candidate",
+            int(candidate_attempt),
+            "execution_plan",
+        ],
+    )
 
 
 def _replay_emitted_fixed_layout_plan(
@@ -211,6 +276,7 @@ def _replay_emitted_fixed_layout_plan(
     if normalized_steering_layout_root_path is not None:
         layout = _resample_layout_graph(
             layout,
+            config=effective_config,
             keyed_rng=run_root.keyed(*normalized_steering_layout_root_path),
             edge_logit_bias=float(effective_shift.edge_logit_bias_shift),
         )
@@ -358,17 +424,21 @@ def prepare_canonical_fixed_layout_run(
     )
     run_root = KeyedRng(run_seed)
     rows_seed = run_root.child_seed("rows")
-    attempts = max(1, int(realized_config.filter.max_attempts))
+    attempts = _plan_candidate_attempt_budget(realized_config)
     last_error = "unknown"
     for attempt in range(attempts):
         candidate_root = run_root.keyed("plan_candidate", attempt)
-        plan = _sample_fixed_layout_candidate(
-            realized_config,
-            keyed_rng=candidate_root,
-            rows_seed=rows_seed,
-            requested_device=requested_device,
-            resolved_device=resolved_device,
-        )
+        try:
+            plan = _sample_fixed_layout_candidate(
+                realized_config,
+                keyed_rng=candidate_root,
+                rows_seed=rows_seed,
+                requested_device=requested_device,
+                resolved_device=resolved_device,
+            )
+        except InvalidStructuralLayoutError as exc:
+            last_error = str(exc.reason)
+            continue
         effective_batch_size = _resolve_fixed_layout_batch_size(
             plan,
             num_datasets=max(1, int(num_datasets)),
@@ -422,6 +492,7 @@ def _sample_fixed_layout_once(
     _validate_fixed_layout_rows_mode(config)
     layout_seed = keyed_rng.child_seed("layout")
     layout = _sample_layout(config, keyed_rng.keyed("layout"), "cpu")
+    _validate_sampled_layout_structure(config, layout=layout)
     n_train, n_test = _resolve_split_sizes(config, dataset_seed=rows_seed)
     _validate_class_split_for_layout(config, layout=layout, n_train=n_train, n_test=n_test)
     shift_params = resolve_shift_runtime_params(config)
@@ -459,6 +530,7 @@ def _resolve_steered_plan_for_dataset(
     dataset_index: int,
     num_datasets: int,
     dataset_root: KeyedRng,
+    candidate_attempt: int = 0,
 ) -> tuple[GeneratorConfig, _FixedLayoutPlan]:
     """Resolve one effective config and fixed-layout plan for a steered dataset ordinal."""
 
@@ -483,13 +555,18 @@ def _resolve_steered_plan_for_dataset(
     ):
         return effective_config, base_plan
 
-    layout_root = dataset_root.keyed("steering", "layout")
+    steering_layout_root_path, steering_execution_plan_root_path = _steering_candidate_root_paths(
+        dataset_index=dataset_index,
+        candidate_attempt=candidate_attempt,
+    )
+    layout_root = dataset_root.keyed(*steering_layout_root_path[2:])
     layout = _resample_layout_graph(
         base_plan.layout,
+        config=effective_config,
         keyed_rng=layout_root,
         edge_logit_bias=float(effective_shift.edge_logit_bias_shift),
     )
-    execution_plan_root = dataset_root.keyed("steering", "execution_plan")
+    execution_plan_root = dataset_root.keyed(*steering_execution_plan_root_path[2:])
     execution_plan_seed = execution_plan_root.child_seed()
     execution_plan = build_fixed_layout_execution_plan(
         effective_config,
@@ -517,13 +594,8 @@ def _resolve_steered_plan_for_dataset(
             if base_plan.execution_plan_root_path is None
             else list(base_plan.execution_plan_root_path)
         ),
-        steering_layout_root_path=["dataset", int(dataset_index), "steering", "layout"],
-        steering_execution_plan_root_path=[
-            "dataset",
-            int(dataset_index),
-            "steering",
-            "execution_plan",
-        ],
+        steering_layout_root_path=list(steering_layout_root_path),
+        steering_execution_plan_root_path=list(steering_execution_plan_root_path),
     )
 
 
@@ -534,16 +606,35 @@ def _resolve_steered_dataset_descriptor(
     dataset_index: int,
     num_datasets: int,
     dataset_root: KeyedRng,
-) -> _SteeredDatasetDescriptor:
+) -> _ResolvedDatasetDescriptor:
     """Resolve one per-dataset steering descriptor for batched fixed-layout execution."""
 
-    effective_config, effective_plan = _resolve_steered_plan_for_dataset(
-        config,
-        base_plan=base_plan,
-        dataset_index=dataset_index,
-        num_datasets=num_datasets,
-        dataset_root=dataset_root,
-    )
+    attempts = _plan_candidate_attempt_budget(config)
+    last_error = "unknown"
+    effective_config: GeneratorConfig | None = None
+    effective_plan: _FixedLayoutPlan | None = None
+    resolved = False
+    for candidate_attempt in range(attempts):
+        effective_config, effective_plan = _resolve_steered_plan_for_dataset(
+            config,
+            base_plan=base_plan,
+            dataset_index=dataset_index,
+            num_datasets=num_datasets,
+            dataset_root=dataset_root,
+            candidate_attempt=candidate_attempt,
+        )
+        try:
+            _validate_sampled_layout_structure(effective_config, layout=effective_plan.layout)
+        except InvalidStructuralLayoutError as exc:
+            last_error = str(exc.reason)
+            continue
+        resolved = True
+        break
+    if not resolved or effective_config is None or effective_plan is None:
+        raise ValueError(
+            "Failed to resolve a structurally valid steered dataset descriptor after "
+            f"{attempts} attempts. Last reason: {last_error}."
+        )
     effective_shift = resolve_shift_runtime_params(effective_config)
     finalization_context = _build_fixed_schema_finalization_context(
         effective_config,
@@ -552,7 +643,7 @@ def _resolve_steered_dataset_descriptor(
         n_test=int(effective_plan.n_test),
         shift_params=effective_shift,
     )
-    return _SteeredDatasetDescriptor(
+    return _ResolvedDatasetDescriptor(
         dataset_index=int(dataset_index),
         dataset_root=dataset_root,
         effective_config=effective_config,
@@ -560,6 +651,149 @@ def _resolve_steered_dataset_descriptor(
         effective_shift=effective_shift,
         finalization_context=finalization_context,
     )
+
+
+def _resolve_heterogeneous_dataset_descriptor(
+    config: GeneratorConfig,
+    *,
+    requested_device: str,
+    resolved_device: str,
+    rows_seed: int,
+    plan_candidate_attempt: int,
+    dataset_index: int,
+    num_datasets: int,
+    dataset_root: KeyedRng,
+) -> _ResolvedDatasetDescriptor:
+    """Resolve one fully heterogeneous per-dataset plan and finalization context."""
+
+    effective_config = resolve_steering(
+        config,
+        dataset_index=dataset_index,
+        run_num_datasets=num_datasets,
+    ).config
+    candidate_attempts = _plan_candidate_attempt_budget(effective_config)
+    candidate_start = max(0, int(plan_candidate_attempt))
+    last_error = "unknown"
+    effective_plan: _FixedLayoutPlan | None = None
+    resolved_candidate_attempt = int(plan_candidate_attempt)
+    for candidate_attempt in range(candidate_start, candidate_attempts):
+        plan_root = dataset_root.keyed("plan_candidate", int(candidate_attempt))
+        try:
+            effective_plan = _sample_fixed_layout_once(
+                effective_config,
+                keyed_rng=plan_root,
+                rows_seed=rows_seed,
+                requested_device=requested_device,
+                resolved_device=resolved_device,
+            )
+        except InvalidStructuralLayoutError as exc:
+            last_error = str(exc.reason)
+            continue
+        resolved_candidate_attempt = int(candidate_attempt)
+        break
+    if effective_plan is None:
+        raise ValueError(
+            "Failed to resolve a structurally valid heterogeneous dataset descriptor after "
+            f"{candidate_attempts} attempts. Last reason: {last_error}."
+        )
+    effective_plan.layout_root_path = [
+        "dataset",
+        int(dataset_index),
+        "plan_candidate",
+        int(resolved_candidate_attempt),
+        "layout",
+    ]
+    effective_plan.execution_plan_root_path = [
+        "dataset",
+        int(dataset_index),
+        "plan_candidate",
+        int(resolved_candidate_attempt),
+        "execution_plan",
+    ]
+    effective_shift = resolve_shift_runtime_params(effective_config)
+    finalization_context = _build_fixed_schema_finalization_context(
+        effective_config,
+        effective_plan.layout,
+        n_train=int(effective_plan.n_train),
+        n_test=int(effective_plan.n_test),
+        shift_params=effective_shift,
+    )
+    return _ResolvedDatasetDescriptor(
+        dataset_index=int(dataset_index),
+        dataset_root=dataset_root,
+        effective_config=effective_config,
+        effective_plan=effective_plan,
+        effective_shift=effective_shift,
+        finalization_context=finalization_context,
+    )
+
+
+def _generate_heterogeneous_bundle_with_plan_candidates(
+    config: GeneratorConfig,
+    *,
+    requested_device: str,
+    resolved_device: str,
+    rows_seed: int,
+    dataset_index: int,
+    num_datasets: int,
+    dataset_root: KeyedRng,
+    initial_descriptor: _ResolvedDatasetDescriptor | None = None,
+    initial_start_attempt: int = 0,
+    start_candidate_attempt: int = 0,
+    on_raw_batch_metrics: Callable[[dict[str, float]], None] | None = None,
+) -> tuple[_ResolvedDatasetDescriptor, DatasetBundle]:
+    """Generate one heterogeneous bundle, resampling plan candidates when needed."""
+
+    last_error: Exception | None = None
+    if initial_descriptor is not None:
+        try:
+            return initial_descriptor, _generate_fixed_layout_bundle_with_retries(
+                initial_descriptor.effective_config,
+                plan=initial_descriptor.effective_plan,
+                dataset_root=initial_descriptor.dataset_root,
+                requested_device=requested_device,
+                resolved_device=resolved_device,
+                preserve_feature_schema=False,
+                start_attempt=initial_start_attempt,
+                finalization_context=initial_descriptor.finalization_context,
+                on_raw_batch_metrics=on_raw_batch_metrics,
+            )
+        except ValueError as exc:
+            last_error = exc
+
+    candidate_attempts = _plan_candidate_attempt_budget(config)
+    candidate_start = max(0, int(start_candidate_attempt))
+    for candidate_attempt in range(candidate_start, candidate_attempts):
+        descriptor = _resolve_heterogeneous_dataset_descriptor(
+            config,
+            requested_device=requested_device,
+            resolved_device=resolved_device,
+            rows_seed=rows_seed,
+            plan_candidate_attempt=candidate_attempt,
+            dataset_index=dataset_index,
+            num_datasets=num_datasets,
+            dataset_root=dataset_root,
+        )
+        try:
+            bundle = _generate_fixed_layout_bundle_with_retries(
+                descriptor.effective_config,
+                plan=descriptor.effective_plan,
+                dataset_root=descriptor.dataset_root,
+                requested_device=requested_device,
+                resolved_device=resolved_device,
+                preserve_feature_schema=False,
+                start_attempt=0,
+                finalization_context=descriptor.finalization_context,
+                on_raw_batch_metrics=on_raw_batch_metrics,
+            )
+            return descriptor, bundle
+        except ValueError as exc:
+            last_error = exc
+            continue
+
+    if last_error is not None:
+        raise last_error
+    raise ValueError("Failed to generate a heterogeneous dataset: no plan candidates were tried.")
 
 
 def _generate_batch_with_dynamic_steering_iter(
@@ -618,7 +852,7 @@ def _generate_batch_with_dynamic_steering_iter(
         cohort_offsets_by_key: dict[tuple[object, ...], list[int]] = {}
         cohort_order: list[tuple[object, ...]] = []
         for offset in zero_attempt_offsets:
-            cohort_key = _steered_raw_generation_cohort_key(descriptors[offset])
+            cohort_key = _raw_generation_cohort_key(descriptors[offset])
             if cohort_key not in cohort_offsets_by_key:
                 cohort_offsets_by_key[cohort_key] = []
                 cohort_order.append(cohort_key)
@@ -721,7 +955,7 @@ def _generate_batch_with_dynamic_steering_iter(
                         requested_device=requested_device,
                         resolved_device=validated_resolved_device,
                         preserve_feature_schema=True,
-                        start_attempt=max(1, int(chunk_attempts[offset])),
+                        start_attempt=int(chunk_attempts[offset]),
                         finalization_context=descriptor.finalization_context,
                         on_raw_batch_metrics=on_raw_batch_metrics,
                     )
@@ -763,6 +997,169 @@ def _raw_classification_labels_support_split(
     return _classification_split_valid(labels[train_idx_cpu], labels[test_idx_cpu])
 
 
+def _resolve_heterogeneous_batch_size(
+    config: GeneratorConfig,
+    *,
+    rows_seed: int,
+    num_datasets: int,
+    batch_size: int | None,
+) -> int:
+    """Resolve one conservative chunk size for heterogeneous public generation."""
+
+    effective_cap = (
+        None
+        if config.runtime.fixed_layout_batch_size_cap is None
+        else max(1, int(config.runtime.fixed_layout_batch_size_cap))
+    )
+    if batch_size is not None:
+        resolved = max(1, min(int(batch_size), int(num_datasets)))
+        return resolved if effective_cap is None else min(resolved, effective_cap)
+
+    n_train, n_test = _resolve_split_sizes(config, dataset_seed=rows_seed)
+    per_dataset_cells = max(
+        1,
+        int(n_train + n_test) * max(1, int(config.dataset.n_features_max)),
+    )
+    auto_batch = max(1, int(_effective_fixed_layout_target_cells(config)) // per_dataset_cells)
+    resolved = max(1, min(int(num_datasets), int(auto_batch)))
+    return resolved if effective_cap is None else min(resolved, effective_cap)
+
+
+def _generate_batch_with_heterogeneous_layout_iter(
+    config: GeneratorConfig,
+    *,
+    num_datasets: int,
+    seed: int | None = None,
+    device: str | None = None,
+    batch_size: int | None = None,
+    on_raw_batch_metrics: Callable[[dict[str, float]], None] | None = None,
+) -> Iterator[DatasetBundle]:
+    """Yield datasets from a fully heterogeneous per-dataset plan-sampling run."""
+
+    realized_config, run_seed, requested_device, validated_resolved_device = (
+        realize_generation_config_for_run(
+            config,
+            seed=seed,
+            device=device,
+        )
+    )
+    run_root = KeyedRng(run_seed)
+    rows_seed = run_root.child_seed("rows")
+    dtype = _torch_dtype(realized_config)
+    effective_batch_size = _resolve_heterogeneous_batch_size(
+        realized_config,
+        rows_seed=rows_seed,
+        num_datasets=num_datasets,
+        batch_size=batch_size,
+    )
+
+    dataset_index = 0
+    while dataset_index < num_datasets:
+        chunk_size = min(effective_batch_size, num_datasets - dataset_index)
+        descriptors = [
+            _resolve_heterogeneous_dataset_descriptor(
+                realized_config,
+                requested_device=requested_device,
+                resolved_device=validated_resolved_device,
+                rows_seed=rows_seed,
+                plan_candidate_attempt=0,
+                dataset_index=dataset_index + offset,
+                num_datasets=num_datasets,
+                dataset_root=run_root.keyed("dataset", dataset_index + offset),
+            )
+            for offset in range(chunk_size)
+        ]
+        raw_batch_by_offset: list[DatasetBundle | None] = [None] * chunk_size
+        cohort_offsets_by_key: dict[tuple[object, ...], list[int]] = {}
+        cohort_order: list[tuple[object, ...]] = []
+        for offset, descriptor in enumerate(descriptors):
+            cohort_key = _raw_generation_cohort_key(descriptor)
+            if cohort_key not in cohort_offsets_by_key:
+                cohort_offsets_by_key[cohort_key] = []
+                cohort_order.append(cohort_key)
+            cohort_offsets_by_key[cohort_key].append(int(offset))
+
+        for cohort_key in cohort_order:
+            cohort_offsets = cohort_offsets_by_key[cohort_key]
+            cohort_descriptors = [descriptors[offset] for offset in cohort_offsets]
+            representative = cohort_descriptors[0]
+            grouped_noise_runtime = _group_noise_runtime_chunk(
+                representative.effective_config,
+                dataset_roots=[entry.dataset_root for entry in cohort_descriptors],
+                attempts=[0] * len(cohort_descriptors),
+            )
+            grouped_raw_batches = _generate_grouped_raw_batches(
+                representative.effective_config,
+                representative.effective_plan.layout,
+                execution_plan=representative.effective_plan.execution_plan,
+                grouped_noise_runtime=grouped_noise_runtime,
+                requested_device=requested_device,
+                resolved_device=validated_resolved_device,
+                noise_sigma_multiplier=float(
+                    representative.effective_shift.variance_sigma_multiplier
+                ),
+            )
+            for grouped_batch in grouped_raw_batches:
+                if on_raw_batch_metrics is not None:
+                    on_raw_batch_metrics(dict(getattr(grouped_batch, "runtime_metrics", {})))
+                group_dataset_offsets = [
+                    cohort_offsets[int(chunk_offset)]
+                    for chunk_offset in grouped_batch.chunk_offsets
+                ]
+                for local_index, offset in enumerate(group_dataset_offsets):
+                    descriptor = descriptors[offset]
+                    try:
+                        raw_batch_by_offset[offset] = _finalize_generated_tensors(
+                            descriptor.effective_config,
+                            descriptor.effective_plan.layout,
+                            dataset_seed=descriptor.dataset_root.child_seed(),
+                            attempt=grouped_batch.attempt,
+                            attempts_used=grouped_batch.attempt + 1,
+                            dataset_root=descriptor.dataset_root,
+                            device=grouped_batch.effective_resolved_device,
+                            n_train=int(descriptor.effective_plan.n_train),
+                            n_test=int(descriptor.effective_plan.n_test),
+                            requested_device=requested_device,
+                            resolved_device=grouped_batch.effective_resolved_device,
+                            device_fallback_reason=grouped_batch.device_fallback_reason,
+                            x=grouped_batch.x_batch[local_index],
+                            y=grouped_batch.y_batch[local_index],
+                            aux_meta=grouped_batch.aux_meta_batch[local_index],
+                            shift_params=descriptor.effective_shift,
+                            noise_runtime_selection=grouped_batch.selection,
+                            dtype=dtype,
+                            preserve_feature_schema=False,
+                            finalization_context=descriptor.finalization_context,
+                        )
+                    except InvalidClassSplitError:
+                        raw_batch_by_offset[offset] = None
+
+        for offset, descriptor in enumerate(descriptors):
+            bundle = raw_batch_by_offset[offset]
+            if bundle is None:
+                descriptor, bundle = _generate_heterogeneous_bundle_with_plan_candidates(
+                    realized_config,
+                    requested_device=requested_device,
+                    resolved_device=validated_resolved_device,
+                    rows_seed=rows_seed,
+                    dataset_index=int(descriptor.dataset_index),
+                    num_datasets=num_datasets,
+                    dataset_root=descriptor.dataset_root,
+                    initial_descriptor=descriptor,
+                    initial_start_attempt=1,
+                    start_candidate_attempt=1,
+                    on_raw_batch_metrics=on_raw_batch_metrics,
+                )
+                descriptors[offset] = descriptor
+            _annotate_fixed_layout_metadata(
+                bundle,
+                plan=descriptor.effective_plan,
+                layout_mode="heterogeneous",
+            )
+            yield bundle
+        dataset_index += chunk_size
+
+
 def _first_valid_classification_attempt_for_dataset(
     config: GeneratorConfig,
     *,
@@ -780,7 +1177,7 @@ def _first_valid_classification_attempt_for_dataset(
         keyed_rng=dataset_root.keyed("noise_runtime"),
     )
     noise_spec = _noise_sampling_spec(noise_runtime_selection)
-    attempts = max(1, int(config.filter.max_attempts))
+    attempts = _plan_candidate_attempt_budget(config)
 
     for attempt in range(max(0, int(start_attempt)), attempts):
         y_batch, _aux_meta_batch = generate_fixed_layout_label_batch(
@@ -935,13 +1332,17 @@ def _sample_fixed_layout(
 
     for attempt in range(attempts):
         candidate_root = run_root.keyed("plan_candidate", attempt)
-        plan = _sample_fixed_layout_once(
-            config,
-            keyed_rng=candidate_root,
-            rows_seed=rows_seed,
-            requested_device=requested_device,
-            resolved_device=resolved_device,
-        )
+        try:
+            plan = _sample_fixed_layout_once(
+                config,
+                keyed_rng=candidate_root,
+                rows_seed=rows_seed,
+                requested_device=requested_device,
+                resolved_device=resolved_device,
+            )
+        except InvalidStructuralLayoutError as exc:
+            last_error = str(exc.reason)
+            continue
         if str(config.dataset.task) != "classification":
             return plan
         valid = False
@@ -1141,13 +1542,20 @@ def _generate_batch_with_plan_iter(
             offset for offset, attempt in enumerate(chunk_attempts) if int(attempt) != 0
         ]
         retry_offset_set = set(retry_offsets)
+        grouped_attempt_zero_offsets = (
+            list(range(chunk_size))
+            if classification_attempt_plan is not None
+            else zero_attempt_offsets
+        )
 
-        if zero_attempt_offsets:
-            zero_attempt_dataset_roots = [dataset_roots[offset] for offset in zero_attempt_offsets]
+        if grouped_attempt_zero_offsets:
+            grouped_attempt_zero_dataset_roots = [
+                dataset_roots[offset] for offset in grouped_attempt_zero_offsets
+            ]
             grouped_noise_runtime = _group_noise_runtime_chunk(
                 config,
-                dataset_roots=zero_attempt_dataset_roots,
-                attempts=[0] * len(zero_attempt_dataset_roots),
+                dataset_roots=grouped_attempt_zero_dataset_roots,
+                attempts=[0] * len(grouped_attempt_zero_dataset_roots),
             )
         else:
             grouped_noise_runtime = []
@@ -1164,7 +1572,7 @@ def _generate_batch_with_plan_iter(
             if on_raw_batch_metrics is not None:
                 on_raw_batch_metrics(dict(getattr(grouped_batch, "runtime_metrics", {})))
             group_dataset_offsets = [
-                zero_attempt_offsets[int(chunk_offset)]
+                grouped_attempt_zero_offsets[int(chunk_offset)]
                 for chunk_offset in grouped_batch.chunk_offsets
             ]
             group_dataset_roots = [
@@ -1245,7 +1653,7 @@ def _generate_batch_with_plan_iter(
                     requested_device=requested_device,
                     resolved_device=validated_resolved_device,
                     preserve_feature_schema=True,
-                    start_attempt=max(1, int(chunk_attempts[offset])),
+                    start_attempt=int(chunk_attempts[offset]),
                     finalization_context=finalization_context,
                     on_raw_batch_metrics=on_raw_batch_metrics,
                 )

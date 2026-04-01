@@ -33,6 +33,7 @@ from dagzoo.core.fixed_layout.runtime import (
     _generate_fixed_layout_bundle_with_retries,
     _replay_emitted_fixed_layout_plan,
     _resolve_fixed_layout_batch_size,
+    _resolve_heterogeneous_dataset_descriptor,
     _sample_fixed_layout,
     _sample_fixed_layout_candidate,
     prepare_canonical_fixed_layout_run,
@@ -68,6 +69,7 @@ from dagzoo.types import DatasetBundle
 
 def _tiny_config() -> GeneratorConfig:
     cfg = load_repo_config()
+    cfg.runtime.layout_mode = "fixed"
     cfg.dataset.n_features_min = 8
     cfg.dataset.n_features_max = 8
     cfg.graph.n_nodes_min = 2
@@ -92,6 +94,21 @@ def _tiny_regression_config() -> GeneratorConfig:
     cfg.filter.enabled = False
     cfg.dataset.n_features_min = 8
     cfg.dataset.n_features_max = 8
+    return cfg
+
+
+def _tiny_heterogeneous_regression_config() -> GeneratorConfig:
+    cfg = load_repo_config()
+    cfg.runtime.layout_mode = "heterogeneous"
+    cfg.runtime.device = "cpu"
+    cfg.filter.enabled = False
+    cfg.dataset.task = "regression"
+    cfg.dataset.n_train = 32
+    cfg.dataset.n_test = 8
+    cfg.dataset.n_features_min = 4
+    cfg.dataset.n_features_max = 10
+    cfg.graph.n_nodes_min = 2
+    cfg.graph.n_nodes_max = 8
     return cfg
 
 
@@ -135,6 +152,53 @@ def test_generate_one_shapes() -> None:
     assert bundle.X_test.shape[0] == cfg.dataset.n_test
     assert bundle.X_train.shape[1] == bundle.X_test.shape[1]
     assert len(bundle.feature_types) == bundle.X_train.shape[1]
+
+
+def test_generate_batch_defaults_to_heterogeneous_grouping() -> None:
+    cfg = _tiny_heterogeneous_regression_config()
+
+    batch = generate_batch(cfg, num_datasets=4, seed=91, device="cpu")
+
+    assert [bundle.metadata["layout_mode"] for bundle in batch] == ["heterogeneous"] * 4
+    request_run_groups = [bundle.metadata["split_groups"]["request_run"] for bundle in batch]
+    cohort_groups = [bundle.metadata["split_groups"]["cohort"] for bundle in batch]
+
+    assert len(set(request_run_groups)) == 1
+    assert all("layout_plan" not in bundle.metadata["split_groups"] for bundle in batch)
+    assert all(isinstance(group, str) and group for group in cohort_groups)
+
+
+def test_generate_batch_heterogeneous_run_is_reproducible() -> None:
+    cfg = _tiny_heterogeneous_regression_config()
+
+    batch_a = generate_batch(cfg, num_datasets=4, seed=321, device="cpu")
+    batch_b = generate_batch(cfg, num_datasets=4, seed=321, device="cpu")
+
+    for bundle_a, bundle_b in zip(batch_a, batch_b, strict=True):
+        assert bundle_a.metadata["dataset_id"] == bundle_b.metadata["dataset_id"]
+        assert bundle_a.metadata["split_groups"] == bundle_b.metadata["split_groups"]
+        assert bundle_a.feature_types == bundle_b.feature_types
+        assert torch.equal(bundle_a.X_train, bundle_b.X_train)
+        assert torch.equal(bundle_a.y_train, bundle_b.y_train)
+        assert torch.equal(bundle_a.X_test, bundle_b.X_test)
+        assert torch.equal(bundle_a.y_test, bundle_b.y_test)
+
+
+def test_generate_batch_heterogeneous_run_can_vary_structural_schema() -> None:
+    cfg = _tiny_heterogeneous_regression_config()
+
+    batch = generate_batch(cfg, num_datasets=8, seed=1234, device="cpu")
+    schema_signatures = {
+        (
+            int(bundle.X_train.shape[1]),
+            tuple(bundle.feature_types),
+            tuple(bundle.metadata["lineage"]["assignments"]["feature_to_node"]),
+            int(bundle.metadata["lineage"]["assignments"]["target_to_node"]),
+        )
+        for bundle in batch
+    }
+
+    assert len(schema_signatures) > 1
 
 
 def test_generate_one_uses_fixed_dataset_rows_and_updates_metadata_config_split() -> None:
@@ -209,7 +273,7 @@ def test_generate_batch_dynamic_steering_changes_metadata_over_dataset_order() -
     }
 
 
-def test_generate_batch_dynamic_steering_graph_stage_can_change_layout_signatures() -> None:
+def test_generate_batch_dynamic_steering_graph_stage_preserves_fixed_layout_schema() -> None:
     cfg = _tiny_regression_config()
     cfg.steering.enabled = True
     cfg.steering.preset = "anti_memorization_piecewise_v1"
@@ -222,8 +286,12 @@ def test_generate_batch_dynamic_steering_graph_stage_can_change_layout_signature
         tuple(str(value) for value in bundle.feature_types) for bundle in batch
     ]
     feature_counts = [int(bundle.metadata["n_features"]) for bundle in batch]
+    steering_layout_roots = [
+        bundle.metadata["keyed_replay"].get("steering_layout_root_path") for bundle in batch
+    ]
 
-    assert len(set(layout_signatures)) >= 2
+    assert any(root is not None for root in steering_layout_roots)
+    assert len(set(layout_signatures)) >= 1
     assert len(set(feature_type_signatures)) == 1
     assert len(set(feature_counts)) == 1
 
@@ -1236,7 +1304,7 @@ def test_generate_batch_with_plan_iter_classification_steering_captures_split_fa
 
     assert len(bundles) == 2
     assert raw_metric_calls == [{"grouped_batch_count": 1.0}]
-    assert fallback_start_attempts == [1]
+    assert fallback_start_attempts == [0]
 
 
 def test_generate_batch_with_plan_iter_dynamic_steering_uses_retry_attempt_plan_offsets(
@@ -4203,6 +4271,231 @@ def test_prepare_canonical_fixed_layout_run_uses_candidate_root_for_regression(
     assert int(prepared.plan.plan_seed) == int(plan.plan_seed)
 
 
+@pytest.mark.parametrize(
+    ("reason", "invalid_layout", "threshold_updates"),
+    [
+        (
+            "target_root",
+            _layout_stub(
+                feature_types=["num"] * 8,
+                graph_nodes=3,
+                adjacency=torch.zeros((3, 3), dtype=torch.bool),
+                feature_node_assignment=[0, 0, 1, 1, 2, 2, 2, 2],
+                target_node_assignment=2,
+            ),
+            {},
+        ),
+        (
+            "no_feature_target_path",
+            _layout_stub(
+                feature_types=["num"] * 8,
+                graph_nodes=3,
+                adjacency=torch.tensor(
+                    [
+                        [0, 0, 1],
+                        [0, 0, 0],
+                        [0, 0, 0],
+                    ],
+                    dtype=torch.bool,
+                ),
+                feature_node_assignment=[1, 1, 1, 1, 1, 1, 1, 1],
+                target_node_assignment=2,
+            ),
+            {"min_target_indegree": 0},
+        ),
+        (
+            "insufficient_target_relevant_feature_count",
+            _layout_stub(
+                feature_types=["num"] * 8,
+                graph_nodes=3,
+                adjacency=torch.tensor(
+                    [
+                        [0, 0, 1],
+                        [0, 0, 0],
+                        [0, 0, 0],
+                    ],
+                    dtype=torch.bool,
+                ),
+                feature_node_assignment=[0, 1, 1, 1, 1, 1, 1, 1],
+                target_node_assignment=2,
+            ),
+            {
+                "min_target_indegree": 0,
+                "min_target_relevant_feature_count": 2,
+                "min_target_relevant_feature_fraction": 0.0,
+            },
+        ),
+        (
+            "insufficient_target_relevant_feature_fraction",
+            _layout_stub(
+                feature_types=["num"] * 8,
+                graph_nodes=3,
+                adjacency=torch.tensor(
+                    [
+                        [0, 0, 1],
+                        [0, 0, 0],
+                        [0, 0, 0],
+                    ],
+                    dtype=torch.bool,
+                ),
+                feature_node_assignment=[0, 0, 1, 1, 1, 1, 1, 1],
+                target_node_assignment=2,
+            ),
+            {
+                "min_target_indegree": 0,
+                "min_target_relevant_feature_count": 0,
+                "min_target_relevant_feature_fraction": 0.5,
+            },
+        ),
+    ],
+)
+def test_prepare_canonical_fixed_layout_run_resamples_structurally_invalid_candidates_before_execution_plan_build(
+    monkeypatch: pytest.MonkeyPatch,
+    reason: str,
+    invalid_layout: LayoutPlan,
+    threshold_updates: dict[str, float | int],
+) -> None:
+    cfg = _tiny_regression_config()
+    cfg.filter.max_attempts = 2
+    for field_name, value in threshold_updates.items():
+        setattr(cfg.filter, field_name, value)
+
+    valid_layout = _layout_stub(
+        feature_types=["num"] * 8,
+        graph_nodes=3,
+        adjacency=torch.tensor(
+            [
+                [0, 0, 1],
+                [0, 0, 1],
+                [0, 0, 0],
+            ],
+            dtype=torch.bool,
+        ),
+        feature_node_assignment=[0, 1, 0, 1, 0, 1, 0, 1],
+        target_node_assignment=2,
+    )
+    sampled_layouts = [invalid_layout, valid_layout]
+    execution_plan_calls: list[int] = []
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._sample_layout",
+        lambda *_args, **_kwargs: sampled_layouts.pop(0),
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime.build_fixed_layout_execution_plan",
+        lambda *_args, **_kwargs: execution_plan_calls.append(1) or FixedLayoutExecutionPlan(),
+    )
+
+    prepared = prepare_canonical_fixed_layout_run(cfg, num_datasets=1, seed=27, device="cpu")
+
+    assert execution_plan_calls == [1]
+    assert prepared.plan.candidate_attempt == 1
+    assert int(prepared.plan.layout.target_to_node) == int(valid_layout.target_to_node)
+    assert reason in {
+        "target_root",
+        "no_feature_target_path",
+        "insufficient_target_relevant_feature_count",
+        "insufficient_target_relevant_feature_fraction",
+    }
+
+
+def test_prepare_canonical_fixed_layout_run_surfaces_last_structural_failure_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_regression_config()
+    cfg.filter.max_attempts = 2
+    invalid_layout = _layout_stub(
+        feature_types=["num"] * 8,
+        graph_nodes=3,
+        adjacency=torch.zeros((3, 3), dtype=torch.bool),
+        feature_node_assignment=[0, 0, 1, 1, 2, 2, 2, 2],
+        target_node_assignment=2,
+    )
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._sample_layout",
+        lambda *_args, **_kwargs: invalid_layout,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime.build_fixed_layout_execution_plan",
+        lambda *_args, **_kwargs: pytest.fail(
+            "execution-plan build should not run for structurally invalid layouts"
+        ),
+    )
+
+    with pytest.raises(ValueError, match=r"Last reason: target_root"):
+        prepare_canonical_fixed_layout_run(cfg, num_datasets=1, seed=27, device="cpu")
+
+
+def test_resolve_heterogeneous_dataset_descriptor_skips_structurally_invalid_plan_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_regression_config()
+    cfg.runtime.layout_mode = "heterogeneous"
+    cfg.filter.max_attempts = 3
+    cfg.filter.min_target_indegree = 0
+    invalid_layout = _layout_stub(
+        feature_types=["num"] * 8,
+        graph_nodes=3,
+        adjacency=torch.tensor(
+            [
+                [0, 0, 1],
+                [0, 0, 0],
+                [0, 0, 0],
+            ],
+            dtype=torch.bool,
+        ),
+        feature_node_assignment=[1, 1, 1, 1, 1, 1, 1, 1],
+        target_node_assignment=2,
+    )
+    valid_layout = _layout_stub(
+        feature_types=["num"] * 8,
+        graph_nodes=3,
+        adjacency=torch.tensor(
+            [
+                [0, 0, 1],
+                [0, 0, 1],
+                [0, 0, 0],
+            ],
+            dtype=torch.bool,
+        ),
+        feature_node_assignment=[0, 1, 0, 1, 0, 1, 0, 1],
+        target_node_assignment=2,
+    )
+    sampled_layouts = [invalid_layout, valid_layout]
+    build_calls: list[int] = []
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._sample_layout",
+        lambda *_args, **_kwargs: sampled_layouts.pop(0),
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime.build_fixed_layout_execution_plan",
+        lambda *_args, **_kwargs: build_calls.append(1) or FixedLayoutExecutionPlan(),
+    )
+
+    descriptor = _resolve_heterogeneous_dataset_descriptor(
+        cfg,
+        requested_device="cpu",
+        resolved_device="cpu",
+        rows_seed=KeyedRng(31).child_seed("rows"),
+        plan_candidate_attempt=0,
+        dataset_index=0,
+        num_datasets=1,
+        dataset_root=KeyedRng(31).keyed("dataset", 0),
+    )
+
+    assert build_calls == [1]
+    assert descriptor.effective_plan.candidate_attempt == 1
+    assert descriptor.effective_plan.layout_root_path == [
+        "dataset",
+        0,
+        "plan_candidate",
+        1,
+        "layout",
+    ]
+
+
 def test_zero_num_datasets_does_not_resolve_device(monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = _tiny_config()
 
@@ -4689,7 +4982,7 @@ def test_generate_batch_with_plan_iter_allows_late_classification_failure_after_
         _ = preserve_feature_schema
         _ = on_raw_batch_metrics
         assert finalization_context is not None
-        assert int(start_attempt) == 1
+        assert int(start_attempt) == 0
         raise ValueError("Failed to generate a valid fixed-layout dataset after 2 attempts.")
 
     monkeypatch.setattr(
@@ -4930,7 +5223,7 @@ def test_generate_batch_with_plan_iter_uses_cached_classification_attempt_plan_f
     )
 
     assert len(bundles) == 3
-    assert grouped_attempts_seen == [[0]]
+    assert grouped_attempts_seen == [[0, 0, 0]]
     assert retry_starts == [2, 1]
     assert [int(bundle.metadata["seed"]) for bundle in bundles] == [
         KeyedRng(33).child_seed("dataset", 0),

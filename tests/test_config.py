@@ -80,9 +80,15 @@ def test_load_default_config() -> None:
     )
     assert cfg.diagnostics.meta_feature_targets == {}
     assert cfg.diagnostics.out_dir is None
+    assert cfg.runtime.layout_mode == "heterogeneous"
     assert cfg.filter.n_estimators > 0
     assert cfg.filter.max_depth >= 0
     assert cfg.filter.max_features == "auto"
+    assert cfg.filter.min_target_indegree == 1
+    assert cfg.filter.min_target_relevant_feature_count == 2
+    assert cfg.filter.min_target_relevant_feature_fraction == pytest.approx(0.05)
+    assert cfg.filter.classification_kappa_threshold == pytest.approx(0.0)
+    assert cfg.filter.classification_require_prediction_diversity is True
     assert cfg.filter.n_jobs == -1
     assert cfg.dataset.missing_rate == 0.0
     assert cfg.dataset.missing_mechanism == MISSINGNESS_MECHANISM_NONE
@@ -110,11 +116,52 @@ def test_default_config_metadata_is_compatible_with_optional_lineage() -> None:
     validate_metadata_lineage(metadata, required=False)
 
 
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (
+            {"filter": {"min_target_indegree": -1}},
+            r"filter\.min_target_indegree must be an integer >= 0",
+        ),
+        (
+            {"filter": {"min_target_relevant_feature_count": -1}},
+            r"filter\.min_target_relevant_feature_count must be an integer >= 0",
+        ),
+        (
+            {"filter": {"min_target_relevant_feature_fraction": 1.1}},
+            r"filter\.min_target_relevant_feature_fraction must be a finite value in \[0, 1\]",
+        ),
+        (
+            {"filter": {"classification_kappa_threshold": 1.1}},
+            r"filter\.classification_kappa_threshold must be a finite value in \[-1, 1\]",
+        ),
+    ],
+)
+def test_filter_structural_thresholds_validate(payload: dict[str, object], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        GeneratorConfig.from_dict(payload)
+
+
 def test_seed_range_accepts_32bit_boundaries() -> None:
     cfg_min = GeneratorConfig.from_dict({"seed": 0})
     cfg_max = GeneratorConfig.from_dict({"seed": 4294967295})
     assert cfg_min.seed == 0
     assert cfg_max.seed == 4294967295
+
+
+def test_runtime_layout_mode_accepts_supported_values_and_rejects_invalid() -> None:
+    assert GeneratorConfig.from_dict(
+        {"runtime": {"layout_mode": "heterogeneous"}}
+    ).runtime.layout_mode == ("heterogeneous")
+    assert GeneratorConfig.from_dict({"runtime": {"layout_mode": "fixed"}}).runtime.layout_mode == (
+        "fixed"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"Unsupported runtime\.layout_mode 'dynamic'. Expected heterogeneous or fixed.",
+    ):
+        GeneratorConfig.from_dict({"runtime": {"layout_mode": "dynamic"}})
 
 
 @pytest.mark.parametrize("bad_seed", [-1, 4294967296, True])

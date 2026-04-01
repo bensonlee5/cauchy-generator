@@ -20,6 +20,8 @@ from dagzoo.core.dataset import generate_batch_iter
 from dagzoo.core.fixed_layout.runtime import realize_generation_config_for_run
 from dagzoo.core.generate_handoff import (
     HANDOFF_MANIFEST_FILENAME,
+    HANDOFF_SOURCE_FAMILY_FIXED,
+    HANDOFF_SOURCE_FAMILY_HETEROGENEOUS,
     write_generate_handoff_manifest,
 )
 from dagzoo.diagnostics import (
@@ -346,6 +348,11 @@ def run_generate_command(args: argparse.Namespace) -> int:
             hardware_device_name=str(hw.device_name),
             hardware_tier=str(hw.tier),
             hardware_policy=str(args.hardware_policy),
+            source_family=(
+                HANDOFF_SOURCE_FAMILY_FIXED
+                if str(config.runtime.layout_mode) == "fixed"
+                else HANDOFF_SOURCE_FAMILY_HETEROGENEOUS
+            ),
         )
         print(f"Wrote handoff manifest: {handoff_manifest_path}")
     print(f"Wrote {written} datasets to: {Path(resolved_out_dir)}")

@@ -10,26 +10,20 @@ from typing import Any, cast
 import numpy as np
 import torch
 from sklearn.ensemble import ExtraTreesRegressor
+from sklearn.metrics import balanced_accuracy_score, cohen_kappa_score, f1_score
 from sklearn.tree import DecisionTreeRegressor
 
-from dagzoo.io.lineage_artifact import (
-    resolve_lineage_path,
-    sha256_hex,
-    unpack_upper_triangle_adjacency,
+from dagzoo.filtering.structural_validity import (
+    StructuralValidityConfig,
+    evaluate_lineage_structural_validity,
 )
-from dagzoo.io.lineage_schema import validate_lineage_payload
 from dagzoo.rng import validate_seed32
 
 _BACKEND = "extra_trees_cpu"
 _FILTER_MODE = "small_shot_ease_v1"
 _SKILL_EPS = 1e-12
-_LINEAGE_BLOB_PATH_ERROR = (
-    "metadata.lineage.graph.adjacency_ref.blob_path must be a relative path "
-    "that resolves inside the shard lineage directory."
-)
-_LINEAGE_BLOB_SHA256_ERROR = (
-    "metadata.lineage.graph.adjacency_ref.sha256 must match the resolved adjacency blob slice."
-)
+_PREDICTION_COLLAPSE_FULL_REASON = "prediction_collapse_full"
+_CHANCE_KAPPA_FULL_REASON = "chance_kappa_full"
 
 
 def _validate_unit_interval(value: object, *, field_name: str) -> float:
@@ -264,58 +258,6 @@ def _fit_best_stump_skill(
     return float(best_skill)
 
 
-def _resolve_safe_lineage_blob_path(*, lineage_base_dir: Path, blob_path_hint: str) -> Path:
-    hinted = Path(blob_path_hint)
-    if hinted.is_absolute():
-        raise ValueError(_LINEAGE_BLOB_PATH_ERROR)
-
-    lineage_root = (lineage_base_dir / "lineage").resolve()
-    resolved = resolve_lineage_path(lineage_base_dir, blob_path_hint).resolve()
-    try:
-        resolved.relative_to(lineage_root)
-    except ValueError as exc:
-        raise ValueError(_LINEAGE_BLOB_PATH_ERROR) from exc
-    return resolved
-
-
-def _resolve_lineage_adjacency(
-    *,
-    lineage_payload: Mapping[str, Any],
-    lineage_base_dir: Path | None,
-) -> np.ndarray:
-    validate_lineage_payload(dict(lineage_payload))
-    graph = lineage_payload["graph"]
-    assert isinstance(graph, Mapping)
-    n_nodes = int(graph["n_nodes"])
-
-    dense_adjacency = graph.get("adjacency")
-    if isinstance(dense_adjacency, list):
-        adjacency = np.asarray(dense_adjacency, dtype=np.uint8)
-        return adjacency
-
-    adjacency_ref = graph.get("adjacency_ref")
-    if not isinstance(adjacency_ref, Mapping):
-        raise ValueError("metadata.lineage.graph must contain adjacency or adjacency_ref.")
-    if lineage_base_dir is None:
-        raise ValueError(
-            "Compact lineage payload requires lineage_base_dir to resolve adjacency artifacts."
-        )
-    blob_path = _resolve_safe_lineage_blob_path(
-        lineage_base_dir=lineage_base_dir,
-        blob_path_hint=str(adjacency_ref["blob_path"]),
-    )
-    bit_offset = int(adjacency_ref["bit_offset"])
-    bit_length = int(adjacency_ref["bit_length"])
-    byte_offset = bit_offset // 8
-    byte_length = (bit_length + 7) // 8
-    with blob_path.open("rb") as handle:
-        handle.seek(byte_offset)
-        payload = handle.read(byte_length)
-    if len(payload) == byte_length and sha256_hex(payload) != str(adjacency_ref["sha256"]):
-        raise ValueError(_LINEAGE_BLOB_SHA256_ERROR)
-    return unpack_upper_triangle_adjacency(payload, n_nodes=n_nodes, bit_length=bit_length)
-
-
 def _lineage_has_feature_target_path(
     *,
     lineage_payload: Mapping[str, Any] | None,
@@ -323,36 +265,16 @@ def _lineage_has_feature_target_path(
 ) -> tuple[bool, bool | None]:
     if not isinstance(lineage_payload, Mapping):
         return False, None
-
-    assignments = lineage_payload.get("assignments")
-    if not isinstance(assignments, Mapping):
-        raise ValueError("metadata.lineage.assignments must be an object.")
-
-    feature_nodes = [int(value) for value in list(assignments.get("feature_to_node", []))]
-    target_node_raw = assignments.get("target_to_node")
-    if isinstance(target_node_raw, bool) or not isinstance(target_node_raw, int):
-        raise ValueError("metadata.lineage.assignments.target_to_node must be an integer.")
-    target_node = int(target_node_raw)
-    if target_node in feature_nodes:
-        return True, True
-
-    adjacency = _resolve_lineage_adjacency(
+    result = evaluate_lineage_structural_validity(
         lineage_payload=lineage_payload,
         lineage_base_dir=lineage_base_dir,
+        checks=StructuralValidityConfig(
+            min_target_indegree=0,
+            min_target_relevant_feature_count=0,
+            min_target_relevant_feature_fraction=0.0,
+        ),
     )
-    visited = set(feature_nodes)
-    frontier = list(feature_nodes)
-    while frontier:
-        node = int(frontier.pop())
-        children = np.flatnonzero(adjacency[node] != 0)
-        for child_raw in children:
-            child = int(child_raw)
-            if child == target_node:
-                return True, True
-            if child not in visited:
-                visited.add(child)
-                frontier.append(child)
-    return True, False
+    return True, bool(result.feature_target_path_exists)
 
 
 def _validate_filter_params(
@@ -368,8 +290,13 @@ def _validate_filter_params(
     easy_gain_threshold: float,
     hard_skill_threshold: float,
     stump_skill_threshold: float | None,
+    min_target_indegree: int,
+    min_target_relevant_feature_count: int,
+    min_target_relevant_feature_fraction: float,
+    classification_kappa_threshold: float,
+    classification_require_prediction_diversity: bool,
     n_jobs: int,
-) -> tuple[int, int, float, float, float, float | None]:
+) -> tuple[int, int, float, float, float, float | None, int, int, float, float, bool]:
     validated_seed = validate_seed32(seed, field_name="seed")
     if n_estimators < 1:
         raise ValueError(f"n_estimators must be >= 1, got {n_estimators}")
@@ -402,6 +329,42 @@ def _validate_filter_params(
             stump_skill_threshold,
             field_name="stump_skill_threshold",
         )
+    if isinstance(min_target_indegree, bool) or not isinstance(min_target_indegree, int):
+        raise ValueError(
+            f"min_target_indegree must be an integer >= 0, got {min_target_indegree!r}"
+        )
+    if min_target_indegree < 0:
+        raise ValueError(f"min_target_indegree must be an integer >= 0, got {min_target_indegree}")
+    if isinstance(min_target_relevant_feature_count, bool) or not isinstance(
+        min_target_relevant_feature_count, int
+    ):
+        raise ValueError(
+            "min_target_relevant_feature_count must be an integer >= 0, "
+            f"got {min_target_relevant_feature_count!r}"
+        )
+    if min_target_relevant_feature_count < 0:
+        raise ValueError(
+            "min_target_relevant_feature_count must be an integer >= 0, "
+            f"got {min_target_relevant_feature_count}"
+        )
+    validated_min_target_relevant_feature_fraction = _validate_unit_interval(
+        min_target_relevant_feature_fraction,
+        field_name="min_target_relevant_feature_fraction",
+    )
+    if (
+        isinstance(classification_kappa_threshold, bool)
+        or not isinstance(classification_kappa_threshold, (int, float))
+        or not math.isfinite(classification_kappa_threshold)
+    ):
+        raise ValueError("classification_kappa_threshold must be a finite value in [-1.0, 1.0].")
+    validated_classification_kappa_threshold = float(classification_kappa_threshold)
+    if not (-1.0 <= validated_classification_kappa_threshold <= 1.0):
+        raise ValueError("classification_kappa_threshold must be a finite value in [-1.0, 1.0].")
+    if not isinstance(classification_require_prediction_diversity, bool):
+        raise ValueError(
+            "classification_require_prediction_diversity must be a boolean, "
+            f"got {classification_require_prediction_diversity!r}."
+        )
     return (
         validated_seed,
         validated_n_jobs,
@@ -409,6 +372,11 @@ def _validate_filter_params(
         validated_easy_gain,
         validated_hard_skill,
         validated_stump_skill,
+        int(min_target_indegree),
+        int(min_target_relevant_feature_count),
+        float(validated_min_target_relevant_feature_fraction),
+        float(validated_classification_kappa_threshold),
+        bool(classification_require_prediction_diversity),
     )
 
 
@@ -434,6 +402,11 @@ def _apply_extra_trees_filter_numpy(
     hard_skill_threshold: float = 0.0,
     stump_skill_threshold: float | None = None,
     use_lineage_veto: bool = True,
+    min_target_indegree: int = 1,
+    min_target_relevant_feature_count: int = 2,
+    min_target_relevant_feature_fraction: float = 0.05,
+    classification_kappa_threshold: float = 0.0,
+    classification_require_prediction_diversity: bool = True,
     n_jobs: int = -1,
 ) -> tuple[bool, dict[str, Any]]:
     """Apply the small-shot ease filter from NumPy train/test arrays."""
@@ -445,6 +418,11 @@ def _apply_extra_trees_filter_numpy(
         easy_gain_threshold,
         hard_skill_threshold,
         stump_skill_threshold,
+        min_target_indegree,
+        min_target_relevant_feature_count,
+        min_target_relevant_feature_fraction,
+        classification_kappa_threshold,
+        classification_require_prediction_diversity,
     ) = _validate_filter_params(
         seed=seed,
         n_estimators=n_estimators,
@@ -457,6 +435,11 @@ def _apply_extra_trees_filter_numpy(
         easy_gain_threshold=easy_gain_threshold,
         hard_skill_threshold=hard_skill_threshold,
         stump_skill_threshold=stump_skill_threshold,
+        min_target_indegree=min_target_indegree,
+        min_target_relevant_feature_count=min_target_relevant_feature_count,
+        min_target_relevant_feature_fraction=min_target_relevant_feature_fraction,
+        classification_kappa_threshold=classification_kappa_threshold,
+        classification_require_prediction_diversity=classification_require_prediction_diversity,
         n_jobs=n_jobs,
     )
 
@@ -515,7 +498,18 @@ def _apply_extra_trees_filter_numpy(
         "stump_skill_threshold": (
             None if stump_skill_threshold is None else float(stump_skill_threshold)
         ),
+        "min_target_indegree": int(min_target_indegree),
+        "min_target_relevant_feature_count": int(min_target_relevant_feature_count),
+        "min_target_relevant_feature_fraction": float(min_target_relevant_feature_fraction),
+        "classification_kappa_threshold": float(classification_kappa_threshold),
+        "classification_require_prediction_diversity": bool(
+            classification_require_prediction_diversity
+        ),
         "lineage_veto_applied": False,
+        "target_indegree": None,
+        "feature_target_path_exists": None,
+        "target_relevant_feature_count": None,
+        "target_relevant_feature_fraction": None,
         "stump_skill": None,
         "skill_small": None,
         "skill_full": None,
@@ -523,17 +517,45 @@ def _apply_extra_trees_filter_numpy(
         "skill_small_lb95": None,
         "skill_gain_ub95": None,
         "skill_full_ub95": None,
+        "cohen_kappa_small": None,
+        "cohen_kappa_full": None,
+        "balanced_accuracy_small": None,
+        "balanced_accuracy_full": None,
+        "macro_f1_small": None,
+        "macro_f1_full": None,
+        "predicted_unique_classes_small": None,
+        "predicted_unique_classes_full": None,
+        "prediction_majority_share_small": None,
+        "prediction_majority_share_full": None,
     }
 
     if bool(use_lineage_veto):
-        lineage_veto_applied, has_path = _lineage_has_feature_target_path(
-            lineage_payload=lineage_payload,
-            lineage_base_dir=lineage_base_dir,
-        )
-        details["lineage_veto_applied"] = bool(lineage_veto_applied)
-        if lineage_veto_applied and has_path is False:
-            details["reason"] = "no_feature_target_path"
-            return False, details
+        if isinstance(lineage_payload, Mapping):
+            structural_result = evaluate_lineage_structural_validity(
+                lineage_payload=lineage_payload,
+                lineage_base_dir=lineage_base_dir,
+                checks=StructuralValidityConfig(
+                    min_target_indegree=int(min_target_indegree),
+                    min_target_relevant_feature_count=int(min_target_relevant_feature_count),
+                    min_target_relevant_feature_fraction=float(
+                        min_target_relevant_feature_fraction
+                    ),
+                ),
+            )
+            details["lineage_veto_applied"] = True
+            details["target_indegree"] = int(structural_result.target_indegree)
+            details["feature_target_path_exists"] = bool(
+                structural_result.feature_target_path_exists
+            )
+            details["target_relevant_feature_count"] = int(
+                structural_result.target_relevant_feature_count
+            )
+            details["target_relevant_feature_fraction"] = float(
+                structural_result.target_relevant_feature_fraction
+            )
+            if not structural_result.valid:
+                details["reason"] = str(structural_result.reason)
+                return False, details
 
     rng = np.random.default_rng(int(seed))
     if ease_k_small_effective >= n_train:
@@ -631,6 +653,40 @@ def _apply_extra_trees_filter_numpy(
         )
     )
 
+    if task == "classification":
+        y_true = np.argmax(y_test_target, axis=1).astype(np.int64, copy=False)
+        pred_small_labels = np.argmax(pred_small, axis=1).astype(np.int64, copy=False)
+        pred_full_labels = np.argmax(pred_full, axis=1).astype(np.int64, copy=False)
+        details["cohen_kappa_small"] = float(cohen_kappa_score(y_true, pred_small_labels))
+        details["cohen_kappa_full"] = float(cohen_kappa_score(y_true, pred_full_labels))
+        details["balanced_accuracy_small"] = float(
+            balanced_accuracy_score(y_true, pred_small_labels)
+        )
+        details["balanced_accuracy_full"] = float(balanced_accuracy_score(y_true, pred_full_labels))
+        details["macro_f1_small"] = float(
+            f1_score(y_true, pred_small_labels, average="macro", zero_division=0.0)
+        )
+        details["macro_f1_full"] = float(
+            f1_score(y_true, pred_full_labels, average="macro", zero_division=0.0)
+        )
+        details["predicted_unique_classes_small"] = int(np.unique(pred_small_labels).size)
+        details["predicted_unique_classes_full"] = int(np.unique(pred_full_labels).size)
+        details["prediction_majority_share_small"] = float(
+            np.bincount(pred_small_labels).max() / max(1, pred_small_labels.size)
+        )
+        details["prediction_majority_share_full"] = float(
+            np.bincount(pred_full_labels).max() / max(1, pred_full_labels.size)
+        )
+        if (
+            bool(classification_require_prediction_diversity)
+            and int(details["predicted_unique_classes_full"]) < 2
+        ):
+            details["reason"] = _PREDICTION_COLLAPSE_FULL_REASON
+            return False, details
+        if float(details["cohen_kappa_full"]) <= float(classification_kappa_threshold):
+            details["reason"] = _CHANCE_KAPPA_FULL_REASON
+            return False, details
+
     if float(details["skill_small_lb95"]) > float(easy_skill_threshold) and float(
         details["skill_gain_ub95"]
     ) < float(easy_gain_threshold):
@@ -666,6 +722,11 @@ def apply_extra_trees_filter(
     hard_skill_threshold: float = 0.0,
     stump_skill_threshold: float | None = None,
     use_lineage_veto: bool = True,
+    min_target_indegree: int = 1,
+    min_target_relevant_feature_count: int = 2,
+    min_target_relevant_feature_fraction: float = 0.05,
+    classification_kappa_threshold: float = 0.0,
+    classification_require_prediction_diversity: bool = True,
     n_jobs: int = -1,
 ) -> tuple[bool, dict[str, Any]]:
     """Apply the small-shot ease filter from torch train/test tensors."""
@@ -709,5 +770,10 @@ def apply_extra_trees_filter(
         hard_skill_threshold=hard_skill_threshold,
         stump_skill_threshold=stump_skill_threshold,
         use_lineage_veto=use_lineage_veto,
+        min_target_indegree=min_target_indegree,
+        min_target_relevant_feature_count=min_target_relevant_feature_count,
+        min_target_relevant_feature_fraction=min_target_relevant_feature_fraction,
+        classification_kappa_threshold=classification_kappa_threshold,
+        classification_require_prediction_diversity=classification_require_prediction_diversity,
         n_jobs=n_jobs,
     )

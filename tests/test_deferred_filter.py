@@ -139,9 +139,9 @@ def _dense_lineage_payload() -> dict[str, object]:
         "graph": {
             "n_nodes": 4,
             "adjacency": [
-                [0, 0, 1, 0],
                 [0, 0, 0, 0],
                 [0, 0, 0, 0],
+                [0, 0, 0, 1],
                 [0, 0, 0, 0],
             ],
         },

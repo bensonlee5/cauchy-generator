@@ -4,7 +4,7 @@
   "feature_types",
   "feature_types[]",
   "group_ids",
-  "group_ids.layout_plan",
+  "group_ids.cohort",
   "group_ids.request_run",
   "n_classes",
   "n_features",

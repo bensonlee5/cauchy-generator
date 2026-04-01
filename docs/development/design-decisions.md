@@ -137,40 +137,39 @@ contract.
 
 ______________________________________________________________________
 
-## 4. Canonical fixed-layout execution model
+## 4. Heterogeneous-By-Default Public Generation
 
 ### Context
 
-The project needs one deterministic execution model that preserves emitted
-schema alignment across a run, keeps replay behavior stable, and avoids
-maintaining separate dynamic and fixed-layout runtimes.
+The project needs one public generation surface that can expose full
+per-dataset structural diversity by default without reintroducing a separate
+legacy dynamic engine.
 
 ### Decision
 
-Canonical `generate_one`, `generate_batch`, and `generate_batch_iter` use the
-fixed-layout engine internally. The old dynamic executor and explicit
-fixed-layout public workflow have been removed.
+Public `generate_one`, `generate_batch`, and `generate_batch_iter` now default
+to fully heterogeneous per-dataset layout/plan sampling. Explicit
+`runtime.layout_mode: fixed` keeps the shared fixed-layout path available for
+schema-aligned batching and throughput-sensitive workflows.
 
 ### Rationale
 
-- **Lower branching complexity** — one execution model replaces dual dynamic
-  and fixed-layout runtimes.
-- **Emitted-schema contract** — fixed-layout batches guarantee aligned emitted
-  columns (feature count/order and lineage mapping), so index-based downstream
-  consumers can safely stack bundles.
-- **Deterministic reproducibility** — one run seed yields one stable shared
-  layout signature, while dataset child seeds still vary value realizations.
-  Under `chunk_batched_v1`, canonical outputs are deterministic for the same
-  run seed and realized run shape.
-- **Batch completion guarantee** — classification runs validate the requested
-  canonical run before emission so public batches do not fail after partial
-  output.
+- **Prior diversity by default** — one requested run can now cover multiple
+  layouts and lineage assignments instead of many realizations of one shared
+  scaffold.
+- **Deterministic reproducibility** — one run seed still yields deterministic
+  dataset-level outputs and stable request/cohort identities.
+- **Explicit fixed escape hatch** — users who need aligned columns or higher
+  throughput can still opt into the fixed-layout contract without a separate
+  public workflow.
 
 ### Alternatives considered
 
-- **Keep separate dynamic and fixed-layout runtimes** — rejected because it
-  preserves duplicate orchestration, testing, and documentation burden.
-- **Config-only fixed-layout mode** — not pursued.
+- **Keep fixed-layout as the only public mode** — rejected because it suppresses
+  structural diversity within one run.
+- **Revive the pre-fixed public dynamic executor** — rejected because it would
+  duplicate orchestration instead of reusing the current fixed-layout planning
+  and grouped raw-batch machinery.
 
 ______________________________________________________________________
 

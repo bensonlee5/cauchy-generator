@@ -339,6 +339,13 @@ def _filter_dataset(
         hard_skill_threshold=filter_cfg.hard_skill_threshold,
         stump_skill_threshold=filter_cfg.stump_skill_threshold,
         use_lineage_veto=filter_cfg.use_lineage_veto,
+        min_target_indegree=filter_cfg.min_target_indegree,
+        min_target_relevant_feature_count=filter_cfg.min_target_relevant_feature_count,
+        min_target_relevant_feature_fraction=filter_cfg.min_target_relevant_feature_fraction,
+        classification_kappa_threshold=filter_cfg.classification_kappa_threshold,
+        classification_require_prediction_diversity=(
+            filter_cfg.classification_require_prediction_diversity
+        ),
         n_jobs=filter_cfg.n_jobs,
     )
     elapsed_seconds = max(0.0, time.perf_counter() - start)

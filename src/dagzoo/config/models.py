@@ -36,6 +36,7 @@ from .constants import (
 from .normalization import (
     _normalize_function_family_mix,
     _normalize_noise_mixture_weights,
+    normalize_layout_mode,
     normalize_missing_mechanism,
     normalize_noise_family,
     normalize_shift_mode,
@@ -547,6 +548,7 @@ def _normalize_runtime_fields(runtime: RuntimeConfig) -> None:
     runtime.torch_dtype = str(runtime.torch_dtype).strip().lower()
     if not runtime.torch_dtype:
         raise ValueError("runtime.torch_dtype must be a non-empty string.")
+    runtime.layout_mode = str(normalize_layout_mode(runtime.layout_mode))
 
     if runtime.fixed_layout_target_cells is not None:
         runtime.fixed_layout_target_cells = _validate_int_field(
@@ -626,6 +628,39 @@ def _normalize_filter_fields(filter_cfg: FilterConfig) -> None:
         hi_inclusive=True,
         expectation="a finite value in [0, 1]",
     )
+    filter_cfg.min_target_indegree = _validate_int_field(
+        field_name="filter.min_target_indegree",
+        value=filter_cfg.min_target_indegree,
+        minimum=0,
+    )
+    filter_cfg.min_target_relevant_feature_count = _validate_int_field(
+        field_name="filter.min_target_relevant_feature_count",
+        value=filter_cfg.min_target_relevant_feature_count,
+        minimum=0,
+    )
+    filter_cfg.min_target_relevant_feature_fraction = _validate_finite_float_field(
+        field_name="filter.min_target_relevant_feature_fraction",
+        value=filter_cfg.min_target_relevant_feature_fraction,
+        lo=0.0,
+        hi=1.0,
+        lo_inclusive=True,
+        hi_inclusive=True,
+        expectation="a finite value in [0, 1]",
+    )
+    filter_cfg.classification_kappa_threshold = _validate_finite_float_field(
+        field_name="filter.classification_kappa_threshold",
+        value=filter_cfg.classification_kappa_threshold,
+        lo=-1.0,
+        hi=1.0,
+        lo_inclusive=True,
+        hi_inclusive=True,
+        expectation="a finite value in [-1, 1]",
+    )
+    if not isinstance(filter_cfg.classification_require_prediction_diversity, bool):
+        raise ValueError(
+            "filter.classification_require_prediction_diversity must be a boolean, "
+            f"got {filter_cfg.classification_require_prediction_diversity!r}."
+        )
     filter_cfg.max_attempts = _validate_int_field(
         field_name="filter.max_attempts",
         value=filter_cfg.max_attempts,
@@ -1352,6 +1387,7 @@ class StressConfig:
 class RuntimeConfig:
     device: str = "auto"
     torch_dtype: str = "float32"
+    layout_mode: str = "heterogeneous"
     fixed_layout_target_cells: int | None = None
     fixed_layout_batch_size_cap: int | None = None
 
@@ -1419,6 +1455,11 @@ class FilterConfig:
     hard_skill_threshold: float = 0.0
     stump_skill_threshold: float | None = None
     use_lineage_veto: bool = True
+    min_target_indegree: int = 1
+    min_target_relevant_feature_count: int = 2
+    min_target_relevant_feature_fraction: float = 0.05
+    classification_kappa_threshold: float = 0.0
+    classification_require_prediction_diversity: bool = True
     max_attempts: int = 3
     n_jobs: int = -1
 

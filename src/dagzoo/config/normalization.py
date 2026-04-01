@@ -5,11 +5,13 @@ from __future__ import annotations
 from dagzoo.math import normalize_positive_weights
 
 from .constants import (
+    _LAYOUT_MODE_VALUE_MAP,
     _MECHANISM_FAMILY_VALUE_MAP,
     _MISSINGNESS_MECHANISM_VALUE_MAP,
     _NOISE_FAMILY_VALUE_MAP,
     _NOISE_MIXTURE_COMPONENT_VALUE_MAP,
     _SHIFT_MODE_VALUE_MAP,
+    LayoutMode,
     MechanismFamily,
     MissingnessMechanism,
     NoiseFamily,
@@ -17,6 +19,22 @@ from .constants import (
     ShiftMode,
 )
 from .scalars import _validate_finite_float_field
+
+
+def normalize_layout_mode(value: object) -> LayoutMode:
+    """Normalize runtime layout mode into a validated internal value."""
+
+    if isinstance(value, bool) or not isinstance(value, str):
+        raise ValueError(
+            f"Unsupported runtime.layout_mode '{value}'. Expected heterogeneous or fixed."
+        )
+    normalized = value.strip().lower()
+    result = _LAYOUT_MODE_VALUE_MAP.get(normalized)
+    if result is None:
+        raise ValueError(
+            f"Unsupported runtime.layout_mode '{value}'. Expected heterogeneous or fixed."
+        )
+    return result
 
 
 def normalize_missing_mechanism(value: str) -> MissingnessMechanism:

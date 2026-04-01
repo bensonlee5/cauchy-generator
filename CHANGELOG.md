@@ -10,6 +10,27 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.18.0] - 2026-03-31
+
+### Changed
+
+- **BREAKING:** Public generation now defaults to fully heterogeneous
+  per-dataset layout/plan sampling. `generate_one`, `generate_batch`,
+  `generate_batch_iter`, `dagzoo generate`, and `build_dataloader(...)` no
+  longer imply one shared fixed-layout plan unless
+  `runtime.layout_mode: fixed` is set explicitly.
+- Added `runtime.layout_mode` with `heterogeneous | fixed` values. Fixed mode
+  preserves the prior shared fixed-layout behavior for schema-aligned batching
+  and throughput-sensitive workflows.
+- Generated dataset catalogs now emit `group_ids.cohort` for heterogeneous
+  runs, while `group_ids.layout_plan` is fixed-mode-only.
+- Generate handoff manifests now use schema version `4` and accept
+  mode-specific `identity.source_family` values:
+  `dagzoo.heterogeneous_scm` and `dagzoo.fixed_layout_scm`.
+- Fixed-layout-specific throughput and microbenchmark paths now pin
+  `runtime.layout_mode: fixed` explicitly instead of inheriting the public
+  default.
+
 ## [0.17.0] - 2026-03-31
 
 ### Changed

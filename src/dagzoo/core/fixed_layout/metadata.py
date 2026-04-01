@@ -76,8 +76,13 @@ def _layout_signature(layout: LayoutPlan) -> str:
     return hashlib.blake2s(encoded, digest_size=16).hexdigest()
 
 
-def _annotate_fixed_layout_metadata(bundle: DatasetBundle, *, plan: _FixedLayoutPlan) -> None:
-    bundle.metadata["layout_mode"] = "fixed"
+def _annotate_fixed_layout_metadata(
+    bundle: DatasetBundle,
+    *,
+    plan: _FixedLayoutPlan,
+    layout_mode: str = "fixed",
+) -> None:
+    bundle.metadata["layout_mode"] = str(layout_mode)
     bundle.metadata["layout_plan_seed"] = int(plan.plan_seed)
     bundle.metadata["layout_signature"] = str(plan.layout_signature)
     bundle.metadata["layout_plan_schema_version"] = int(_FIXED_LAYOUT_METADATA_SCHEMA_VERSION)

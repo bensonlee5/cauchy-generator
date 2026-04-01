@@ -4,7 +4,6 @@ import json
 import re
 from pathlib import Path
 
-from conftest import load_repo_config
 from golden_support import (
     assert_normalized_json_equal,
     assert_normalized_text_equal,
@@ -16,6 +15,7 @@ from golden_support import (
 )
 
 from dagzoo.bench.report import write_suite_json, write_suite_markdown
+from dagzoo.config import GeneratorConfig
 from dagzoo.core.dataset import generate_batch
 from dagzoo.core.generate_handoff import write_generate_handoff_manifest
 from dagzoo.diagnostics.coverage import (
@@ -344,7 +344,7 @@ def test_coverage_summary_contract_golden(tmp_path: Path) -> None:
 
 
 def test_generated_metadata_record_paths_contract_golden(tmp_path: Path) -> None:
-    cfg = load_repo_config()
+    cfg = GeneratorConfig.from_yaml("configs/default.yaml")
     cfg.runtime.device = "cpu"
     cfg.filter.enabled = False
     cfg.dataset.task = "classification"

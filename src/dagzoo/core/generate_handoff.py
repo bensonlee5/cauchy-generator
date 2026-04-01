@@ -17,8 +17,13 @@ from dagzoo.math import sanitize_json
 
 HANDOFF_MANIFEST_FILENAME = "handoff_manifest.json"
 GENERATE_HANDOFF_SCHEMA_NAME = "dagzoo_generate_handoff_manifest"
-GENERATE_HANDOFF_SCHEMA_VERSION = 3
-HANDOFF_SOURCE_FAMILY = "dagzoo.fixed_layout_scm"
+GENERATE_HANDOFF_SCHEMA_VERSION = 4
+HANDOFF_SOURCE_FAMILY_FIXED = "dagzoo.fixed_layout_scm"
+HANDOFF_SOURCE_FAMILY_HETEROGENEOUS = "dagzoo.heterogeneous_scm"
+HANDOFF_SOURCE_FAMILIES = (
+    HANDOFF_SOURCE_FAMILY_FIXED,
+    HANDOFF_SOURCE_FAMILY_HETEROGENEOUS,
+)
 _BLAKE2S_HEX_LENGTH = 32
 _GENERATE_OVERRIDE_KEYS = (
     "num_datasets",
@@ -343,6 +348,7 @@ def build_generate_handoff_manifest(
     hardware_device_name: str,
     hardware_tier: str,
     hardware_policy: str,
+    source_family: str = HANDOFF_SOURCE_FAMILY_FIXED,
     diversity_summary_json_path: str | Path | None = None,
     diversity_summary_md_path: str | Path | None = None,
 ) -> dict[str, Any]:
@@ -360,7 +366,7 @@ def build_generate_handoff_manifest(
         "schema_name": GENERATE_HANDOFF_SCHEMA_NAME,
         "schema_version": GENERATE_HANDOFF_SCHEMA_VERSION,
         "identity": {
-            "source_family": HANDOFF_SOURCE_FAMILY,
+            "source_family": str(source_family),
             "generate_run_id": generate_run_id,
             "generated_corpus_id": generated_corpus_id,
         },
@@ -409,10 +415,10 @@ def validate_generate_handoff_manifest(payload: Mapping[str, Any]) -> None:
         identity.get("source_family"),
         path="handoff_manifest.identity.source_family",
     )
-    if source_family != HANDOFF_SOURCE_FAMILY:
+    if source_family not in HANDOFF_SOURCE_FAMILIES:
         _raise(
             "handoff_manifest.identity.source_family",
-            f"must equal {HANDOFF_SOURCE_FAMILY!r}",
+            f"must equal one of {HANDOFF_SOURCE_FAMILIES!r}",
         )
     _require_hex_string(
         identity.get("generate_run_id"),
@@ -489,6 +495,7 @@ def write_generate_handoff_manifest(
     hardware_device_name: str,
     hardware_tier: str,
     hardware_policy: str,
+    source_family: str = HANDOFF_SOURCE_FAMILY_FIXED,
     diversity_summary_json_path: str | Path | None = None,
     diversity_summary_md_path: str | Path | None = None,
     out_path: str | Path | None = None,
@@ -513,6 +520,7 @@ def write_generate_handoff_manifest(
         hardware_device_name=hardware_device_name,
         hardware_tier=hardware_tier,
         hardware_policy=hardware_policy,
+        source_family=source_family,
         diversity_summary_json_path=diversity_summary_json_path,
         diversity_summary_md_path=diversity_summary_md_path,
     )
@@ -537,6 +545,8 @@ __all__ = [
     "GENERATE_HANDOFF_SCHEMA_NAME",
     "GENERATE_HANDOFF_SCHEMA_VERSION",
     "HANDOFF_MANIFEST_FILENAME",
+    "HANDOFF_SOURCE_FAMILY_FIXED",
+    "HANDOFF_SOURCE_FAMILY_HETEROGENEOUS",
     "build_generate_handoff_manifest",
     "validate_generate_handoff_manifest",
     "write_generate_handoff_manifest",

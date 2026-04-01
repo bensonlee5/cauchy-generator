@@ -19,7 +19,7 @@
     }
   },
   "schema_name": "dagzoo_generate_handoff_manifest",
-  "schema_version": 3,
+  "schema_version": 4,
   "summary": {
     "generated_datasets": 2
   }

@@ -97,3 +97,11 @@ DATASET_ROWS_MIN_TOTAL = 400
 DATASET_ROWS_MAX_TOTAL = 60_000
 _SectionT = TypeVar("_SectionT")
 RowsMode = Literal["fixed", "range"]
+LayoutMode = Literal["heterogeneous", "fixed"]
+LAYOUT_MODE_HETEROGENEOUS: Literal["heterogeneous"] = "heterogeneous"
+LAYOUT_MODE_FIXED: Literal["fixed"] = "fixed"
+
+_LAYOUT_MODE_VALUE_MAP: dict[str, LayoutMode] = {
+    LAYOUT_MODE_HETEROGENEOUS: LAYOUT_MODE_HETEROGENEOUS,
+    LAYOUT_MODE_FIXED: LAYOUT_MODE_FIXED,
+}

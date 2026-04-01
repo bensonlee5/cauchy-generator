@@ -55,6 +55,9 @@ def build_dataset_catalog_record(
         request_run = split_groups.get("request_run")
         if request_run is not None:
             group_ids["request_run"] = request_run
+        cohort = split_groups.get("cohort")
+        if cohort is not None:
+            group_ids["cohort"] = cohort
         layout_plan = split_groups.get("layout_plan")
         if layout_plan is not None:
             group_ids["layout_plan"] = layout_plan

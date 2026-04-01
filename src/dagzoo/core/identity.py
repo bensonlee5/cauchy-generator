@@ -238,10 +238,64 @@ def canonical_dataset_id(
     )
 
 
+def heterogeneous_request_run_split_group(
+    *,
+    seed: int,
+    run_num_datasets: int,
+    request_run_provenance: Mapping[str, Any],
+) -> str:
+    """Return a stable split-group key for one heterogeneous request run."""
+
+    return stable_blake2s_hex(
+        {
+            "seed": int(seed),
+            "run_num_datasets": int(run_num_datasets),
+            "layout_mode": "heterogeneous",
+            "request_run_provenance": dict(request_run_provenance),
+        }
+    )
+
+
+def heterogeneous_cohort_split_group(
+    *,
+    cohort_payload: Mapping[str, Any],
+) -> str:
+    """Return a stable grouping key for one heterogeneous raw-generation cohort."""
+
+    return stable_blake2s_hex(
+        {
+            "layout_mode": "heterogeneous",
+            "cohort_payload": dict(cohort_payload),
+        }
+    )
+
+
+def heterogeneous_dataset_id(
+    *,
+    request_run_split_group: str,
+    cohort_split_group: str,
+    dataset_index: int,
+    dataset_seed: int,
+) -> str:
+    """Return a stable dataset identifier for one heterogeneous dataset bundle."""
+
+    return stable_blake2s_hex(
+        {
+            "request_run_split_group": str(request_run_split_group),
+            "cohort_split_group": str(cohort_split_group),
+            "dataset_index": int(dataset_index),
+            "dataset_seed": int(dataset_seed),
+        }
+    )
+
+
 __all__ = [
     "canonical_dataset_id",
     "canonical_layout_plan_split_group",
     "canonical_request_run_provenance",
     "canonical_request_run_split_group",
+    "heterogeneous_cohort_split_group",
+    "heterogeneous_dataset_id",
+    "heterogeneous_request_run_split_group",
     "stable_blake2s_hex",
 ]

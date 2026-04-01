@@ -80,6 +80,9 @@ sample = next(iter(loader))
 
 `build_dataloader(...)` is the recommended programmatic entrypoint. It uses the
 same config surface as the CLI: either `recipe:<name>` or a YAML path.
+Public generation defaults to fully heterogeneous per-dataset layouts; set
+`runtime.layout_mode: fixed` when you want aligned schema and faster
+fixed-layout batching within one run.
 
 ______________________________________________________________________
 

@@ -165,6 +165,7 @@ def test_write_packed_parquet_shards_stream_preserves_canonical_replay_metadata(
 
     cfg = GeneratorConfig.from_yaml("configs/default.yaml")
     cfg.runtime.device = "cpu"
+    cfg.runtime.layout_mode = "fixed"
     cfg.filter.enabled = False
     cfg.dataset.task = "regression"
     cfg.dataset.n_train = 32

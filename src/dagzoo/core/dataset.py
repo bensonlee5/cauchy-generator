@@ -5,9 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
-from dagzoo.config import GeneratorConfig
+from dagzoo.config import LAYOUT_MODE_FIXED, GeneratorConfig
+from dagzoo.core.fixed_layout.prepare import realize_generation_config_for_run
 from dagzoo.core.fixed_layout.runtime import (
     CanonicalFixedLayoutRun,
+    _generate_batch_with_heterogeneous_layout_iter,
     _generate_batch_with_plan_iter,
     prepare_canonical_fixed_layout_run,
 )
@@ -16,7 +18,11 @@ from dagzoo.core.identity import (
     canonical_layout_plan_split_group,
     canonical_request_run_provenance,
     canonical_request_run_split_group,
+    heterogeneous_cohort_split_group,
+    heterogeneous_dataset_id,
+    heterogeneous_request_run_split_group,
 )
+from dagzoo.core.shift import resolve_shift_runtime_params
 from dagzoo.rng import KeyedRng
 from dagzoo.types import DatasetBundle
 
@@ -44,12 +50,109 @@ def _require_metadata_string(metadata: Mapping[str, Any], *, key: str) -> str:
     return value
 
 
+def _request_run_provenance_for_config(
+    config: GeneratorConfig,
+    *,
+    resolved_device: str,
+) -> dict[str, Any]:
+    noise_distribution: dict[str, Any] = {
+        "family_requested": str(config.noise.family),
+        "base_scale": float(config.noise.base_scale),
+    }
+    if str(config.noise.family) == "student_t":
+        noise_distribution["student_t_df"] = float(config.noise.student_t_df)
+    elif str(config.noise.family) == "mixture" and config.noise.mixture_weights is not None:
+        noise_distribution["mixture_weights"] = {
+            str(component): float(weight)
+            for component, weight in sorted(config.noise.mixture_weights.items())
+        }
+    return canonical_request_run_provenance(
+        {
+            "config": {
+                "dataset": {
+                    "task": str(config.dataset.task),
+                    "n_train": int(config.dataset.n_train),
+                    "n_test": int(config.dataset.n_test),
+                    "missing_rate": float(config.dataset.missing_rate),
+                    "missing_mechanism": str(config.dataset.missing_mechanism),
+                    "missing_mar_observed_fraction": float(
+                        config.dataset.missing_mar_observed_fraction
+                    ),
+                    "missing_mar_logit_scale": float(config.dataset.missing_mar_logit_scale),
+                    "missing_mnar_logit_scale": float(config.dataset.missing_mnar_logit_scale),
+                },
+                "runtime": {
+                    "fixed_layout_target_cells": config.runtime.fixed_layout_target_cells,
+                    "torch_dtype": str(config.runtime.torch_dtype),
+                },
+            },
+            "noise_distribution": noise_distribution,
+            "shift": {
+                "variance_sigma_multiplier": float(
+                    resolve_shift_runtime_params(config).variance_sigma_multiplier
+                )
+            },
+            "prior": {
+                "target_derivation": "tabiclv2_latent_node",
+            },
+            "resolved_device": str(resolved_device),
+            "compute_backend": "torch_appendix_full",
+        }
+    )
+
+
+def _heterogeneous_cohort_payload(bundle: DatasetBundle) -> dict[str, Any]:
+    metadata = bundle.metadata
+    config_payload = metadata.get("config")
+    if not isinstance(config_payload, Mapping):
+        raise ValueError("Heterogeneous bundle is missing metadata.config.")
+    dataset_payload = config_payload.get("dataset")
+    if not isinstance(dataset_payload, Mapping):
+        raise ValueError("Heterogeneous bundle is missing metadata.config.dataset.")
+    noise_distribution = metadata.get("noise_distribution")
+    if not isinstance(noise_distribution, Mapping):
+        raise ValueError("Heterogeneous bundle is missing metadata.noise_distribution.")
+    shift_payload = metadata.get("shift")
+    if not isinstance(shift_payload, Mapping):
+        raise ValueError("Heterogeneous bundle is missing metadata.shift.")
+    mixture_weights_raw = noise_distribution.get("mixture_weights")
+    mixture_weights = (
+        None
+        if not isinstance(mixture_weights_raw, Mapping)
+        else {
+            str(component): float(mixture_weights_raw[component])
+            for component in sorted(mixture_weights_raw)
+        }
+    )
+    return {
+        "layout_signature": _require_metadata_string(metadata, key="layout_signature"),
+        "layout_plan_signature": _require_metadata_string(metadata, key="layout_plan_signature"),
+        "layout_execution_contract": _require_metadata_string(
+            metadata,
+            key="layout_execution_contract",
+        ),
+        "task": str(dataset_payload["task"]),
+        "n_train": int(dataset_payload["n_train"]),
+        "n_test": int(dataset_payload["n_test"]),
+        "noise": {
+            "family_requested": str(noise_distribution["family_requested"]),
+            "base_scale": float(noise_distribution["base_scale"]),
+            "student_t_df": float(noise_distribution.get("student_t_df", 0.0)),
+            "mixture_weights": mixture_weights,
+        },
+        "shift": {
+            "variance_sigma_multiplier": float(shift_payload["variance_sigma_multiplier"]),
+        },
+    }
+
+
 def _annotate_canonical_batch_metadata(
     bundle: DatasetBundle,
     *,
     run_seed: int,
     dataset_index: int,
     run_num_datasets: int,
+    request_run_provenance: Mapping[str, Any],
 ) -> DatasetBundle:
     """Rewrite canonical bundle metadata to preserve run-level replay information."""
 
@@ -66,14 +169,13 @@ def _annotate_canonical_batch_metadata(
         bundle.metadata,
         key="layout_execution_contract",
     )
-    request_run_provenance = canonical_request_run_provenance(bundle.metadata)
     split_groups = {
         "request_run": canonical_request_run_split_group(
             seed=int(run_seed),
             run_num_datasets=int(run_num_datasets),
             layout_signature=layout_signature,
             layout_plan_signature=layout_plan_signature,
-            request_run_provenance=request_run_provenance,
+            request_run_provenance=dict(request_run_provenance),
         ),
         "layout_plan": canonical_layout_plan_split_group(
             layout_signature=layout_signature,
@@ -96,13 +198,52 @@ def _annotate_canonical_batch_metadata(
     return bundle
 
 
+def _annotate_heterogeneous_batch_metadata(
+    bundle: DatasetBundle,
+    *,
+    run_seed: int,
+    dataset_index: int,
+    run_num_datasets: int,
+    request_run_split_group: str,
+) -> DatasetBundle:
+    """Rewrite heterogeneous bundle metadata to preserve run-level replay information."""
+
+    dataset_seed = bundle.metadata.get("seed")
+    if not isinstance(dataset_seed, int) or isinstance(dataset_seed, bool):
+        dataset_seed = KeyedRng(int(run_seed)).child_seed("dataset", int(dataset_index))
+    keyed_replay = bundle.metadata.get("keyed_replay")
+    if not isinstance(keyed_replay, dict):
+        keyed_replay = {}
+    keyed_replay["dataset_root_path"] = ["dataset", int(dataset_index)]
+    cohort_split_group = heterogeneous_cohort_split_group(
+        cohort_payload=_heterogeneous_cohort_payload(bundle)
+    )
+    split_groups = {
+        "request_run": str(request_run_split_group),
+        "cohort": str(cohort_split_group),
+    }
+    bundle.metadata["seed"] = int(run_seed)
+    bundle.metadata["dataset_seed"] = int(dataset_seed)
+    bundle.metadata["dataset_index"] = int(dataset_index)
+    bundle.metadata["dataset_id"] = heterogeneous_dataset_id(
+        request_run_split_group=str(request_run_split_group),
+        cohort_split_group=str(cohort_split_group),
+        dataset_index=int(dataset_index),
+        dataset_seed=int(dataset_seed),
+    )
+    bundle.metadata["run_num_datasets"] = int(run_num_datasets)
+    bundle.metadata["split_groups"] = split_groups
+    bundle.metadata["keyed_replay"] = keyed_replay
+    return bundle
+
+
 def generate_one(
     config: GeneratorConfig,
     *,
     seed: int | None = None,
     device: str | None = None,
 ) -> DatasetBundle:
-    """Generate one dataset bundle using the canonical fixed-layout run model."""
+    """Generate one dataset bundle using the configured public generation mode."""
 
     return next(generate_batch_iter(config, num_datasets=1, seed=seed, device=device))
 
@@ -133,12 +274,7 @@ def generate_batch_iter(
     seed: int | None = None,
     device: str | None = None,
 ) -> Iterator[DatasetBundle]:
-    """Yield datasets from one canonical fixed-layout run.
-
-    Classification runs emit bundles as soon as fixed-layout generation succeeds
-    for each dataset. A later dataset may still exhaust the retry budget after
-    earlier bundles have already been yielded.
-    """
+    """Yield datasets from one public generation run."""
 
     if num_datasets < 0:
         raise ValueError(f"num_datasets must be >= 0, got {num_datasets}")
@@ -146,13 +282,46 @@ def generate_batch_iter(
         return
     _validate_public_generation_config(config)
 
-    prepared = prepare_canonical_fixed_layout_run(
-        config,
-        num_datasets=num_datasets,
-        seed=seed,
-        device=device,
+    if str(config.runtime.layout_mode) == str(LAYOUT_MODE_FIXED):
+        prepared = prepare_canonical_fixed_layout_run(
+            config,
+            num_datasets=num_datasets,
+            seed=seed,
+            device=device,
+        )
+        yield from _iter_prepared_canonical_batch_iter(prepared, num_datasets=num_datasets)
+        return
+
+    realized_config, run_seed, _requested_device, resolved_device = (
+        realize_generation_config_for_run(
+            config,
+            seed=seed,
+            device=device,
+        )
     )
-    yield from _iter_prepared_canonical_batch_iter(prepared, num_datasets=num_datasets)
+    request_run_split_group = heterogeneous_request_run_split_group(
+        seed=int(run_seed),
+        run_num_datasets=int(num_datasets),
+        request_run_provenance=_request_run_provenance_for_config(
+            realized_config,
+            resolved_device=resolved_device,
+        ),
+    )
+    for dataset_index, bundle in enumerate(
+        _generate_batch_with_heterogeneous_layout_iter(
+            config,
+            num_datasets=num_datasets,
+            seed=seed,
+            device=device,
+        )
+    ):
+        yield _annotate_heterogeneous_batch_metadata(
+            bundle,
+            run_seed=int(run_seed),
+            dataset_index=dataset_index,
+            run_num_datasets=num_datasets,
+            request_run_split_group=request_run_split_group,
+        )
 
 
 def _iter_prepared_canonical_batch_iter(
@@ -162,6 +331,11 @@ def _iter_prepared_canonical_batch_iter(
     on_raw_batch_metrics: Callable[[dict[str, float]], None] | None = None,
 ) -> Iterator[DatasetBundle]:
     """Yield annotated bundles from one already-prepared canonical fixed-layout run."""
+
+    request_run_provenance = _request_run_provenance_for_config(
+        prepared.config,
+        resolved_device=prepared.resolved_device,
+    )
 
     for dataset_index, bundle in enumerate(
         _generate_batch_with_plan_iter(
@@ -179,4 +353,5 @@ def _iter_prepared_canonical_batch_iter(
             run_seed=prepared.run_seed,
             dataset_index=dataset_index,
             run_num_datasets=num_datasets,
+            request_run_provenance=request_run_provenance,
         )

@@ -283,7 +283,7 @@ This section maps the runtime to the main execution phases and data flow.
 
 ### 1) Entry points and orchestration boundaries {#1-entry-points-and-orchestration-boundaries}
 
-- `dagzoo generate` and `build_dataloader(...)` use the same canonical
+- `dagzoo generate` and `build_dataloader(...)` use the same public
   generation flow.
 - Generation resolves config and hardware context, derives deterministic seeds,
   samples layout and structure, executes the latent graph, then finalizes
@@ -328,12 +328,14 @@ Current public prior behavior:
 - Optional missingness is applied afterward as an observation process over
   the emitted feature table.
 
-Canonical postprocess behavior:
+Current public postprocess behavior:
 
-- Public generation preserves emitted schema across a canonical run.
-- Classification runs now emit bundles as they are finalized; a later
-  dataset can still exhaust the retry budget after earlier bundles have
-  already been emitted.
+- Public generation defaults to heterogeneous per-dataset layouts, so emitted
+  schema may vary within one run.
+- Explicit fixed mode preserves emitted schema across the run.
+- Classification runs emit bundles as they are finalized; a later dataset can
+  still exhaust the retry budget after earlier bundles have already been
+  emitted.
 
 ### 5) Metadata and output emission {#5-metadata-and-output-emission}
 
@@ -344,13 +346,13 @@ status, shift, noise distribution, and resolved config snapshot.
   records the selected latent target node plus emitted target-relevance summary.
 - `requested_device`, `resolved_device`, and the reserved
   `device_fallback_reason` field are emitted for runtime observability.
-- Canonical generation outputs add `layout_mode`, `layout_plan_seed`,
+- Public generation outputs add `layout_mode`, `layout_plan_seed`,
   `layout_signature`, `dataset_seed`, and `keyed_replay`.
 
 ## DAG/node data flow
 
-This diagram focuses on node-level execution mechanics inside the
-canonical generation runtime.
+This diagram focuses on node-level execution mechanics inside the shared
+generation runtime.
 
 ```mermaid
 flowchart TB

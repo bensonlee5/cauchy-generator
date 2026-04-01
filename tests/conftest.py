@@ -35,9 +35,15 @@ def _cached_repo_config(resource_name: str) -> GeneratorConfig:
 
 
 def load_repo_config(resource_name: str = "default.yaml") -> GeneratorConfig:
-    """Load one repo config and return a fresh mutable copy for the caller."""
+    """Load one repo config and return a fresh mutable copy for the caller.
 
-    return clone_generator_config(_cached_repo_config(resource_name), revalidate=False)
+    Most existing unit tests exercise the explicit fixed-layout path unless they
+    opt into heterogeneous mode directly.
+    """
+
+    config = clone_generator_config(_cached_repo_config(resource_name), revalidate=False)
+    config.runtime.layout_mode = "fixed"
+    return config
 
 
 def write_yaml(tmp_path: Path, name: str, payload: object) -> Path:

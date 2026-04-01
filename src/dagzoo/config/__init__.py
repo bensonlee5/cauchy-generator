@@ -3,6 +3,8 @@
 from .constants import (
     DATASET_ROWS_MAX_TOTAL,
     DATASET_ROWS_MIN_TOTAL,
+    LAYOUT_MODE_FIXED,
+    LAYOUT_MODE_HETEROGENEOUS,
     MAX_SUPPORTED_CLASS_COUNT,
     MISSINGNESS_MECHANISM_MAR,
     MISSINGNESS_MECHANISM_MCAR,
@@ -21,6 +23,7 @@ from .constants import (
     SHIFT_MODE_MIXED,
     SHIFT_MODE_NOISE_DRIFT,
     SHIFT_MODE_OFF,
+    LayoutMode,
     MechanismFamily,
     MissingnessMechanism,
     NoiseFamily,
@@ -50,6 +53,7 @@ from .models import (
     stress_profile_definition,
 )
 from .normalization import (
+    normalize_layout_mode,
     normalize_missing_mechanism,
     normalize_noise_family,
     normalize_shift_mode,
@@ -66,6 +70,8 @@ from .rows import (
 __all__ = [
     "DATASET_ROWS_MAX_TOTAL",
     "DATASET_ROWS_MIN_TOTAL",
+    "LAYOUT_MODE_FIXED",
+    "LAYOUT_MODE_HETEROGENEOUS",
     "MAX_SUPPORTED_CLASS_COUNT",
     "MISSINGNESS_MECHANISM_MAR",
     "MISSINGNESS_MECHANISM_MCAR",
@@ -91,6 +97,7 @@ __all__ = [
     "FilterConfig",
     "GeneratorConfig",
     "GraphConfig",
+    "LayoutMode",
     "MechanismConfig",
     "MechanismFamily",
     "MissingnessMechanism",
@@ -113,6 +120,7 @@ __all__ = [
     "materialize_stress_profile",
     "normalize_dataset_rows",
     "normalize_filter_config",
+    "normalize_layout_mode",
     "normalize_missing_mechanism",
     "normalize_noise_family",
     "normalize_shift_mode",

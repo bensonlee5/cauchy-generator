@@ -75,12 +75,7 @@ def _bundle_to_sample(bundle: DatasetBundle) -> DagzooSample:
 
 
 class DagzooDataset(IterableDataset[DagzooSample]):
-    """Yield canonical dagzoo datasets as PyTorch-friendly samples.
-
-    One ``DagzooDataset`` instance corresponds to one canonical dagzoo run, so
-    all yielded datasets preserve the existing shared fixed-layout semantics for
-    that run.
-    """
+    """Yield dagzoo datasets as PyTorch-friendly samples for one public run."""
 
     def __init__(
         self,
@@ -125,7 +120,7 @@ def build_dataloader(
     device: str | None = None,
     num_workers: int = 0,
 ) -> DataLoader[DagzooSample]:
-    """Return a task-sized ``DataLoader`` for one canonical dagzoo run."""
+    """Return a task-sized ``DataLoader`` for one public dagzoo run."""
 
     _validate_num_workers(num_workers)
     return DataLoader(
