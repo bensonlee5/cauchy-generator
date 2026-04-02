@@ -21,6 +21,11 @@ from dagzoo.config.models import (
 from dagzoo.io.lineage_schema import validate_metadata_lineage
 
 _STRESS_PROFILE = "anti_memorization_piecewise_classification_slice_v1"
+_STRESS_PROFILES = (
+    "anti_memorization_piecewise_classification_slice_v1",
+    "anti_memorization_piecewise_classification_graph_breadth_slice_v1",
+    "anti_memorization_piecewise_classification_compositional_slice_v1",
+)
 
 
 def _stage(
@@ -424,12 +429,29 @@ def test_steering_preset_round_trips_via_yaml() -> None:
     assert round_tripped.steering.stages == []
 
 
-def test_stress_profile_accepts_profile_only_authoring() -> None:
-    cfg = GeneratorConfig.from_dict({"stress": {"profile": _STRESS_PROFILE}})
+@pytest.mark.parametrize("profile", _STRESS_PROFILES)
+def test_stress_profile_accepts_profile_only_authoring(profile: str) -> None:
+    cfg = GeneratorConfig.from_dict({"stress": {"profile": profile}})
 
-    assert cfg.stress.profile == _STRESS_PROFILE
+    assert cfg.stress.profile == profile
     assert cfg.steering.enabled is False
     assert cfg.steering.preset is None
+
+
+def test_stress_profile_definition_exposes_relationship_slice_profiles() -> None:
+    graph_breadth = stress_profile_definition(
+        "anti_memorization_piecewise_classification_graph_breadth_slice_v1"
+    )
+    compositional = stress_profile_definition(
+        "anti_memorization_piecewise_classification_compositional_slice_v1"
+    )
+
+    assert graph_breadth["filter"]["enabled"] is False
+    assert graph_breadth["filter"]["min_target_indegree"] == 2
+    assert graph_breadth["graph"]["n_nodes_max"] == 40
+    assert compositional["filter"]["enabled"] is False
+    assert compositional["mechanism"]["function_family_mix"]["piecewise"] == pytest.approx(3.0)
+    assert compositional["mechanism"]["function_family_mix"]["linear"] == pytest.approx(0.5)
 
 
 def test_stress_profile_definition_rejects_unknown_name() -> None:

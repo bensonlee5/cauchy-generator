@@ -83,6 +83,15 @@ def extract_dataset_metrics(
         n_categorical_features=int(raw["n_categorical_features"]),
         categorical_ratio=float(raw["categorical_ratio"]),
         graph_edge_density=_float_or_none(raw.get("graph_edge_density")),
+        graph_indegree_std=_float_or_none(raw.get("graph_indegree_std")),
+        graph_outdegree_std=_float_or_none(raw.get("graph_outdegree_std")),
+        graph_depth_ratio=_float_or_none(raw.get("graph_depth_ratio")),
+        graph_reachability_ratio=_float_or_none(raw.get("graph_reachability_ratio")),
+        graph_ancestor_overlap_mean=_float_or_none(raw.get("graph_ancestor_overlap_mean")),
+        graph_target_ancestor_fraction=_float_or_none(raw.get("graph_target_ancestor_fraction")),
+        mechanism_family_cooccurrence_ratio=_float_or_none(
+            raw.get("mechanism_family_cooccurrence_ratio")
+        ),
         shift_enabled=_float_or_default(raw.get("shift_enabled"), 0.0),
         shift_graph_scale=_float_or_default(raw.get("shift_graph_scale"), 0.0),
         shift_mechanism_scale=_float_or_default(raw.get("shift_mechanism_scale"), 0.0),

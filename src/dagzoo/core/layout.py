@@ -13,7 +13,7 @@ from dagzoo.core.shift import resolve_shift_runtime_params
 from dagzoo.functions._rng_helpers import randint_scalar
 from dagzoo.graph import dag_edge_density, dag_longest_path_nodes, sample_dag
 from dagzoo.rng import KeyedRng
-from dagzoo.sampling import CorrelatedSampler
+from dagzoo.sampling.correlated import sample_correlated_choice, sample_correlated_num
 
 
 def _sample_log_uniform_int(generator: torch.Generator, device: str, low: int, high: int) -> int:
@@ -154,12 +154,13 @@ def _sample_layout(
         ).item()
     )
 
-    corr = CorrelatedSampler(keyed_rng.keyed("correlated"), device)
     cat_ratio = float(
-        corr.sample_num(
-            "categorical_ratio",
-            config.dataset.categorical_ratio_min,
-            config.dataset.categorical_ratio_max,
+        sample_correlated_num(
+            keyed_rng.keyed("correlated"),
+            name="categorical_ratio",
+            low=config.dataset.categorical_ratio_min,
+            high=config.dataset.categorical_ratio_max,
+            device=device,
             log_scale=False,
             as_int=False,
         )
@@ -180,11 +181,16 @@ def _sample_layout(
     max_card = max(2, config.dataset.max_categorical_cardinality)
     cardinalities = []
     for feature_index in cat_idx:
-        generator = keyed_rng.keyed("cardinality", int(feature_index)).torch_rng(device=device)
-        log_low = math.log(2.0)
-        log_high = math.log(float(max_card))
-        u = torch.empty(1, device=device).uniform_(log_low, log_high, generator=generator)
-        cardinalities.append(max(2, int(math.exp(u.item()))))
+        cardinality_values = tuple(range(2, max_card + 1))
+        cardinality_probs = tuple(1.0 / float(value) for value in cardinality_values)
+        cardinality = sample_correlated_choice(
+            keyed_rng.keyed("cardinality", int(feature_index)),
+            name="categorical_cardinality",
+            values=cardinality_values,
+            device=device,
+            base_probs=cardinality_probs,
+        )
+        cardinalities.append(int(cardinality))
     card_by_feature = {
         int(idx): int(card) for idx, card in zip(cat_idx, cardinalities, strict=True)
     }

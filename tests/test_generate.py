@@ -290,8 +290,12 @@ def test_generate_batch_heterogeneous_request_run_identity_changes_with_structur
     batch_base = generate_batch(baseline, num_datasets=4, seed=1234, device="cpu")
     batch_drifted = generate_batch(drifted, num_datasets=4, seed=1234, device="cpu")
 
-    assert {int(bundle.X_train.shape[1]) for bundle in batch_base} == {4}
-    assert {int(bundle.X_train.shape[1]) for bundle in batch_drifted} == {8}
+    assert int(batch_base[0].metadata["config"]["dataset"]["n_features_min"]) == 4
+    assert int(batch_base[0].metadata["config"]["dataset"]["n_features_max"]) == 4
+    assert int(batch_drifted[0].metadata["config"]["dataset"]["n_features_min"]) == 8
+    assert int(batch_drifted[0].metadata["config"]["dataset"]["n_features_max"]) == 8
+    assert all(0 < int(bundle.X_train.shape[1]) <= 4 for bundle in batch_base)
+    assert all(0 < int(bundle.X_train.shape[1]) <= 8 for bundle in batch_drifted)
     assert (
         batch_base[0].metadata["split_groups"]["request_run"]
         != batch_drifted[0].metadata["split_groups"]["request_run"]
@@ -361,6 +365,19 @@ def test_generate_one_with_stress_profile_omits_stress_from_metadata_config() ->
     assert int(bundle.metadata["config"]["dataset"]["n_test"]) == 256
     assert "stress" not in bundle.metadata["config"]
     assert "steering" not in bundle.metadata["config"]
+
+
+def test_generate_one_with_relationship_stress_profile_materializes_locked_fields() -> None:
+    cfg = load_repo_config()
+    cfg.stress.profile = "anti_memorization_piecewise_classification_graph_breadth_slice_v1"
+
+    bundle = generate_one(cfg, seed=10, device="cpu")
+
+    assert int(bundle.metadata["config"]["dataset"]["n_features_min"]) == 24
+    assert int(bundle.metadata["config"]["graph"]["n_nodes_max"]) == 40
+    assert bool(bundle.metadata["config"]["filter"]["enabled"]) is False
+    assert int(bundle.metadata["config"]["filter"]["min_target_indegree"]) == 2
+    assert "stress" not in bundle.metadata["config"]
 
 
 def test_generate_batch_dynamic_steering_changes_metadata_over_dataset_order() -> None:

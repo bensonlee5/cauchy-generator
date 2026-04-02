@@ -144,22 +144,14 @@ def _sample_random_matrix_from_plan_batch(
             device=rng.device,
             noise_spec=noise_spec,
         )
-        q_low = 0.1 / math.log(int(in_dim) + 1.0)
-        shared_q = rng.keyed("shared_q").log_uniform(
-            (rng.batch_size, *leading_shape), low=q_low, high=6.0
-        )
-        shared_sigma = rng.keyed("shared_sigma").log_uniform(
-            (rng.batch_size, *leading_shape), low=1e-4, high=10.0
-        )
         rows = _sample_random_weights_batch(
             rng.keyed("row_weights"),
             dim=int(in_dim),
             leading_shape=(*leading_shape, int(out_dim)),
             parameter_shape=leading_shape,
+            correlation_name="weights_matrix_decay",
             sigma_multiplier=float(noise_sigma_multiplier),
             noise_spec=noise_spec,
-            q=shared_q,
-            sigma=shared_sigma,
         )
         matrix = g * rows
     elif isinstance(plan, SingularValuesMatrixPlan):
@@ -182,6 +174,7 @@ def _sample_random_matrix_from_plan_batch(
             rng.keyed("singular_values"),
             dim=d,
             leading_shape=leading_shape,
+            correlation_name="singular_values_decay",
             sigma_multiplier=float(noise_sigma_multiplier),
             noise_spec=noise_spec,
         )
@@ -338,6 +331,7 @@ def _sample_random_points_batch(
     weights = _sample_random_weights_batch(
         rng.keyed("weights"),
         dim=dim,
+        correlation_name="normal_cov_weights_decay",
         sigma_multiplier=float(noise_sigma_multiplier),
         noise_spec=noise_spec,
     )
@@ -528,6 +522,7 @@ def _apply_gp_batch(
         weights = _sample_random_weights_batch(
             rng.keyed("weights"),
             dim=din,
+            correlation_name="gp_projected_weights_decay",
             sigma_multiplier=float(noise_sigma_multiplier),
             noise_spec=noise_spec,
         )
