@@ -66,7 +66,7 @@ jobs:
         run: uv run python scripts/docs/check_links.py
 
       - name: Setup Go (for Hugo modules)
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: site/go.mod
 
@@ -130,7 +130,7 @@ jobs:
         run: uv run python scripts/docs/sync_hugo_content.py
 
       - name: Setup Go (for Hugo modules)
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: site/go.mod
 
