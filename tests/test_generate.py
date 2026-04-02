@@ -290,8 +290,12 @@ def test_generate_batch_heterogeneous_request_run_identity_changes_with_structur
     batch_base = generate_batch(baseline, num_datasets=4, seed=1234, device="cpu")
     batch_drifted = generate_batch(drifted, num_datasets=4, seed=1234, device="cpu")
 
-    assert {int(bundle.X_train.shape[1]) for bundle in batch_base} == {4}
-    assert {int(bundle.X_train.shape[1]) for bundle in batch_drifted} == {8}
+    assert int(batch_base[0].metadata["config"]["dataset"]["n_features_min"]) == 4
+    assert int(batch_base[0].metadata["config"]["dataset"]["n_features_max"]) == 4
+    assert int(batch_drifted[0].metadata["config"]["dataset"]["n_features_min"]) == 8
+    assert int(batch_drifted[0].metadata["config"]["dataset"]["n_features_max"]) == 8
+    assert all(0 < int(bundle.X_train.shape[1]) <= 4 for bundle in batch_base)
+    assert all(0 < int(bundle.X_train.shape[1]) <= 8 for bundle in batch_drifted)
     assert (
         batch_base[0].metadata["split_groups"]["request_run"]
         != batch_drifted[0].metadata["split_groups"]["request_run"]
@@ -361,6 +365,19 @@ def test_generate_one_with_stress_profile_omits_stress_from_metadata_config() ->
     assert int(bundle.metadata["config"]["dataset"]["n_test"]) == 256
     assert "stress" not in bundle.metadata["config"]
     assert "steering" not in bundle.metadata["config"]
+
+
+def test_generate_one_with_relationship_stress_profile_materializes_locked_fields() -> None:
+    cfg = load_repo_config()
+    cfg.stress.profile = "anti_memorization_piecewise_classification_graph_breadth_slice_v1"
+
+    bundle = generate_one(cfg, seed=10, device="cpu")
+
+    assert int(bundle.metadata["config"]["dataset"]["n_features_min"]) == 24
+    assert int(bundle.metadata["config"]["graph"]["n_nodes_max"]) == 40
+    assert bool(bundle.metadata["config"]["filter"]["enabled"]) is False
+    assert int(bundle.metadata["config"]["filter"]["min_target_indegree"]) == 2
+    assert "stress" not in bundle.metadata["config"]
 
 
 def test_generate_batch_dynamic_steering_changes_metadata_over_dataset_order() -> None:
@@ -4048,6 +4065,7 @@ def test_fixed_layout_plan_classification_attempt_plan_does_not_scalarize_other_
         requested_device: str,
         resolved_device: str,
         start_attempt: int = 0,
+        attempt_budget: int | None = None,
     ) -> int | None:
         _ = plan
         _ = requested_device
@@ -4055,6 +4073,7 @@ def test_fixed_layout_plan_classification_attempt_plan_does_not_scalarize_other_
         retry_calls.append(dataset_root.child_seed())
         if dataset_root.child_seed() == dataset_roots[0].child_seed():
             assert start_attempt == 1
+            assert attempt_budget == cfg.filter.max_attempts
             return 1
         raise AssertionError("only the invalid attempt-0 dataset should use scalar replay lookup")
 
@@ -4087,6 +4106,129 @@ def test_fixed_layout_plan_classification_attempt_plan_does_not_scalarize_other_
 
     assert attempt_plan == (1, 0, 0, 0)
     assert retry_calls == [dataset_roots[0].child_seed()]
+
+
+def test_fixed_layout_plan_classification_attempt_plan_caps_replay_budget_to_filter_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_config()
+    cfg.dataset.task = "classification"
+    cfg.filter.enabled = False
+    cfg.filter.max_attempts = 2
+    cfg.dataset.n_train = 4
+    cfg.dataset.n_test = 2
+    plan = _FixedLayoutPlan(
+        layout=_layout_stub(
+            feature_types=["num"],
+            graph_nodes=2,
+            adjacency=torch.zeros((2, 2), dtype=torch.bool),
+            feature_node_assignment=[0],
+            target_node_assignment=1,
+        ),
+        requested_device="cpu",
+        resolved_device="cpu",
+        plan_seed=23,
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        layout_signature="layout_sig",
+        execution_plan=FixedLayoutExecutionPlan(),
+        plan_signature="plan_sig",
+    )
+    run_root = KeyedRng(777)
+    observed_attempt_budgets: list[int | None] = []
+
+    def _stub_group_noise_runtime_chunk(
+        _config: GeneratorConfig,
+        *,
+        dataset_roots: list[KeyedRng],
+        attempts: list[int] | None = None,
+    ):
+        _ = attempts
+        return [
+            SimpleNamespace(
+                chunk_offsets=list(range(len(dataset_roots))),
+                generation_seeds=[
+                    dataset_root.keyed("attempt", 0, "raw_generation").child_seed()
+                    for dataset_root in dataset_roots
+                ],
+                selection=NoiseRuntimeSelection(
+                    family_requested="gaussian",
+                    family_sampled="gaussian",
+                    sampling_strategy="dataset_level",
+                    base_scale=1.0,
+                    student_t_df=5.0,
+                    mixture_weights=None,
+                ),
+                attempt=0,
+            )
+        ]
+
+    def _stub_generate_fixed_layout_label_batch(
+        _config: GeneratorConfig,
+        _layout,
+        *,
+        execution_plan,
+        dataset_seeds: list[int],
+        device: str,
+        noise_sigma_multiplier: float,
+        noise_spec,
+    ) -> tuple[torch.Tensor, list[dict[str, object]]]:
+        _ = execution_plan
+        _ = dataset_seeds
+        _ = device
+        _ = noise_sigma_multiplier
+        _ = noise_spec
+        y_batch = torch.zeros((1, cfg.dataset.n_train + cfg.dataset.n_test), dtype=torch.int64)
+        return y_batch, [{}]
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._group_noise_runtime_chunk",
+        _stub_group_noise_runtime_chunk,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime.generate_fixed_layout_label_batch",
+        _stub_generate_fixed_layout_label_batch,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._raw_classification_labels_support_split",
+        lambda *_args, **_kwargs: False,
+    )
+
+    def _stub_first_valid_classification_attempt_for_dataset(
+        _config: GeneratorConfig,
+        *,
+        plan: _FixedLayoutPlan,
+        dataset_root: KeyedRng,
+        requested_device: str,
+        resolved_device: str,
+        start_attempt: int = 0,
+        attempt_budget: int | None = None,
+    ) -> int | None:
+        _ = plan
+        _ = dataset_root
+        _ = requested_device
+        _ = resolved_device
+        assert start_attempt == 1
+        observed_attempt_budgets.append(attempt_budget)
+        return 1
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._first_valid_classification_attempt_for_dataset",
+        _stub_first_valid_classification_attempt_for_dataset,
+    )
+
+    attempt_plan = _fixed_layout_plan_classification_attempt_plan(
+        cfg,
+        plan=plan,
+        requested_device="cpu",
+        resolved_device="cpu",
+        run_root=run_root,
+        num_datasets=1,
+        batch_size=1,
+    )
+
+    assert attempt_plan == (1,)
+    assert observed_attempt_budgets == [2]
 
 
 def test_generate_one_returns_torch_tensors_on_cpu() -> None:

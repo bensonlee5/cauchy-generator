@@ -5,6 +5,7 @@ import yaml
 from conftest import load_repo_config, write_config
 
 from dagzoo.cli.entrypoint import main
+from dagzoo.config import GeneratorConfig
 
 
 def test_generate_cli_rejects_invalid_device() -> None:
@@ -1264,6 +1265,75 @@ def test_generate_cli_coverage_tolerates_null_quantiles_and_targets(
     assert code == 0
     assert (tmp_path / "run" / "coverage_summary.json").exists()
     assert (tmp_path / "run" / "coverage_summary.md").exists()
+
+
+@pytest.mark.parametrize(
+    ("preset_path", "output_dir_name"),
+    [
+        (
+            "configs/preset_stress_classification_slice_generate_smoke.yaml",
+            "stress_classification_slice",
+        ),
+        (
+            "configs/preset_stress_graph_breadth_generate_smoke.yaml",
+            "stress_graph_breadth",
+        ),
+        (
+            "configs/preset_stress_compositional_generate_smoke.yaml",
+            "stress_compositional",
+        ),
+    ],
+)
+def test_generate_cli_stress_profile_generate_presets_resolve_with_no_write(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    preset_path: str,
+    output_dir_name: str,
+) -> None:
+    cfg = GeneratorConfig.from_yaml(preset_path)
+    cfg.runtime.device = "cpu"
+    cfg.output.out_dir = str(tmp_path / output_dir_name)
+    config_path = write_config(tmp_path, cfg, f"{output_dir_name}.yaml")
+
+    def _stub_generate_batch_iter(
+        _config,
+        *,
+        num_datasets: int,
+        seed: int | None = None,
+        device: str | None = None,
+    ):
+        _ = seed
+        _ = device
+        for _ in range(num_datasets):
+            yield object()
+
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.generate.generate_batch_iter",
+        _stub_generate_batch_iter,
+    )
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.generate.CoverageAggregator.update_bundle",
+        lambda _self, _bundle: None,
+    )
+
+    code = main(
+        [
+            "generate",
+            "--config",
+            str(config_path),
+            "--num-datasets",
+            "1",
+            "--device",
+            "cpu",
+            "--hardware-policy",
+            "none",
+            "--no-dataset-write",
+        ]
+    )
+
+    assert code == 0
+    assert (tmp_path / output_dir_name / "coverage_summary.json").exists()
+    assert (tmp_path / output_dir_name / "coverage_summary.md").exists()
 
 
 def test_generate_cli_no_write_allows_null_output_dir_when_coverage_disabled(

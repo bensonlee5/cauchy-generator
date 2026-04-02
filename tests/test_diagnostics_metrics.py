@@ -57,6 +57,25 @@ def test_extract_dataset_metrics_classification_invariants(
     )
     assert 0.0 <= metrics.categorical_ratio <= 1.0
     assert metrics.graph_edge_density is not None and 0.0 <= metrics.graph_edge_density <= 1.0
+    assert metrics.graph_indegree_std is not None and metrics.graph_indegree_std >= 0.0
+    assert metrics.graph_outdegree_std is not None and metrics.graph_outdegree_std >= 0.0
+    assert metrics.graph_depth_ratio is not None and 0.0 <= metrics.graph_depth_ratio <= 1.0
+    assert (
+        metrics.graph_reachability_ratio is not None
+        and 0.0 <= metrics.graph_reachability_ratio <= 1.0
+    )
+    assert (
+        metrics.graph_ancestor_overlap_mean is not None
+        and 0.0 <= metrics.graph_ancestor_overlap_mean <= 1.0
+    )
+    assert (
+        metrics.graph_target_ancestor_fraction is not None
+        and 0.0 <= metrics.graph_target_ancestor_fraction <= 1.0
+    )
+    assert (
+        metrics.mechanism_family_cooccurrence_ratio is not None
+        and 0.0 <= metrics.mechanism_family_cooccurrence_ratio <= 1.0
+    )
     assert metrics.shift_enabled in {0.0, 1.0}
     assert metrics.shift_edge_odds_multiplier >= 1.0
     assert 0.0 <= metrics.shift_mechanism_nonlinear_mass <= 1.0
@@ -97,6 +116,13 @@ def test_extract_dataset_metrics_regression_branch(
     assert metrics.shift_variance_scale == pytest.approx(0.0)
     assert metrics.shift_edge_odds_multiplier == pytest.approx(1.0)
     assert metrics.shift_noise_variance_multiplier == pytest.approx(1.0)
+    assert metrics.graph_indegree_std is not None and metrics.graph_indegree_std >= 0.0
+    assert metrics.graph_outdegree_std is not None and metrics.graph_outdegree_std >= 0.0
+    assert metrics.graph_depth_ratio is not None and 0.0 <= metrics.graph_depth_ratio <= 1.0
+    assert (
+        metrics.graph_reachability_ratio is not None
+        and 0.0 <= metrics.graph_reachability_ratio <= 1.0
+    )
 
 
 def test_extract_dataset_metrics_spearman_toggle(
@@ -231,6 +257,59 @@ def test_extract_dataset_metrics_handles_degenerate_constant_columns(
     assert metrics.cat_cardinality_min == 1
     assert metrics.cat_cardinality_mean == pytest.approx(1.0)
     assert metrics.cat_cardinality_max == 1
+    assert metrics.graph_indegree_std is None
+    assert metrics.graph_ancestor_overlap_mean is None
+    assert metrics.mechanism_family_cooccurrence_ratio is None
+
+
+def test_extract_dataset_metrics_relationship_structure_metrics_from_lineage_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "dagzoo.core.metrics_torch._compute_wins_ratio_proxy",
+        lambda **_kwargs: 0.5,
+    )
+    bundle = DatasetBundle(
+        X_train=np.asarray(
+            [[0.0, 1.0, 2.0], [1.0, 0.5, 3.0], [2.0, 1.5, 4.0], [3.0, 1.0, 5.0]],
+            dtype=np.float32,
+        ),
+        y_train=np.asarray([0.0, 1.0, 0.0, 1.0], dtype=np.float32),
+        X_test=np.asarray([[4.0, 1.5, 6.0], [5.0, 2.0, 7.0]], dtype=np.float32),
+        y_test=np.asarray([0.0, 1.0], dtype=np.float32),
+        feature_types=["num", "num", "num"],
+        metadata={
+            "config": {"dataset": {"task": "regression"}},
+            "lineage": {
+                "graph": {
+                    "n_nodes": 4,
+                    "adjacency": [
+                        [0, 1, 1, 0],
+                        [0, 0, 0, 1],
+                        [0, 0, 0, 1],
+                        [0, 0, 0, 0],
+                    ],
+                },
+                "assignments": {
+                    "feature_to_node": [1, 2, 1],
+                    "target_to_node": 3,
+                },
+            },
+            "mechanism_families": {
+                "sampled_family_counts": {"linear": 2, "gp": 2, "tree": 1},
+            },
+        },
+    )
+
+    metrics = extract_dataset_metrics(bundle)
+
+    assert metrics.graph_indegree_std == pytest.approx(np.sqrt(0.5))
+    assert metrics.graph_outdegree_std == pytest.approx(np.sqrt(0.5))
+    assert metrics.graph_depth_ratio == pytest.approx(0.75)
+    assert metrics.graph_reachability_ratio == pytest.approx(5.0 / 6.0)
+    assert metrics.graph_ancestor_overlap_mean == pytest.approx(5.0 / 9.0)
+    assert metrics.graph_target_ancestor_fraction == pytest.approx(1.0)
+    assert metrics.mechanism_family_cooccurrence_ratio == pytest.approx(0.8)
 
 
 def test_extract_metrics_batch_preserves_order(

@@ -420,11 +420,12 @@ def test_sample_function_plan_for_gp_can_emit_variants(
     expected_variant: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(execution_semantics_mod, "_sample_bool", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         execution_semantics_mod,
-        "_randint_scalar",
-        lambda *_args, **_kwargs: variant_index,
+        "sample_correlated_choice",
+        lambda *_args, **kwargs: (
+            "ha" if kwargs["name"] == "gp_branch_kind" else kwargs["values"][variant_index]
+        ),
     )
 
     plan = execution_semantics_mod.sample_function_plan_for_family(
@@ -672,19 +673,9 @@ def test_keyed_sample_function_plan_preserves_product_subroots(
 def test_keyed_multi_parent_sampling_is_independent_across_parent_plans(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    original_sample_bool = execution_semantics_mod._sample_bool
-
     def parent_probe(first_parent_extra_draws: int) -> tuple[int, ...]:
         parent_call_index = 0
         second_parent_tokens: list[tuple[int, ...]] = []
-        combine_call = 0
-
-        def force_stack(generator: torch.Generator, *, p: float = 0.5) -> bool:
-            nonlocal combine_call
-            if combine_call == 0:
-                combine_call += 1
-                return False
-            return original_sample_bool(generator, p=p)
 
         def fake_sample_function_plan(
             generator: torch.Generator | None = None,
@@ -721,7 +712,13 @@ def test_keyed_multi_parent_sampling_is_independent_across_parent_plans(
             parent_call_index += 1
             return LinearFunctionPlan(matrix=GaussianMatrixPlan())
 
-        monkeypatch.setattr(execution_semantics_mod, "_sample_bool", force_stack)
+        monkeypatch.setattr(
+            execution_semantics_mod,
+            "sample_correlated_choice",
+            lambda *_args, **kwargs: (
+                "stack" if kwargs["name"] == "multi_source_combine_kind" else kwargs["values"][0]
+            ),
+        )
         monkeypatch.setattr(
             execution_semantics_mod,
             "sample_function_plan",

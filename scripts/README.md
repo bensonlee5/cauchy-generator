@@ -31,6 +31,8 @@ docs helpers, and maintenance utilities rather than convenience wrappers.
   - Bump the semver version in `pyproject.toml`. Use `--tag` to commit and create a git tag.
 - `scripts/cleanup_local_artifacts.py [--group runtime|docs|all] [--apply]`
   - Dry-run or remove ignored local runtime/docs outputs (`data/`, `benchmarks/results/`, and the built docs output under `site/`) without touching tracked files.
+- `scripts/evaluate_handoff_pareto.py --baseline-config <path> --out-root <dir> [--stress-profile <name> ...] [--variant-config <path> ...]`
+  - Runs matched `dagzoo generate --handoff-root` baseline/variant comparisons and writes downstream-score, diversity-shift, and throughput summaries for RD-005-style evaluation.
 - `scripts/docs/sync_hugo_content.py [--check]`
   - Sync canonical docs from `docs/` into the generated Hugo input area described in `site/README.md` (single-source docs model).
 - `scripts/docs/check_links.py [roots...]`
@@ -58,6 +60,7 @@ docs helpers, and maintenance utilities rather than convenience wrappers.
 ./.venv/bin/python scripts/docs/check_built_output_links.py site/public
 ./.venv/bin/python scripts/cleanup_local_artifacts.py --group all
 ./.venv/bin/python scripts/cleanup_local_artifacts.py --group runtime --apply
+./.venv/bin/python scripts/evaluate_handoff_pareto.py --baseline-config configs/default.yaml --stress-profile anti_memorization_piecewise_classification_graph_breadth_slice_v1 --stress-profile anti_memorization_piecewise_classification_compositional_slice_v1 --out-root benchmarks/results/rd005_pareto --num-datasets 8 --seed 123 --device cpu
 uv run dagzoo generate --config configs/default.yaml --num-datasets 50 --device cpu --out data/run_cpu_50
 uv run dagzoo generate --config configs/preset_cuda_h100.yaml --num-datasets 500 --device cuda --out data/run_h100_500 --seed 123
 uv run dagzoo generate --config configs/preset_many_class_generate_smoke.yaml --num-datasets 25 --device cpu --out data/run_many_class --seed 123

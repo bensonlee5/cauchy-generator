@@ -59,6 +59,12 @@ _STEERING_FRACTION_TOLERANCE = 1e-6
 _STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_SLICE_V1 = (
     "anti_memorization_piecewise_classification_slice_v1"
 )
+_STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_GRAPH_BREADTH_SLICE_V1 = (
+    "anti_memorization_piecewise_classification_graph_breadth_slice_v1"
+)
+_STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_COMPOSITIONAL_SLICE_V1 = (
+    "anti_memorization_piecewise_classification_compositional_slice_v1"
+)
 _REMOVED_FILTER_FIELDS = frozenset(
     {
         "threshold",
@@ -164,12 +170,104 @@ def _build_anti_memorization_piecewise_classification_slice_v1_definition() -> d
     }
 
 
+def _build_anti_memorization_piecewise_classification_graph_breadth_slice_v1_definition() -> dict[
+    str, Any
+]:
+    return {
+        "dataset": {
+            "task": "classification",
+            "n_train": 768,
+            "n_test": 256,
+            "rows": None,
+            "n_features_min": 24,
+            "n_features_max": 72,
+            "n_classes_min": 2,
+            "n_classes_max": 10,
+            "categorical_ratio_min": 0.0,
+            "categorical_ratio_max": 1.0,
+            "max_categorical_cardinality": 9,
+        },
+        "graph": {
+            "n_nodes_min": 12,
+            "n_nodes_max": 40,
+        },
+        "filter": {
+            "enabled": False,
+            "min_target_indegree": 2,
+            "min_target_relevant_feature_count": 4,
+            "min_target_relevant_feature_fraction": 0.15,
+        },
+        "mechanism": {
+            "function_family_mix": None,
+        },
+        "steering": {
+            "enabled": True,
+            "preset": _STEERING_PRESET_ANTI_MEMORIZATION_PIECEWISE_V1,
+            "stages": [],
+        },
+    }
+
+
+def _build_anti_memorization_piecewise_classification_compositional_slice_v1_definition() -> dict[
+    str, Any
+]:
+    return {
+        "dataset": {
+            "task": "classification",
+            "n_train": 768,
+            "n_test": 256,
+            "rows": None,
+            "n_features_min": 16,
+            "n_features_max": 64,
+            "n_classes_min": 2,
+            "n_classes_max": 10,
+            "categorical_ratio_min": 0.0,
+            "categorical_ratio_max": 1.0,
+            "max_categorical_cardinality": 9,
+        },
+        "graph": {
+            "n_nodes_min": 8,
+            "n_nodes_max": 32,
+        },
+        "filter": {
+            "enabled": False,
+            "min_target_indegree": 2,
+            "min_target_relevant_feature_count": 3,
+            "min_target_relevant_feature_fraction": 0.1,
+        },
+        "mechanism": {
+            "function_family_mix": {
+                "piecewise": 3.0,
+                "product": 2.5,
+                "gp": 2.0,
+                "tree": 1.5,
+                "nn": 1.25,
+                "discretization": 1.0,
+                "em": 1.0,
+                "quadratic": 0.75,
+                "linear": 0.5,
+            },
+        },
+        "steering": {
+            "enabled": True,
+            "preset": _STEERING_PRESET_ANTI_MEMORIZATION_PIECEWISE_V1,
+            "stages": [],
+        },
+    }
+
+
 _STEERING_PRESET_BUILDERS: dict[str, Callable[[], dict[str, Any]]] = {
     _STEERING_PRESET_ANTI_MEMORIZATION_PIECEWISE_V1: _build_anti_memorization_piecewise_v1_definition,
 }
 _STRESS_PROFILE_BUILDERS: dict[str, Callable[[], dict[str, Any]]] = {
     _STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_SLICE_V1: (
         _build_anti_memorization_piecewise_classification_slice_v1_definition
+    ),
+    _STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_GRAPH_BREADTH_SLICE_V1: (
+        _build_anti_memorization_piecewise_classification_graph_breadth_slice_v1_definition
+    ),
+    _STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_COMPOSITIONAL_SLICE_V1: (
+        _build_anti_memorization_piecewise_classification_compositional_slice_v1_definition
     ),
 }
 
@@ -224,6 +322,11 @@ def _normalize_stress_fields(stress: "StressConfig") -> None:
 def _get_config_path_value(config: object, path: str) -> object:
     current = config
     for component in path.split("."):
+        if current is None:
+            return None
+        if isinstance(current, dict):
+            current = current.get(component)
+            continue
         current = getattr(current, component)
     return current
 

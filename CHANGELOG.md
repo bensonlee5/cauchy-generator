@@ -10,6 +10,46 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.19.1] - 2026-04-02
+
+### Added
+
+- Added relationship-structure diagnostics for indegree/outdegree dispersion,
+  reachability, ancestor overlap, target-ancestor breadth, and mechanism-family
+  cooccurrence so diversity audits can measure graph-structure variation
+  directly.
+- Added named RD-005 stress profiles
+  `anti_memorization_piecewise_classification_graph_breadth_slice_v1` and
+  `anti_memorization_piecewise_classification_compositional_slice_v1`.
+- Added maintainer-only RD-005 tooling and notes, including a TabICLv2 parity
+  audit and a handoff-root Pareto evaluation script for downstream-score,
+  diversity-shift, and throughput comparisons.
+- Added repo-local RD-005 stress-profile smoke presets plus a public stress
+  profiles guide covering generate, benchmark, and diversity-audit workflows.
+- Added a repo-local Hugo installer used by GitHub Actions so docs jobs validate
+  against the pinned `0.152.2` extended build without deprecated Node 20 action
+  runtimes.
+
+### Changed
+
+- Expanded internal correlated sampling reuse beyond `categorical_ratio` to
+  cover categorical cardinalities, mechanism-family draws, multi-parent
+  aggregation choices, converter and GP variants, and fixed-layout
+  random-weight decay parameters.
+- Updated docs and test workflows to `actions/setup-node@v6` with installed Node
+  `22`, and replaced `peaceiris/actions-hugo@v3` with the repo-local installer
+  path.
+
+### Fixed
+
+- Fixed fixed-layout benchmark retry planning so precomputed classification
+  attempt plans respect `filter.max_attempts` and never emit replay indices that
+  runtime retries cannot honor.
+- Fixed the docs sync manifest so the public stress-profile feature page is
+  published into the Hugo site and linked docs builds stay green.
+- Fixed coverage-summary contract fixtures and goldens for the new
+  relationship-structure diversity metrics.
+
 ## [0.19.0] - 2026-04-01
 
 ### Changed

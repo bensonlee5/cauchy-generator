@@ -35,6 +35,8 @@ _TOTAL_ROWS_CAP_STRATEGY = st.integers(
     max_value=DATASET_ROWS_MAX_TOTAL,
 )
 _STRESS_PROFILE = "anti_memorization_piecewise_classification_slice_v1"
+_GRAPH_BREADTH_STRESS_PROFILE = "anti_memorization_piecewise_classification_graph_breadth_slice_v1"
+_COMPOSITIONAL_STRESS_PROFILE = "anti_memorization_piecewise_classification_compositional_slice_v1"
 
 
 @st.composite
@@ -165,6 +167,44 @@ def test_resolve_generate_config_materializes_stress_profile() -> None:
         and event["new_value"] is None
         for event in trace
     )
+
+
+def test_resolve_generate_config_materializes_graph_breadth_stress_profile() -> None:
+    cfg = GeneratorConfig.from_dict({"stress": {"profile": _GRAPH_BREADTH_STRESS_PROFILE}})
+
+    resolved = resolve_generate_config(
+        cfg,
+        device_override="cpu",
+        rows=None,
+        hardware_policy="none",
+        diagnostics_enabled=False,
+    )
+
+    assert resolved["config"].stress.profile is None
+    assert resolved["config"].dataset.n_features_min == 24
+    assert resolved["config"].graph.n_nodes_max == 40
+    assert resolved["config"].filter.enabled is False
+    assert resolved["config"].filter.min_target_indegree == 2
+    assert resolved["config"].filter.min_target_relevant_feature_fraction == pytest.approx(0.15)
+
+
+def test_resolve_generate_config_materializes_compositional_stress_profile() -> None:
+    cfg = GeneratorConfig.from_dict({"stress": {"profile": _COMPOSITIONAL_STRESS_PROFILE}})
+
+    resolved = resolve_generate_config(
+        cfg,
+        device_override="cpu",
+        rows=None,
+        hardware_policy="none",
+        diagnostics_enabled=False,
+    )
+
+    assert resolved["config"].stress.profile is None
+    assert resolved["config"].filter.enabled is False
+    mix = resolved["config"].mechanism.function_family_mix
+    assert mix["piecewise"] > mix["linear"]
+    assert mix["product"] > mix["quadratic"]
+    assert sum(float(value) for value in mix.values()) == pytest.approx(1.0)
 
 
 @pytest.mark.parametrize(

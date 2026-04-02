@@ -16,6 +16,13 @@ class DatasetMetrics:
     n_categorical_features: int
     categorical_ratio: float
     graph_edge_density: float | None
+    graph_indegree_std: float | None
+    graph_outdegree_std: float | None
+    graph_depth_ratio: float | None
+    graph_reachability_ratio: float | None
+    graph_ancestor_overlap_mean: float | None
+    graph_target_ancestor_fraction: float | None
+    mechanism_family_cooccurrence_ratio: float | None
     shift_enabled: float
     shift_graph_scale: float
     shift_mechanism_scale: float

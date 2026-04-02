@@ -10,6 +10,7 @@ import torch
 from dagzoo.core.layout_types import AggregationKind
 from dagzoo.math import row_normalize
 from dagzoo.rng import KeyedRng
+from dagzoo.sampling.correlated import sample_correlated_num_tensor
 from dagzoo.sampling.noise import NoiseSamplingSpec, sample_noise_from_spec
 
 _PAIRWISE_CENTER_BLOCK_SIZE = 32
@@ -258,6 +259,7 @@ def _sample_random_weights_batch(
     dim: int,
     leading_shape: tuple[int, ...] = (),
     parameter_shape: tuple[int, ...] | None = None,
+    correlation_name: str | None = None,
     sigma_multiplier: float,
     noise_spec: NoiseSamplingSpec | None,
     q: torch.Tensor | None = None,
@@ -278,9 +280,33 @@ def _sample_random_weights_batch(
     q_shape = (rng.batch_size, *normalized_parameter_shape)
     if q is None:
         q_low = 0.1 / math.log(dim + 1.0)
-        q = rng.keyed("q").log_uniform(q_shape, low=q_low, high=6.0)
+        q_rng = rng.keyed("q")
+        if correlation_name is not None and q_rng.keyed_root is not None:
+            q = sample_correlated_num_tensor(
+                q_rng.keyed_root,
+                name=f"{correlation_name}_q",
+                shape=q_shape,
+                low=q_low,
+                high=6.0,
+                device=rng.device,
+                log_scale=True,
+            )
+        else:
+            q = q_rng.log_uniform(q_shape, low=q_low, high=6.0)
     if sigma is None:
-        sigma = rng.keyed("sigma").log_uniform(q_shape, low=1e-4, high=10.0)
+        sigma_rng = rng.keyed("sigma")
+        if correlation_name is not None and sigma_rng.keyed_root is not None:
+            sigma = sample_correlated_num_tensor(
+                sigma_rng.keyed_root,
+                name=f"{correlation_name}_sigma",
+                shape=q_shape,
+                low=1e-4,
+                high=10.0,
+                device=rng.device,
+                log_scale=True,
+            )
+        else:
+            sigma = sigma_rng.log_uniform(q_shape, low=1e-4, high=10.0)
     base_noise = sample_noise_from_spec(
         leading,
         generator=rng.keyed("noise").torch_generator,

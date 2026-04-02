@@ -60,6 +60,7 @@ from dagzoo.core.validation import (
 from dagzoo.functions.activations import fixed_activation_names
 from dagzoo.math import log_uniform as _log_uniform
 from dagzoo.rng import KeyedRng
+from dagzoo.sampling.correlated import sample_correlated_choice
 
 _generator_device = _sampling_common._generator_device
 _rand_scalar = _sampling_common._rand_scalar
@@ -220,7 +221,6 @@ def sample_function_family(
         device=device,
         namespace="sample_function_family",
     )
-    generator = keyed_rng.torch_rng(device=resolved_device)
     family_order = tuple(
         families
         if families is not None
@@ -233,26 +233,30 @@ def sample_function_family(
     if not family_order:
         raise ValueError("At least one mechanism family must be available for sampling.")
     if mechanism_logit_tilt <= 0.0 and function_family_mix is None:
-        idx = _randint_scalar(0, len(family_order), generator)
-        return family_order[int(idx)]
+        return sample_correlated_choice(
+            keyed_rng,
+            name="mechanism_family",
+            values=family_order,
+            device=resolved_device,
+        )
 
     probs_by_family = mechanism_family_probabilities(
         mechanism_logit_tilt=mechanism_logit_tilt,
         families=family_order,
         family_weights=function_family_mix,
     )
-    positive_families = [
+    positive_families = tuple(
         family for family in family_order if float(probs_by_family.get(family, 0.0)) > 0.0
-    ]
+    )
     if not positive_families:
         raise ValueError("No eligible mechanism families are available for sampling.")
-    draw = float(_rand_scalar(generator))
-    cumulative = 0.0
-    for family in positive_families:
-        cumulative += float(probs_by_family[family])
-        if draw <= cumulative:
-            return family
-    return positive_families[-1]
+    return sample_correlated_choice(
+        keyed_rng,
+        name="mechanism_family",
+        values=positive_families,
+        device=resolved_device,
+        base_probs=tuple(float(probs_by_family[family]) for family in positive_families),
+    )
 
 
 def _higher_order_component_mix(
@@ -595,21 +599,21 @@ def _sample_function_plan_for_family_once(
             ),
         )
     if family == "gp":
+        branch_kind = sample_correlated_choice(
+            keyed_rng.keyed("branch_kind"),
+            name="gp_branch_kind",
+            values=("ha", "projected"),
+            device=resolved_device,
+        )
+        variant = sample_correlated_choice(
+            keyed_rng.keyed("variant"),
+            name="gp_variant",
+            values=_GP_VARIANT_CHOICES,
+            device=resolved_device,
+        )
         return GpFunctionPlan(
-            branch_kind=(
-                "ha"
-                if _sample_bool(keyed_rng.keyed("branch_kind").torch_rng(device=resolved_device))
-                else "projected"
-            ),
-            variant=_GP_VARIANT_CHOICES[
-                int(
-                    _randint_scalar(
-                        0,
-                        len(_GP_VARIANT_CHOICES),
-                        keyed_rng.keyed("variant").torch_rng(device=resolved_device),
-                    )
-                )
-            ],
+            branch_kind=cast(Literal["ha", "projected"], branch_kind),
+            variant=cast(FixedLayoutGpVariant, variant),
         )
     if family == "em":
         m_val = int(
@@ -777,9 +781,12 @@ def sample_converter_plan(
             warp_enabled=not _sample_bool(warp_generator),
         )
 
-    generator = keyed_rng.keyed("joint_variant").torch_rng(device=resolved_device)
-    idx_joint = _randint_scalar(0, len(_JOINT_VARIANTS), generator)
-    selected_method_raw, variant_raw = _JOINT_VARIANTS[int(idx_joint)]
+    selected_method_raw, variant_raw = sample_correlated_choice(
+        keyed_rng.keyed("joint_variant"),
+        name="converter_joint_variant",
+        values=_JOINT_VARIANTS,
+        device=resolved_device,
+    )
     if method_override is None:
         selected_method = selected_method_raw
     else:
@@ -935,8 +942,12 @@ def sample_multi_source_plan(
         device=device,
         namespace="sample_multi_source_plan",
     )
-    combine_generator = keyed_rng.keyed("combine_kind").torch_rng(device=resolved_device)
-    combine_kind = "concat" if _sample_bool(combine_generator) else "stack"
+    combine_kind = sample_correlated_choice(
+        keyed_rng.keyed("combine_kind"),
+        name="multi_source_combine_kind",
+        values=("concat", "stack"),
+        device=resolved_device,
+    )
     if combine_kind == "concat":
         return ConcatNodeSource(
             function=sample_function_plan(
@@ -950,12 +961,14 @@ def sample_multi_source_plan(
         )
     resolved_aggregation_kind = aggregation_kind
     if resolved_aggregation_kind is None:
-        aggregation_generator = keyed_rng.keyed("aggregation").torch_rng(device=resolved_device)
-        resolved_aggregation_kind = _AGGREGATION_KIND_ORDER[
-            int(_randint_scalar(0, len(_AGGREGATION_KIND_ORDER), aggregation_generator))
-        ]
+        resolved_aggregation_kind = sample_correlated_choice(
+            keyed_rng.keyed("aggregation"),
+            name="multi_source_aggregation_kind",
+            values=_AGGREGATION_KIND_ORDER,
+            device=resolved_device,
+        )
     return StackedNodeSource(
-        aggregation_kind=resolved_aggregation_kind,
+        aggregation_kind=cast(AggregationKind, resolved_aggregation_kind),
         parent_functions=tuple(
             sample_function_plan(
                 keyed_rng=keyed_rng.keyed("parent", parent_index),

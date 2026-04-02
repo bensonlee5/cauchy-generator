@@ -31,6 +31,7 @@ from dagzoo.core.metric_constants import (
     validate_metric_shapes,
 )
 from dagzoo.core.shift import mechanism_nonlinear_mass
+from dagzoo.graph import dag_longest_path_nodes
 from dagzoo.math import (
     coerce_optional_finite_float as _coerce_optional_finite_float,
 )
@@ -98,6 +99,7 @@ def extract_torch_metrics(
         metrics["majority_minority_ratio"] = None
     metrics["n_classes"] = n_classes
     metrics.update(_extract_shift_observability(bundle.metadata))
+    metrics.update(_extract_relationship_structure_metrics(bundle.metadata))
 
     needs_pearson = (
         bool(
@@ -259,6 +261,158 @@ def _extract_shift_observability(metadata: dict[str, Any]) -> dict[str, float | 
         "shift_mechanism_nonlinear_mass": float(shift_mechanism_nonlinear_mass),
         "shift_noise_variance_multiplier": float(shift_noise_variance_multiplier),
     }
+
+
+def _extract_relationship_structure_metrics(metadata: dict[str, Any]) -> dict[str, float | None]:
+    adjacency = _lineage_adjacency_tensor(metadata)
+    metrics = {
+        "graph_indegree_std": None,
+        "graph_outdegree_std": None,
+        "graph_depth_ratio": None,
+        "graph_reachability_ratio": None,
+        "graph_ancestor_overlap_mean": None,
+        "graph_target_ancestor_fraction": None,
+        "mechanism_family_cooccurrence_ratio": _mechanism_family_cooccurrence_ratio(metadata),
+    }
+    if adjacency is None:
+        return metrics
+
+    n_nodes = int(adjacency.shape[0])
+    if n_nodes <= 0:
+        return metrics
+    degrees = adjacency.to(dtype=torch.float32)
+    metrics["graph_indegree_std"] = float(torch.std(degrees.sum(dim=0), unbiased=False).item())
+    metrics["graph_outdegree_std"] = float(torch.std(degrees.sum(dim=1), unbiased=False).item())
+    metrics["graph_depth_ratio"] = float(dag_longest_path_nodes(adjacency) / float(n_nodes))
+
+    reachability = _dag_reachability(adjacency)
+    capacity = n_nodes * (n_nodes - 1) // 2
+    metrics["graph_reachability_ratio"] = (
+        float(reachability.sum().item() / float(capacity)) if capacity > 0 else 0.0
+    )
+
+    ancestor_masks = reachability.transpose(0, 1).clone()
+    ancestor_masks |= torch.eye(n_nodes, dtype=torch.bool, device=ancestor_masks.device)
+
+    feature_to_node = _feature_to_node_assignments(metadata, n_nodes=n_nodes)
+    metrics["graph_ancestor_overlap_mean"] = _mean_ancestor_overlap(
+        feature_to_node=feature_to_node,
+        ancestor_masks=ancestor_masks,
+    )
+
+    target_to_node = _target_to_node(metadata, n_nodes=n_nodes)
+    if target_to_node is not None:
+        metrics["graph_target_ancestor_fraction"] = float(
+            ancestor_masks[int(target_to_node)].to(dtype=torch.float32).mean().item()
+        )
+    return metrics
+
+
+def _lineage_adjacency_tensor(metadata: dict[str, Any]) -> torch.Tensor | None:
+    lineage_raw = metadata.get("lineage")
+    if not isinstance(lineage_raw, dict):
+        return None
+    graph_raw = lineage_raw.get("graph")
+    if not isinstance(graph_raw, dict):
+        return None
+    adjacency_raw = graph_raw.get("adjacency")
+    if adjacency_raw is None:
+        return None
+    adjacency = torch.as_tensor(adjacency_raw, dtype=torch.bool, device="cpu")
+    if adjacency.ndim != 2 or adjacency.shape[0] != adjacency.shape[1]:
+        return None
+    return adjacency
+
+
+def _feature_to_node_assignments(metadata: dict[str, Any], *, n_nodes: int) -> list[int]:
+    lineage_raw = metadata.get("lineage")
+    if not isinstance(lineage_raw, dict):
+        return []
+    assignments_raw = lineage_raw.get("assignments")
+    if not isinstance(assignments_raw, dict):
+        return []
+    feature_to_node_raw = assignments_raw.get("feature_to_node")
+    if not isinstance(feature_to_node_raw, list):
+        return []
+    assignments: list[int] = []
+    for raw_value in feature_to_node_raw:
+        if isinstance(raw_value, bool) or not isinstance(raw_value, int):
+            continue
+        node_index = int(raw_value)
+        if 0 <= node_index < n_nodes:
+            assignments.append(node_index)
+    return assignments
+
+
+def _target_to_node(metadata: dict[str, Any], *, n_nodes: int) -> int | None:
+    lineage_raw = metadata.get("lineage")
+    if not isinstance(lineage_raw, dict):
+        return None
+    assignments_raw = lineage_raw.get("assignments")
+    if not isinstance(assignments_raw, dict):
+        return None
+    raw_target = assignments_raw.get("target_to_node")
+    if isinstance(raw_target, bool) or not isinstance(raw_target, int):
+        return None
+    target_to_node = int(raw_target)
+    if 0 <= target_to_node < n_nodes:
+        return target_to_node
+    return None
+
+
+def _dag_reachability(adjacency: torch.Tensor) -> torch.Tensor:
+    reachability = adjacency.to(device="cpu", dtype=torch.bool).clone()
+    n_nodes = int(reachability.shape[0])
+    for src in range(n_nodes - 1, -1, -1):
+        children = torch.where(reachability[src])[0].tolist()
+        for child in children:
+            reachability[src] |= reachability[int(child)]
+    return reachability
+
+
+def _mean_ancestor_overlap(
+    *,
+    feature_to_node: list[int],
+    ancestor_masks: torch.Tensor,
+) -> float | None:
+    if len(feature_to_node) < 2:
+        return None
+    overlap_total = 0.0
+    pair_count = 0
+    for left_index in range(len(feature_to_node) - 1):
+        left_mask = ancestor_masks[int(feature_to_node[left_index])]
+        for right_index in range(left_index + 1, len(feature_to_node)):
+            right_mask = ancestor_masks[int(feature_to_node[right_index])]
+            intersection = int(torch.logical_and(left_mask, right_mask).sum().item())
+            union = int(torch.logical_or(left_mask, right_mask).sum().item())
+            if union <= 0:
+                continue
+            overlap_total += float(intersection / union)
+            pair_count += 1
+    if pair_count <= 0:
+        return None
+    return float(overlap_total / pair_count)
+
+
+def _mechanism_family_cooccurrence_ratio(metadata: dict[str, Any]) -> float | None:
+    mechanism_raw = metadata.get("mechanism_families")
+    if not isinstance(mechanism_raw, dict):
+        return None
+    counts_raw = mechanism_raw.get("sampled_family_counts")
+    if not isinstance(counts_raw, dict):
+        return None
+    counts: list[int] = []
+    for raw_count in counts_raw.values():
+        if isinstance(raw_count, bool) or not isinstance(raw_count, (int, float)):
+            continue
+        count = int(raw_count)
+        if count > 0:
+            counts.append(count)
+    total = int(sum(counts))
+    if total <= 1:
+        return 0.0 if total == 1 else None
+    same_family_pairs = sum(count * (count - 1) for count in counts)
+    return float(1.0 - (same_family_pairs / float(total * (total - 1))))
 
 
 def _coerce_bool(value: Any, *, default: bool) -> bool:
