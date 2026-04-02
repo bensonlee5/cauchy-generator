@@ -8,11 +8,165 @@
     "metadata_coverage_rate": 0.0
   },
   "metrics": {
+    "graph_ancestor_overlap_mean": {
+      "count": 1,
+      "histogram": {
+        "coverage_ratio": 0.25,
+        "covered_bins": 1,
+        "num_bins": 4
+      },
+      "mean": 0.3,
+      "missing_count": 0,
+      "observed_max": 0.3,
+      "observed_min": 0.3,
+      "quantiles": {
+        "p25": 0.3,
+        "p50": 0.3,
+        "p75": 0.3
+      },
+      "sampled_count": 1,
+      "sampled_fraction": 1.0,
+      "std": 0.0,
+      "target_band": null,
+      "underrepresented_bins": []
+    },
+    "graph_depth_ratio": {
+      "count": 1,
+      "histogram": {
+        "coverage_ratio": 0.25,
+        "covered_bins": 1,
+        "num_bins": 4
+      },
+      "mean": 0.75,
+      "missing_count": 0,
+      "observed_max": 0.75,
+      "observed_min": 0.75,
+      "quantiles": {
+        "p25": 0.75,
+        "p50": 0.75,
+        "p75": 0.75
+      },
+      "sampled_count": 1,
+      "sampled_fraction": 1.0,
+      "std": 0.0,
+      "target_band": null,
+      "underrepresented_bins": []
+    },
+    "graph_indegree_std": {
+      "count": 1,
+      "histogram": {
+        "coverage_ratio": 0.25,
+        "covered_bins": 1,
+        "num_bins": 4
+      },
+      "mean": 0.6,
+      "missing_count": 0,
+      "observed_max": 0.6,
+      "observed_min": 0.6,
+      "quantiles": {
+        "p25": 0.6,
+        "p50": 0.6,
+        "p75": 0.6
+      },
+      "sampled_count": 1,
+      "sampled_fraction": 1.0,
+      "std": 0.0,
+      "target_band": null,
+      "underrepresented_bins": []
+    },
+    "graph_outdegree_std": {
+      "count": 1,
+      "histogram": {
+        "coverage_ratio": 0.25,
+        "covered_bins": 1,
+        "num_bins": 4
+      },
+      "mean": 0.5,
+      "missing_count": 0,
+      "observed_max": 0.5,
+      "observed_min": 0.5,
+      "quantiles": {
+        "p25": 0.5,
+        "p50": 0.5,
+        "p75": 0.5
+      },
+      "sampled_count": 1,
+      "sampled_fraction": 1.0,
+      "std": 0.0,
+      "target_band": null,
+      "underrepresented_bins": []
+    },
+    "graph_reachability_ratio": {
+      "count": 1,
+      "histogram": {
+        "coverage_ratio": 0.25,
+        "covered_bins": 1,
+        "num_bins": 4
+      },
+      "mean": 0.5,
+      "missing_count": 0,
+      "observed_max": 0.5,
+      "observed_min": 0.5,
+      "quantiles": {
+        "p25": 0.5,
+        "p50": 0.5,
+        "p75": 0.5
+      },
+      "sampled_count": 1,
+      "sampled_fraction": 1.0,
+      "std": 0.0,
+      "target_band": null,
+      "underrepresented_bins": []
+    },
+    "graph_target_ancestor_fraction": {
+      "count": 1,
+      "histogram": {
+        "coverage_ratio": 0.25,
+        "covered_bins": 1,
+        "num_bins": 4
+      },
+      "mean": 0.625,
+      "missing_count": 0,
+      "observed_max": 0.625,
+      "observed_min": 0.625,
+      "quantiles": {
+        "p25": 0.625,
+        "p50": 0.625,
+        "p75": 0.625
+      },
+      "sampled_count": 1,
+      "sampled_fraction": 1.0,
+      "std": 0.0,
+      "target_band": null,
+      "underrepresented_bins": []
+    },
+    "mechanism_family_cooccurrence_ratio": {
+      "count": 1,
+      "histogram": {
+        "coverage_ratio": 0.25,
+        "covered_bins": 1,
+        "num_bins": 4
+      },
+      "mean": 0.4,
+      "missing_count": 0,
+      "observed_max": 0.4,
+      "observed_min": 0.4,
+      "quantiles": {
+        "p25": 0.4,
+        "p50": 0.4,
+        "p75": 0.4
+      },
+      "sampled_count": 1,
+      "sampled_fraction": 1.0,
+      "std": 0.0,
+      "target_band": null,
+      "underrepresented_bins": []
+    },
     "n_rows": {
       "count": 1,
       "histogram": {
-        "covered_bins": 1,
         "coverage_ratio": 0.25,
+        "covered_bins": 1,
         "num_bins": 4
       },
       "mean": 64.0,
@@ -26,15 +180,15 @@
       },
       "sampled_count": 1,
       "sampled_fraction": 1.0,
-      "target_band": null,
       "std": 0.0,
+      "target_band": null,
       "underrepresented_bins": []
     },
     "pearson_abs_mean": {
       "count": 1,
       "histogram": {
-        "covered_bins": 1,
         "coverage_ratio": 0.25,
+        "covered_bins": 1,
         "num_bins": 4
       },
       "mean": 0.2,
@@ -48,13 +202,13 @@
       },
       "sampled_count": 1,
       "sampled_fraction": 1.0,
+      "std": 0.0,
       "target_band": {
         "in_target_count": 1,
         "in_target_fraction": 1.0,
         "max": 1.0,
         "min": 0.0
       },
-      "std": 0.0,
       "underrepresented_bins": [
         {
           "count": 0,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 import yaml
@@ -220,6 +221,60 @@ def test_benchmark_cli_diagnostics_summary_omits_steering_payload(tmp_path) -> N
     coverage_summary = json.loads(coverage_path.read_text(encoding="utf-8"))
     assert "steering" not in coverage_summary
     assert "pearson_abs_mean" in coverage_summary["metrics"]
+
+
+@pytest.mark.parametrize(
+    "config_path",
+    [
+        "configs/preset_stress_classification_slice_benchmark_smoke.yaml",
+        "configs/preset_stress_graph_breadth_benchmark_smoke.yaml",
+        "configs/preset_stress_compositional_benchmark_smoke.yaml",
+    ],
+)
+def test_stress_benchmark_presets_emit_expected_scenario_shape(
+    tmp_path,
+    config_path: str,
+) -> None:
+    out_dir = tmp_path / Path(config_path).stem
+
+    code = main(
+        [
+            "benchmark",
+            "--config",
+            config_path,
+            "--preset",
+            "custom",
+            "--suite",
+            "smoke",
+            "--num-datasets",
+            "1",
+            "--warmup",
+            "0",
+            "--hardware-policy",
+            "none",
+            "--no-memory",
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    profile = payload["preset_results"][0]
+    assert profile["diagnostics_enabled"] is False
+    assert set(profile["scenarios"]) == {
+        "baseline",
+        "throughput",
+        "filtering",
+        "missingness",
+        "shift",
+        "noise",
+    }
+    assert profile["scenarios"]["throughput"]["enabled"] is True
+    assert profile["scenarios"]["filtering"]["status"] == "off"
+    assert profile["scenarios"]["missingness"]["status"] == "off"
+    assert profile["scenarios"]["shift"]["status"] == "off"
+    assert profile["scenarios"]["noise"]["status"] == "off"
 
 
 def test_print_preset_result_line_uses_scenario_statuses(

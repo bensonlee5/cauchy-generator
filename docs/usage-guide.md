@@ -268,7 +268,31 @@ Detailed guide: [Meta-Feature Coverage Steering](features/steering.md)
 
 ______________________________________________________________________
 
-## 10. Noise workflows
+## 10. Stress-profile workflows
+
+Use robustness stress profiles when you want one named carried slice rather
+than a hand-authored harder config:
+
+```bash
+dagzoo generate \
+  --config configs/preset_stress_graph_breadth_generate_smoke.yaml \
+  --num-datasets 25 \
+  --out data/run_stress_graph_breadth_smoke
+
+dagzoo benchmark \
+  --config configs/preset_stress_graph_breadth_benchmark_smoke.yaml \
+  --preset custom \
+  --suite smoke \
+  --diagnostics \
+  --no-memory \
+  --out-dir benchmarks/results/smoke_stress_graph_breadth
+```
+
+Detailed guide: [Robustness Stress Profiles](features/stress-profiles.md)
+
+______________________________________________________________________
+
+## 11. Noise workflows
 
 Use noise workflows for explicit Gaussian/Laplace/Student-t/mixture regimes:
 
@@ -280,7 +304,7 @@ Detailed guide: [Noise Diversification](features/noise.md)
 
 ______________________________________________________________________
 
-## 11. Mechanism-diversity workflows
+## 12. Mechanism-diversity workflows
 
 Use mechanism-diversity workflows when you want to compare the current
 baseline sampler against the shipped `piecewise` control and the widened `gp`
@@ -321,7 +345,7 @@ Detailed guide: [Mechanism Diversity](features/mechanism-diversity.md)
 
 ______________________________________________________________________
 
-## 12. Benchmark workflows and guardrails
+## 13. Benchmark workflows and guardrails
 
 Use benchmark workflows for smoke checks, feature guardrails, and regression
 gating.
@@ -357,7 +381,7 @@ with per-variant diversity status and throughput deltas.
 
 ______________________________________________________________________
 
-## 13. Generate handoff workflows
+## 14. Generate handoff workflows
 
 Use `dagzoo generate --handoff-root` when a downstream consumer needs a stable
 handoff root. There is no separate request-file
@@ -402,6 +426,7 @@ ______________________________________________________________________
   [diagnostics](features/diagnostics.md),
   [missingness](features/missingness.md),
   [many-class](features/many-class.md),
+  [stress profiles](features/stress-profiles.md),
   [shift](features/shift.md),
   [steering](features/steering.md),
   [noise](features/noise.md),

@@ -22,6 +22,8 @@ on:
 concurrency:
   group: docs-${{ github.ref }}
   cancel-in-progress: true
+env:
+  HUGO_VERSION: "0.152.2"
 
 jobs:
   validate:
@@ -45,9 +47,9 @@ jobs:
         run: ./scripts/dev bootstrap
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "24"
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: site/package-lock.json
 
@@ -68,11 +70,13 @@ jobs:
         with:
           go-version-file: site/go.mod
 
-      - name: Setup Hugo
-        uses: peaceiris/actions-hugo@v3
-        with:
-          hugo-version: "0.152.2"
-          extended: true
+      - name: Install Hugo
+        run: >
+          python scripts/ci/install_hugo.py
+          --version "${HUGO_VERSION}"
+          --extended
+          --bin-dir .github/tools/hugo/bin
+          --github-path-file "${GITHUB_PATH}"
 
       - name: Build site
         run: hugo --source site --minify --gc --destination public
@@ -113,9 +117,9 @@ jobs:
         run: ./scripts/dev bootstrap
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "24"
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: site/package-lock.json
 
@@ -130,11 +134,13 @@ jobs:
         with:
           go-version-file: site/go.mod
 
-      - name: Setup Hugo
-        uses: peaceiris/actions-hugo@v3
-        with:
-          hugo-version: "0.152.2"
-          extended: true
+      - name: Install Hugo
+        run: >
+          python scripts/ci/install_hugo.py
+          --version "${HUGO_VERSION}"
+          --extended
+          --bin-dir .github/tools/hugo/bin
+          --github-path-file "${GITHUB_PATH}"
 
       - name: Build site
         run: hugo --source site --minify --gc --destination public

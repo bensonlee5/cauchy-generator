@@ -50,6 +50,7 @@ USER_MD_SOURCES = [
     "features/shift.md",
     "features/steering.md",
     "features/noise.md",
+    "features/stress-profiles.md",
     "features/benchmark-guardrails.md",
     "features/mechanism-diversity.md",
 ]
@@ -120,12 +121,16 @@ PAGE_METADATA: dict[str, PageMeta] = {
         weight=65,
         description="Noise family selection, mixture modes, and per-dataset resolution.",
     ),
-    "features/benchmark-guardrails.md": PageMeta(
+    "features/stress-profiles.md": PageMeta(
         weight=66,
+        description="Opt-in robustness stress-profile slices for anti-memorization and structure stress testing.",
+    ),
+    "features/benchmark-guardrails.md": PageMeta(
+        weight=67,
         description="Automated quality checks for benchmark suite runs.",
     ),
     "features/mechanism-diversity.md": PageMeta(
-        weight=67,
+        weight=68,
         description="Opt-in mechanism-family rollout workflows and diagnostics checks.",
     ),
 }

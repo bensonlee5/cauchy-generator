@@ -1,0 +1,18 @@
+seed: 83
+
+stress:
+  profile: anti_memorization_piecewise_classification_graph_breadth_slice_v1
+
+runtime:
+  device: cpu
+
+output:
+  out_dir: data/run_stress_graph_breadth_smoke
+
+diagnostics:
+  enabled: true
+  include_spearman: false
+  histogram_bins: 8
+  quantiles: [0.1, 0.5, 0.9]
+  underrepresented_threshold: 0.5
+  max_values_per_metric: 10000

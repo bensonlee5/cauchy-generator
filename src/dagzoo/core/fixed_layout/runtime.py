@@ -1534,6 +1534,7 @@ def _first_valid_classification_attempt_for_dataset(
     requested_device: str,
     resolved_device: str,
     start_attempt: int = 0,
+    attempt_budget: int | None = None,
 ) -> int | None:
     """Return the first valid replay attempt for one dataset seed, if any."""
 
@@ -1543,7 +1544,11 @@ def _first_valid_classification_attempt_for_dataset(
         keyed_rng=dataset_root.keyed("noise_runtime"),
     )
     noise_spec = _noise_sampling_spec(noise_runtime_selection)
-    attempts = _plan_candidate_attempt_budget(config)
+    attempts = (
+        max(1, int(attempt_budget))
+        if attempt_budget is not None
+        else _plan_candidate_attempt_budget(config)
+    )
 
     for attempt in range(max(0, int(start_attempt)), attempts):
         y_batch, _aux_meta_batch = generate_fixed_layout_label_batch(
@@ -1578,6 +1583,7 @@ def _fixed_layout_plan_classification_attempt_plan(
     """Return the first-valid attempt per dataset for a replayable classification run."""
 
     shift_params = resolve_shift_runtime_params(config)
+    replay_attempt_budget = max(1, int(config.filter.max_attempts))
     effective_batch_size = max(1, int(batch_size))
     dataset_index = 0
     attempt_plan: list[int] = []
@@ -1624,6 +1630,7 @@ def _fixed_layout_plan_classification_attempt_plan(
                 requested_device=requested_device,
                 resolved_device=resolved_device,
                 start_attempt=1,
+                attempt_budget=replay_attempt_budget,
             )
             if replay_attempt is None:
                 return None

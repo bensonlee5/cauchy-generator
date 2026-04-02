@@ -16,6 +16,17 @@ _RATE_PLACEHOLDER = "<RATE>"
 _MS_PLACEHOLDER = "<MS>"
 _MB_PLACEHOLDER = "<MB>"
 _PERCENT_PLACEHOLDER = "<PERCENT>"
+_COVERAGE_GOLDEN_METRICS = (
+    "n_rows",
+    "pearson_abs_mean",
+    "graph_indegree_std",
+    "graph_outdegree_std",
+    "graph_depth_ratio",
+    "graph_reachability_ratio",
+    "graph_ancestor_overlap_mean",
+    "graph_target_ancestor_fraction",
+    "mechanism_family_cooccurrence_ratio",
+)
 
 _HEX_ID_RE = re.compile(r"\b[0-9a-f]{32}\b")
 _ISO_TIMESTAMP_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}T[0-9:.\-+Z]+\b")
@@ -122,12 +133,8 @@ def normalize_handoff_manifest(payload: dict[str, Any]) -> dict[str, Any]:
 
 def normalize_coverage_summary(summary: dict[str, Any]) -> dict[str, Any]:
     metrics = summary.get("metrics", {})
-    n_rows = metrics.get("n_rows", {}) if isinstance(metrics, dict) else {}
-    pearson_abs_mean = metrics.get("pearson_abs_mean", {}) if isinstance(metrics, dict) else {}
-    if not isinstance(n_rows, dict):
-        n_rows = {}
-    if not isinstance(pearson_abs_mean, dict):
-        pearson_abs_mean = {}
+    if not isinstance(metrics, dict):
+        metrics = {}
 
     return {
         "generated_at": _TIMESTAMP_PLACEHOLDER,
@@ -138,8 +145,7 @@ def normalize_coverage_summary(summary: dict[str, Any]) -> dict[str, Any]:
         "max_values_per_metric": summary.get("max_values_per_metric"),
         "mechanism_family_summary": _project_mechanism_family_summary(summary),
         "metrics": {
-            "n_rows": _project_metric(n_rows),
-            "pearson_abs_mean": _project_metric(pearson_abs_mean),
+            metric: _project_metric(metrics.get(metric, {})) for metric in _COVERAGE_GOLDEN_METRICS
         },
     }
 

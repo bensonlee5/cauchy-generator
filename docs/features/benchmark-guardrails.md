@@ -1,7 +1,7 @@
 # Benchmark Workflows and Guardrails
 
 Use benchmark workflows to validate throughput/latency and enforce regression
-guardrails across default and feature-specific configs.
+guardrails across default, feature-specific, and stress-profile configs.
 
 ______________________________________________________________________
 
@@ -79,6 +79,27 @@ dagzoo benchmark \
   --diagnostics \
   --no-memory \
   --out-dir benchmarks/results/smoke_steering
+
+dagzoo benchmark \
+  --config configs/preset_stress_classification_slice_benchmark_smoke.yaml \
+  --preset custom \
+  --suite smoke \
+  --no-memory \
+  --out-dir benchmarks/results/smoke_stress_classification_slice
+
+dagzoo benchmark \
+  --config configs/preset_stress_graph_breadth_benchmark_smoke.yaml \
+  --preset custom \
+  --suite smoke \
+  --no-memory \
+  --out-dir benchmarks/results/smoke_stress_graph_breadth
+
+dagzoo benchmark \
+  --config configs/preset_stress_compositional_benchmark_smoke.yaml \
+  --preset custom \
+  --suite smoke \
+  --no-memory \
+  --out-dir benchmarks/results/smoke_stress_compositional
 ```
 
 ______________________________________________________________________
@@ -146,6 +167,26 @@ Inspect these `summary.json` fields first:
 The rewritten audit persists `summary.json` and `summary.md` as the canonical
 equivalence/local-overlap and cross-run diversity outputs.
 
+For robustness stress profiles, use `configs/default.yaml` as the baseline and
+swap one stress benchmark preset in as the variant:
+
+```bash
+dagzoo diversity-audit \
+  --baseline-config configs/default.yaml \
+  --variant-config configs/preset_stress_graph_breadth_benchmark_smoke.yaml \
+  --suite smoke \
+  --num-datasets 10 \
+  --warmup 0 \
+  --device cpu \
+  --out-dir benchmarks/results/diversity_audit_stress_graph_breadth
+```
+
+Use the same pattern with:
+
+- `configs/preset_stress_classification_slice_benchmark_smoke.yaml`
+- `configs/preset_stress_graph_breadth_benchmark_smoke.yaml`
+- `configs/preset_stress_compositional_benchmark_smoke.yaml`
+
 ______________________________________________________________________
 
 ## Regression gating
@@ -191,4 +232,5 @@ ______________________________________________________________________
 - Workflow hub: [usage-guide.md](../usage-guide.md)
 - Output contract: [output-format.md](../output-format.md)
 - Noise workflows: [noise.md](noise.md)
+- Stress profiles: [stress-profiles.md](stress-profiles.md)
 - Steering workflows: [steering.md](steering.md)
