@@ -15,6 +15,25 @@ from dagzoo.graph import dag_edge_density, dag_longest_path_nodes, sample_dag
 from dagzoo.rng import KeyedRng
 from dagzoo.sampling.correlated import sample_correlated_choice, sample_correlated_num
 
+_GRAPH_BREADTH_STRESS_PROFILE = "anti_memorization_piecewise_classification_graph_breadth_slice_v1"
+_GRAPH_RELATIONSHIP_PROFILES: tuple[str, ...] = (
+    "fanin_heavy",
+    "ancestor_breadth",
+    "mixed_breadth",
+)
+_GRAPH_RELATIONSHIP_PROFILE_BASE_PROBS: tuple[float, ...] = (0.25, 0.35, 0.40)
+_GRAPH_RELATIONSHIP_MIN_STRUCTURE_ATTEMPTS = 8
+_GRAPH_RELATIONSHIP_PROFILE_WEIGHTS: dict[str, tuple[float, float, float, float, float, float]] = {
+    "fanin_heavy": (2.0, 1.5, 1.0, 1.0, 0.75, -1.0),
+    "ancestor_breadth": (1.0, 2.5, 2.0, 1.5, 1.5, -1.0),
+    "mixed_breadth": (1.5, 2.0, 1.5, 1.25, 1.0, -1.0),
+}
+_GRAPH_RELATIONSHIP_EDGE_LOGIT_BIAS_OFFSETS: dict[str, float] = {
+    "fanin_heavy": 0.60,
+    "ancestor_breadth": 0.45,
+    "mixed_breadth": 0.50,
+}
+
 
 def _sample_log_uniform_int(generator: torch.Generator, device: str, low: int, high: int) -> int:
     """Sample an integer from a log-uniform range [low, high]."""
@@ -68,6 +87,115 @@ def _ancestor_nodes_for_target(adjacency: torch.Tensor, *, target_to_node: int) 
     return ancestors
 
 
+def _graph_relationship_policy_enabled(stress_profile_name: str | None) -> bool:
+    return str(stress_profile_name) == _GRAPH_BREADTH_STRESS_PROFILE
+
+
+def _sample_graph_relationship_profile(
+    *,
+    keyed_rng: KeyedRng,
+    device: str,
+    stress_profile_name: str | None,
+) -> str | None:
+    if not _graph_relationship_policy_enabled(stress_profile_name):
+        return None
+    return str(
+        sample_correlated_choice(
+            keyed_rng,
+            name="graph_relationship_profile",
+            values=_GRAPH_RELATIONSHIP_PROFILES,
+            device=device,
+            base_probs=_GRAPH_RELATIONSHIP_PROFILE_BASE_PROBS,
+        )
+    )
+
+
+def _graph_relationship_edge_logit_bias(relationship_profile: str | None) -> float:
+    if relationship_profile is None:
+        return 0.0
+    return float(_GRAPH_RELATIONSHIP_EDGE_LOGIT_BIAS_OFFSETS.get(str(relationship_profile), 0.0))
+
+
+def _dag_reachability(adjacency: torch.Tensor) -> torch.Tensor:
+    adjacency_cpu = adjacency.to(device="cpu", dtype=torch.bool)
+    n_nodes = int(adjacency_cpu.shape[0])
+    reachability = adjacency_cpu.clone()
+    for pivot in range(n_nodes):
+        parents = reachability[:, pivot].unsqueeze(1)
+        children = reachability[pivot, :].unsqueeze(0)
+        reachability |= parents & children
+    return reachability
+
+
+def _graph_relationship_candidate_score(
+    *,
+    adjacency: torch.Tensor,
+    feature_to_node: list[int],
+    target_to_node: int,
+    graph_depth_nodes: int,
+    relationship_profile: str,
+) -> float:
+    adjacency_cpu = adjacency.to(device="cpu", dtype=torch.bool)
+    n_nodes = max(1, int(adjacency_cpu.shape[0]))
+    indegree = adjacency_cpu.sum(dim=0)
+    root_fraction = float((indegree == 0).to(dtype=torch.float32).mean().item())
+    multi_parent_fraction = float((indegree >= 2).to(dtype=torch.float32).mean().item())
+    target_ancestor_fraction = float(
+        len(_ancestor_nodes_for_target(adjacency_cpu, target_to_node=int(target_to_node)))
+        / float(n_nodes)
+    )
+    reachability = _dag_reachability(adjacency_cpu)
+    ancestor_masks = reachability.transpose(0, 1).clone()
+    ancestor_masks |= torch.eye(n_nodes, dtype=torch.bool, device=ancestor_masks.device)
+    ancestor_overlap_mean = _mean_ancestor_overlap(
+        feature_to_node=feature_to_node,
+        ancestor_masks=ancestor_masks,
+    )
+    capacity = n_nodes * (n_nodes - 1) // 2
+    reachability_ratio = float(reachability.sum().item() / float(capacity)) if capacity > 0 else 0.0
+    depth_ratio = float(int(graph_depth_nodes) / float(n_nodes))
+    (
+        multi_parent_weight,
+        ancestor_weight,
+        overlap_weight,
+        reachability_weight,
+        depth_weight,
+        root_weight,
+    ) = _GRAPH_RELATIONSHIP_PROFILE_WEIGHTS[str(relationship_profile)]
+    return float(
+        (multi_parent_weight * multi_parent_fraction)
+        + (ancestor_weight * target_ancestor_fraction)
+        + (overlap_weight * float(ancestor_overlap_mean or 0.0))
+        + (reachability_weight * reachability_ratio)
+        + (depth_weight * depth_ratio)
+        + (root_weight * root_fraction)
+    )
+
+
+def _mean_ancestor_overlap(
+    *,
+    feature_to_node: list[int],
+    ancestor_masks: torch.Tensor,
+) -> float | None:
+    if len(feature_to_node) < 2:
+        return None
+    overlap_total = 0.0
+    pair_count = 0
+    for left_index in range(len(feature_to_node) - 1):
+        left_mask = ancestor_masks[int(feature_to_node[left_index])]
+        for right_index in range(left_index + 1, len(feature_to_node)):
+            right_mask = ancestor_masks[int(feature_to_node[right_index])]
+            intersection = int(torch.logical_and(left_mask, right_mask).sum().item())
+            union = int(torch.logical_or(left_mask, right_mask).sum().item())
+            if union <= 0:
+                continue
+            overlap_total += float(intersection / union)
+            pair_count += 1
+    if pair_count <= 0:
+        return None
+    return float(overlap_total / pair_count)
+
+
 def _eligible_target_nodes(
     *,
     adjacency: torch.Tensor,
@@ -109,6 +237,7 @@ def _sample_target_node(
     config: GeneratorConfig,
     keyed_rng: KeyedRng,
     device: str,
+    relationship_profile: str | None = None,
 ) -> int:
     generator = keyed_rng.keyed("assignments", "target").torch_rng(device=device)
     eligible_target_nodes = _eligible_target_nodes(
@@ -118,6 +247,38 @@ def _sample_target_node(
     )
     if not eligible_target_nodes:
         return int(_sample_assignments(1, int(adjacency.shape[0]), generator, device)[0])
+    if relationship_profile is not None:
+        best_target_nodes: list[int] = []
+        best_target_score: tuple[int, int, int] | None = None
+        for candidate_target in eligible_target_nodes:
+            relevant_nodes = _ancestor_nodes_for_target(
+                adjacency, target_to_node=int(candidate_target)
+            )
+            relevant_feature_count = int(
+                sum(1 for node_index in feature_to_node if int(node_index) in relevant_nodes)
+            )
+            candidate_score = (
+                int(relevant_feature_count),
+                int(len(relevant_nodes)),
+                int(adjacency[:, int(candidate_target)].to(dtype=torch.int64).sum().item()),
+            )
+            if best_target_score is None or candidate_score > best_target_score:
+                best_target_score = candidate_score
+                best_target_nodes = [int(candidate_target)]
+            elif candidate_score == best_target_score:
+                best_target_nodes.append(int(candidate_target))
+        if len(best_target_nodes) == 1:
+            return int(best_target_nodes[0])
+        target_index = int(
+            torch.randint(
+                0,
+                len(best_target_nodes),
+                (1,),
+                generator=generator,
+                device=device,
+            ).item()
+        )
+        return int(best_target_nodes[target_index])
     target_index = int(
         torch.randint(
             0,
@@ -134,6 +295,7 @@ def _sample_layout(
     config: GeneratorConfig,
     keyed_rng: KeyedRng,
     device: str,
+    stress_profile_name: str | None = None,
 ) -> LayoutPlan:
     """Sample dataset layout, graph, and node assignments for one dataset instance."""
 
@@ -211,12 +373,26 @@ def _sample_layout(
         keyed_rng.keyed("graph_nodes").torch_rng(device=device),
         device,
     )
+    relationship_profile = _sample_graph_relationship_profile(
+        keyed_rng=keyed_rng.keyed("relationship_profile"),
+        device=device,
+        stress_profile_name=stress_profile_name,
+    )
     structure_attempts = max(1, int(config.filter.max_attempts))
+    if relationship_profile is not None:
+        structure_attempts = max(
+            int(structure_attempts),
+            int(_GRAPH_RELATIONSHIP_MIN_STRUCTURE_ATTEMPTS),
+        )
     adjacency: torch.Tensor | None = None
     feature_to_node: list[int] | None = None
     target_to_node: int | None = None
     graph_depth_nodes = 1
     graph_edge_density = 0.0
+    best_eligible_candidate: tuple[float, torch.Tensor, list[int], int, int, float] | None = None
+    edge_logit_bias = float(
+        shift_params.edge_logit_bias_shift
+    ) + _graph_relationship_edge_logit_bias(relationship_profile)
     for structure_attempt in range(structure_attempts):
         attempt_root = (
             keyed_rng
@@ -226,7 +402,7 @@ def _sample_layout(
         adjacency = sample_dag(
             num_nodes,
             attempt_root.keyed("graph").torch_rng(device="cpu"),
-            edge_logit_bias=float(shift_params.edge_logit_bias_shift),
+            edge_logit_bias=edge_logit_bias,
         )
         graph_depth_nodes = dag_longest_path_nodes(adjacency)
         graph_edge_density = dag_edge_density(adjacency)
@@ -242,13 +418,42 @@ def _sample_layout(
             config=config,
             keyed_rng=attempt_root,
             device=device,
+            relationship_profile=relationship_profile,
         )
-        if _eligible_target_nodes(
+        eligible_target_nodes = _eligible_target_nodes(
             adjacency=adjacency,
             feature_to_node=feature_to_node,
             config=config,
-        ):
+        )
+        if not eligible_target_nodes:
+            continue
+        if relationship_profile is None:
             break
+        candidate_score = _graph_relationship_candidate_score(
+            adjacency=adjacency,
+            feature_to_node=feature_to_node,
+            target_to_node=int(target_to_node),
+            graph_depth_nodes=int(graph_depth_nodes),
+            relationship_profile=relationship_profile,
+        )
+        if best_eligible_candidate is None or candidate_score > float(best_eligible_candidate[0]):
+            best_eligible_candidate = (
+                float(candidate_score),
+                adjacency.clone(),
+                list(feature_to_node),
+                int(target_to_node),
+                int(graph_depth_nodes),
+                float(graph_edge_density),
+            )
+    if relationship_profile is not None and best_eligible_candidate is not None:
+        (
+            _score,
+            adjacency,
+            feature_to_node,
+            target_to_node,
+            graph_depth_nodes,
+            graph_edge_density,
+        ) = best_eligible_candidate
     assert adjacency is not None
     assert feature_to_node is not None
     assert target_to_node is not None
@@ -281,6 +486,7 @@ def _resample_layout_graph(
     config: GeneratorConfig,
     keyed_rng: KeyedRng,
     edge_logit_bias: float,
+    stress_profile_name: str | None = None,
 ) -> LayoutPlan:
     """Resample only the graph portion of a layout while preserving feature schema."""
 
@@ -289,7 +495,21 @@ def _resample_layout_graph(
     adjacency: torch.Tensor | None = None
     graph_depth_nodes = 1
     graph_edge_density = 0.0
+    relationship_profile = _sample_graph_relationship_profile(
+        keyed_rng=keyed_rng.keyed("relationship_profile"),
+        device="cpu",
+        stress_profile_name=stress_profile_name,
+    )
+    if relationship_profile is not None:
+        structure_attempts = max(
+            int(structure_attempts),
+            int(_GRAPH_RELATIONSHIP_MIN_STRUCTURE_ATTEMPTS),
+        )
+    best_eligible_candidate: tuple[float, torch.Tensor, int, float] | None = None
     base_adjacency = torch.as_tensor(layout.adjacency, dtype=torch.bool, device="cpu")
+    effective_edge_logit_bias = float(edge_logit_bias) + _graph_relationship_edge_logit_bias(
+        relationship_profile
+    )
     for structure_attempt in range(structure_attempts):
         attempt_root = (
             keyed_rng
@@ -299,19 +519,38 @@ def _resample_layout_graph(
         adjacency = sample_dag(
             int(layout.graph_nodes),
             attempt_root.keyed("graph").torch_rng(device="cpu"),
-            edge_logit_bias=float(edge_logit_bias),
+            edge_logit_bias=effective_edge_logit_bias,
         )
         graph_depth_nodes = dag_longest_path_nodes(adjacency)
         graph_edge_density = dag_edge_density(adjacency)
-        if int(layout.target_to_node) in _eligible_target_nodes(
+        is_valid_candidate = int(layout.target_to_node) in _eligible_target_nodes(
             adjacency=adjacency,
             feature_to_node=feature_to_node,
             config=config,
         ) and (
             not torch.equal(adjacency.to(device="cpu", dtype=torch.bool), base_adjacency)
             or structure_attempt == (structure_attempts - 1)
-        ):
+        )
+        if not is_valid_candidate:
+            continue
+        if relationship_profile is None:
             break
+        candidate_score = _graph_relationship_candidate_score(
+            adjacency=adjacency,
+            feature_to_node=feature_to_node,
+            target_to_node=int(layout.target_to_node),
+            graph_depth_nodes=int(graph_depth_nodes),
+            relationship_profile=relationship_profile,
+        )
+        if best_eligible_candidate is None or candidate_score > float(best_eligible_candidate[0]):
+            best_eligible_candidate = (
+                float(candidate_score),
+                adjacency.clone(),
+                int(graph_depth_nodes),
+                float(graph_edge_density),
+            )
+    if relationship_profile is not None and best_eligible_candidate is not None:
+        _score, adjacency, graph_depth_nodes, graph_edge_density = best_eligible_candidate
     assert adjacency is not None
     return LayoutPlan(
         n_features=int(layout.n_features),

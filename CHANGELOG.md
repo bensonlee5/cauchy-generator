@@ -10,6 +10,23 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.19.3] - 2026-04-02
+
+### Added
+
+- Added a graph-breadth-specific RD-005 relationship-policy lane that reuses
+  correlated sampling for parent-arity-aware source-shape choices and verifies
+  those semantics with dedicated layout, replay, and execution-plan tests.
+
+### Changed
+
+- Tuned fixed-layout graph-breadth layout sampling so carried stress profiles
+  now influence layout replay, relationship-profile candidate search, and
+  internal target selection without broadening the public config surface.
+- Updated the RD-005 maintainer parity and handoff notes to treat graph/source-
+  shape reuse as implemented in the graph-breadth lane rather than deferred
+  follow-on work.
+
 ## [0.19.2] - 2026-04-02
 
 ### Added

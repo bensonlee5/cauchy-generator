@@ -313,15 +313,26 @@ def _replay_emitted_fixed_layout_plan(
         raise ValueError("metadata.config must be a mapping to replay a fixed-layout plan.")
     effective_config = GeneratorConfig.from_dict(config_payload)
     effective_shift = resolve_shift_runtime_params(effective_config)
+    stress_profile_name = metadata.get("layout_stress_profile_name")
+    if stress_profile_name is not None and (
+        not isinstance(stress_profile_name, str) or not stress_profile_name
+    ):
+        raise ValueError("metadata.layout_stress_profile_name must be a non-empty string when set.")
 
     run_root = KeyedRng(int(run_seed))
-    layout = _sample_layout(config, run_root.keyed(*layout_root_path), "cpu")
+    layout = _sample_layout(
+        effective_config,
+        run_root.keyed(*layout_root_path),
+        "cpu",
+        stress_profile_name=None if stress_profile_name is None else str(stress_profile_name),
+    )
     if normalized_steering_layout_root_path is not None:
         layout = _resample_layout_graph(
             layout,
             config=effective_config,
             keyed_rng=run_root.keyed(*normalized_steering_layout_root_path),
             edge_logit_bias=float(effective_shift.edge_logit_bias_shift),
+            stress_profile_name=None if stress_profile_name is None else str(stress_profile_name),
         )
 
     effective_execution_plan_root_path = (
@@ -329,11 +340,6 @@ def _replay_emitted_fixed_layout_plan(
         if normalized_steering_execution_plan_root_path is None
         else normalized_steering_execution_plan_root_path
     )
-    stress_profile_name = metadata.get("layout_stress_profile_name")
-    if stress_profile_name is not None and (
-        not isinstance(stress_profile_name, str) or not stress_profile_name
-    ):
-        raise ValueError("metadata.layout_stress_profile_name must be a non-empty string when set.")
     execution_plan = build_fixed_layout_execution_plan(
         effective_config,
         layout,
@@ -544,7 +550,12 @@ def _sample_fixed_layout_once(
 
     _validate_fixed_layout_rows_mode(config)
     layout_seed = keyed_rng.child_seed("layout")
-    layout = _sample_layout(config, keyed_rng.keyed("layout"), "cpu")
+    layout = _sample_layout(
+        config,
+        keyed_rng.keyed("layout"),
+        "cpu",
+        stress_profile_name=stress_profile_name,
+    )
     _validate_sampled_layout_structure(config, layout=layout)
     n_train, n_test = _resolve_split_sizes(config, dataset_seed=rows_seed)
     _validate_class_split_for_layout(config, layout=layout, n_train=n_train, n_test=n_test)
@@ -622,6 +633,7 @@ def _resolve_steered_plan_for_dataset(
         config=effective_config,
         keyed_rng=layout_root,
         edge_logit_bias=float(effective_shift.edge_logit_bias_shift),
+        stress_profile_name=base_plan.stress_profile_name,
     )
     execution_plan_root = dataset_root.keyed(*steering_execution_plan_root_path[2:])
     execution_plan_seed = execution_plan_root.child_seed()

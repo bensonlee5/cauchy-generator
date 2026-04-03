@@ -122,10 +122,15 @@ _JOINT_VARIANTS: tuple[tuple[FixedLayoutConverterMethod, FixedLayoutConverterVar
     ("softmax", "softmax_points"),
 )
 _COMPOSITIONAL_STRESS_PROFILE = "anti_memorization_piecewise_classification_compositional_slice_v1"
+_GRAPH_BREADTH_STRESS_PROFILE = "anti_memorization_piecewise_classification_graph_breadth_slice_v1"
 
 
 def _matrix_kernel_correlation_enabled(stress_profile_name: str | None) -> bool:
     return str(stress_profile_name) == _COMPOSITIONAL_STRESS_PROFILE
+
+
+def _parent_arity_source_shape_correlation_enabled(stress_profile_name: str | None) -> bool:
+    return str(stress_profile_name) == _GRAPH_BREADTH_STRESS_PROFILE
 
 
 class ConverterSpecLike(Protocol):
@@ -1035,11 +1040,30 @@ def sample_multi_source_plan(
         device=device,
         namespace="sample_multi_source_plan",
     )
+    correlation_bucket: str | None = None
+    combine_name = "multi_source_combine_kind"
+    combine_base_probs: tuple[float, float] | None = None
+    aggregation_name = "multi_source_aggregation_kind"
+    aggregation_base_probs: tuple[float, float, float, float] | None = None
+    if (
+        _parent_arity_source_shape_correlation_enabled(stress_profile_name)
+        and int(parent_count) >= 2
+    ):
+        correlation_bucket = "parent2" if int(parent_count) == 2 else "parent3plus"
+        combine_name = f"multi_source_combine_kind_{correlation_bucket}"
+        aggregation_name = f"multi_source_aggregation_kind_{correlation_bucket}"
+        if correlation_bucket == "parent2":
+            combine_base_probs = (0.60, 0.40)
+            aggregation_base_probs = (0.25, 0.25, 0.25, 0.25)
+        else:
+            combine_base_probs = (0.25, 0.75)
+            aggregation_base_probs = (0.35, 0.15, 0.15, 0.35)
     combine_kind = sample_correlated_choice(
         keyed_rng.keyed("combine_kind"),
-        name="multi_source_combine_kind",
+        name=combine_name,
         values=("concat", "stack"),
         device=resolved_device,
+        base_probs=combine_base_probs,
     )
     if combine_kind == "concat":
         return ConcatNodeSource(
@@ -1057,9 +1081,10 @@ def sample_multi_source_plan(
     if resolved_aggregation_kind is None:
         resolved_aggregation_kind = sample_correlated_choice(
             keyed_rng.keyed("aggregation"),
-            name="multi_source_aggregation_kind",
+            name=aggregation_name,
             values=_AGGREGATION_KIND_ORDER,
             device=resolved_device,
+            base_probs=aggregation_base_probs,
         )
     return StackedNodeSource(
         aggregation_kind=cast(AggregationKind, resolved_aggregation_kind),

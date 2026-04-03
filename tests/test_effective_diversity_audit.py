@@ -47,6 +47,24 @@ def _coverage_summary(*, mean: float, p25: float, p50: float, p75: float) -> dic
     }
 
 
+def _coverage_summary_with_metric_overrides(
+    overrides: dict[str, tuple[float, float, float, float]],
+) -> dict[str, object]:
+    summary = _coverage_summary(mean=1.0, p25=0.8, p50=1.0, p75=1.2)
+    metrics = summary["metrics"]
+    assert isinstance(metrics, dict)
+    for metric, (mean, p25, p50, p75) in overrides.items():
+        metrics[metric] = {
+            "mean": float(mean),
+            "quantiles": {
+                "p25": float(p25),
+                "p50": float(p50),
+                "p75": float(p75),
+            },
+        }
+    return summary
+
+
 def _probe_result(
     *,
     label: str,
@@ -230,6 +248,73 @@ def test_run_effective_diversity_audit_aggregates_variant_results(
     assert report["comparisons"][1][
         "filter_accepted_datasets_per_minute_delta_pct"
     ] == pytest.approx(-50.0)
+
+
+def test_run_effective_diversity_audit_graph_breadth_variant_surfaces_relationship_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    baseline_result = _probe_result(
+        label="baseline",
+        config_path="configs/default.yaml",
+        coverage_summary=_coverage_summary_with_metric_overrides(
+            {
+                "graph_target_ancestor_fraction": (0.20, 0.18, 0.20, 0.22),
+                "graph_ancestor_overlap_mean": (0.15, 0.12, 0.15, 0.18),
+                "graph_reachability_ratio": (0.25, 0.22, 0.25, 0.28),
+                "graph_depth_ratio": (0.30, 0.28, 0.30, 0.32),
+            }
+        ),
+    )
+    graph_breadth_variant = _probe_result(
+        label="graph_breadth",
+        config_path="configs/graph_breadth.yaml",
+        coverage_summary=_coverage_summary_with_metric_overrides(
+            {
+                "graph_target_ancestor_fraction": (0.45, 0.40, 0.45, 0.50),
+                "graph_ancestor_overlap_mean": (0.35, 0.30, 0.35, 0.40),
+                "graph_reachability_ratio": (0.50, 0.45, 0.50, 0.55),
+                "graph_depth_ratio": (0.48, 0.44, 0.48, 0.52),
+            }
+        ),
+    )
+    stub_results = [baseline_result, graph_breadth_variant]
+
+    monkeypatch.setattr(
+        "dagzoo.diagnostics.effective_diversity.runner.run_corpus_probe",
+        lambda *_args, **_kwargs: stub_results.pop(0),
+    )
+
+    report = run_effective_diversity_audit(
+        baseline_config=GeneratorConfig.from_yaml("configs/default.yaml"),
+        baseline_config_path="configs/default.yaml",
+        variant_configs=[GeneratorConfig.from_yaml("configs/default.yaml")],
+        variant_config_paths=["configs/graph_breadth.yaml"],
+        suite="smoke",
+        num_datasets=4,
+        warmup=0,
+        device="cpu",
+        warn_threshold_pct=2.5,
+        fail_threshold_pct=5.0,
+    )
+
+    baseline_metrics = report["baseline"]["coverage_summary"]["metrics"]
+    variant_metrics = report["variants"][0]["coverage_summary"]["metrics"]
+    comparison = compare_coverage_summaries(
+        baseline_summary=report["baseline"]["coverage_summary"],
+        variant_summary=report["variants"][0]["coverage_summary"],
+        warn_threshold_pct=2.5,
+        fail_threshold_pct=5.0,
+        include_structural_summary=True,
+    )
+
+    for metric in (
+        "graph_target_ancestor_fraction",
+        "graph_ancestor_overlap_mean",
+        "graph_reachability_ratio",
+        "graph_depth_ratio",
+    ):
+        assert variant_metrics[metric]["mean"] > baseline_metrics[metric]["mean"]
+        assert comparison["structural_diversity_metric_shift_pct"][metric] > 0.0
 
 
 def test_effective_diversity_artifact_writer(tmp_path) -> None:
