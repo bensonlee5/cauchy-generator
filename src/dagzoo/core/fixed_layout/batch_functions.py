@@ -186,17 +186,25 @@ def _sample_random_matrix_from_plan_batch(
             device=rng.device,
             noise_spec=noise_spec,
         )
-        gamma = rng.keyed("gamma").log_uniform((rng.batch_size, *leading_shape), low=0.1, high=10.0)
         left = pts[..., : int(out_dim), :].unsqueeze(-2)
         right = pts[..., int(out_dim) :, :].unsqueeze(-3)
         dist = torch.norm(left - right, dim=-1)
-        kernel = torch.exp(-gamma.unsqueeze(-1).unsqueeze(-1) * dist)
-        sign = torch.where(
-            rng.keyed("sign").uniform(shape, low=0.0, high=1.0) < 0.5,
-            -1.0,
-            1.0,
+        gamma = torch.full(
+            (rng.batch_size, *leading_shape, 1, 1),
+            float(plan.gamma),
+            dtype=torch.float32,
+            device=rng.device,
         )
-        matrix = kernel * sign
+        kernel = torch.exp(-gamma * dist)
+        if bool(plan.signed):
+            sign = torch.where(
+                rng.keyed("sign").uniform(shape, low=0.0, high=1.0) < 0.5,
+                -1.0,
+                1.0,
+            )
+            matrix = kernel * sign
+        else:
+            matrix = kernel
     elif isinstance(plan, ActivationMatrixPlan):
         matrix = _sample_random_matrix_from_plan_batch(
             _base_matrix_plan(plan.base_kind),
@@ -417,19 +425,22 @@ def _apply_tree_batch(
         torch.isfinite(probs).all(dim=1, keepdim=True) & torch.isfinite(totals) & (totals > 1e-12)
     )
     probs = torch.where(valid, probs / torch.clamp(totals, min=1e-12), uniform)
+    tree_root = rng.keyed("tree")
     for tree_index, depth in enumerate(plan.depths):
-        tree_rng = rng.keyed("tree", tree_index)
+        tree_rng = tree_root.keyed(tree_index)
+        split_rng = tree_rng.keyed("splits")
         split_dims, thresholds = sample_odt_splits_batch(
             x,
             int(depth),
-            tree_rng.keyed("splits").torch_generator,
+            split_rng.torch_generator,
             feature_probs=probs,
         )
         leaf_idx = compute_odt_leaf_indices_batch(x, split_dims, thresholds)
         n_leaves = 2 ** int(depth)
+        leaf_values_rng = tree_rng.keyed("leaf_values")
         leaf_vals = sample_noise_from_spec(
             (batch_size, n_leaves, out_dim),
-            generator=tree_rng.keyed("leaf_values").torch_generator,
+            generator=leaf_values_rng.torch_generator,
             device=str(x.device),
             noise_spec=noise_spec,
         )
@@ -451,7 +462,8 @@ def _apply_discretization_batch(
     noise_spec: NoiseSamplingSpec | None,
 ) -> torch.Tensor:
     n_centers = min(int(plan.n_centers), int(x.shape[1]))
-    center_idx = rng.keyed("center_index").randperm_indices(
+    center_rng = rng.keyed("center_index")
+    center_idx = center_rng.randperm_indices(
         length=int(x.shape[1]),
         sample_size=n_centers,
     )
@@ -460,7 +472,8 @@ def _apply_discretization_batch(
         1,
         center_idx.unsqueeze(-1).expand(-1, -1, x.shape[2]),
     )
-    p = rng.keyed("lp_norm").log_uniform((rng.batch_size,), low=0.5, high=4.0)
+    lp_norm_rng = rng.keyed("lp_norm")
+    p = lp_norm_rng.log_uniform((rng.batch_size,), low=0.5, high=4.0)
     nearest = _nearest_lp_center_indices(x, centers, p=p)
     gathered = torch.gather(
         centers,
@@ -498,26 +511,31 @@ def _apply_gp_batch(
 ) -> torch.Tensor:
     batch_size, _, din = x.shape
     p = 256
-    a = rng.keyed("a").log_uniform((rng.batch_size,), low=2.0, high=20.0)
+    a_rng = rng.keyed("a")
+    a = a_rng.log_uniform((rng.batch_size,), low=2.0, high=20.0)
 
     if str(plan.branch_kind) == "ha":
-        r = _sample_radial_ha_batch(rng.keyed("ha_radius"), n=p * din, a=a).view(batch_size, p, din)
+        ha_radius_rng = rng.keyed("ha_radius")
+        r = _sample_radial_ha_batch(ha_radius_rng, n=p * din, a=a).view(batch_size, p, din)
+        ha_sign_rng = rng.keyed("ha_sign")
         signs = torch.where(
-            rng.keyed("ha_sign").uniform((batch_size, p, din), low=0.0, high=1.0) < 0.5,
+            ha_sign_rng.uniform((batch_size, p, din), low=0.0, high=1.0) < 0.5,
             -1.0,
             1.0,
         )
         omega = r * signs
         x_proj = x
     else:
+        projected_direction_rng = rng.keyed("projected_direction")
         z = sample_noise_from_spec(
             (batch_size, p, din),
-            generator=rng.keyed("projected_direction").torch_generator,
+            generator=projected_direction_rng.torch_generator,
             device=rng.device,
             noise_spec=noise_spec,
         )
         z = z / torch.clamp(torch.norm(z, dim=2, keepdim=True), min=1e-6)
-        r = _sample_radial_ha_batch(rng.keyed("projected_radius"), n=p, a=a)
+        projected_radius_rng = rng.keyed("projected_radius")
+        r = _sample_radial_ha_batch(projected_radius_rng, n=p, a=a)
         omega = z * r.unsqueeze(2)
         weights = _sample_random_weights_batch(
             rng.keyed("weights"),
@@ -526,10 +544,12 @@ def _apply_gp_batch(
             sigma_multiplier=float(noise_sigma_multiplier),
             noise_spec=noise_spec,
         )
-        alpha = rng.keyed("alpha").log_uniform((batch_size,), low=0.5, high=10.0)
+        alpha_rng = rng.keyed("alpha")
+        alpha = alpha_rng.log_uniform((batch_size,), low=0.5, high=10.0)
+        matrix_rng = rng.keyed("matrix")
         a_mat = sample_noise_from_spec(
             (batch_size, din, din),
-            generator=rng.keyed("matrix").torch_generator,
+            generator=matrix_rng.torch_generator,
             device=rng.device,
             noise_spec=noise_spec,
         )
@@ -538,8 +558,10 @@ def _apply_gp_batch(
 
     variant = str(plan.variant)
     if variant == "multiscale":
-        low_scale = rng.keyed("multiscale_low").log_uniform((batch_size,), low=0.35, high=1.0)
-        high_scale = rng.keyed("multiscale_high").log_uniform((batch_size,), low=1.5, high=6.0)
+        multiscale_low_rng = rng.keyed("multiscale_low")
+        multiscale_high_rng = rng.keyed("multiscale_high")
+        low_scale = multiscale_low_rng.log_uniform((batch_size,), low=0.35, high=1.0)
+        high_scale = multiscale_high_rng.log_uniform((batch_size,), low=1.5, high=6.0)
         split = p // 2
         feature_scale = torch.cat(
             [
@@ -552,16 +574,14 @@ def _apply_gp_batch(
     elif variant not in {"standard", "periodic"}:
         raise ValueError(f"Unknown GP variant: {plan.variant!r}")
 
-    b = rng.keyed("phase").uniform((batch_size, p), low=0.0, high=2.0 * math.pi)
+    phase_rng = rng.keyed("phase")
+    b = phase_rng.uniform((batch_size, p), low=0.0, high=2.0 * math.pi)
     phase_logits = torch.einsum("bnd,bpd->bnp", x_proj, omega)
     if variant == "periodic":
-        harmonics = (
-            rng.keyed("periodic_harmonics")
-            .randint(1, 6, (batch_size, p))
-            .to(
-                device=rng.device,
-                dtype=x.dtype,
-            )
+        periodic_harmonics_rng = rng.keyed("periodic_harmonics")
+        harmonics = periodic_harmonics_rng.randint(1, 6, (batch_size, p)).to(
+            device=rng.device,
+            dtype=x.dtype,
         )
         phase_logits = harmonics.unsqueeze(1) * phase_logits
         phi = (
@@ -569,9 +589,10 @@ def _apply_gp_batch(
         ) / math.sqrt(2.0)
     else:
         phi = torch.cos(phase_logits + b.unsqueeze(1))
+    output_matrix_rng = rng.keyed("output_matrix")
     z_out = sample_noise_from_spec(
         (batch_size, out_dim, p),
-        generator=rng.keyed("output_matrix").torch_generator,
+        generator=output_matrix_rng.torch_generator,
         device=rng.device,
         noise_spec=noise_spec,
     )
@@ -632,14 +653,394 @@ def _apply_em_batch(
     )
 
 
+def _apply_linear_pair_batch_from_branch_inputs(
+    branch_inputs: torch.Tensor,
+    *,
+    rngs: tuple[FixedLayoutBatchRng, FixedLayoutBatchRng],
+    matrix_plans: tuple[FixedLayoutMatrixPlan, FixedLayoutMatrixPlan],
+    out_dim: int,
+    noise_sigma_multiplier: float,
+    noise_spec: NoiseSamplingSpec | None,
+) -> torch.Tensor:
+    """Apply two matrix-backed linear branches with one fused output projection."""
+
+    matrices = torch.stack(
+        [
+            _sample_random_matrix_from_plan_batch(
+                matrix_plan,
+                out_dim=int(out_dim),
+                in_dim=int(branch_inputs.shape[3]),
+                rng=rng.keyed("matrix"),
+                noise_sigma_multiplier=noise_sigma_multiplier,
+                noise_spec=noise_spec,
+            )
+            for rng, matrix_plan in zip(rngs, matrix_plans, strict=True)
+        ],
+        dim=1,
+    )
+    return torch.einsum("bkni,bkoi->bkno", branch_inputs, matrices)
+
+
+def _apply_linear_pair_batch(
+    x: torch.Tensor,
+    *,
+    rngs: tuple[FixedLayoutBatchRng, FixedLayoutBatchRng],
+    plans: tuple[LinearFunctionPlan, LinearFunctionPlan],
+    out_dim: int,
+    noise_sigma_multiplier: float,
+    noise_spec: NoiseSamplingSpec | None,
+) -> torch.Tensor:
+    branch_inputs = torch.stack((x, x), dim=1)
+    return _apply_linear_pair_batch_from_branch_inputs(
+        branch_inputs,
+        rngs=rngs,
+        matrix_plans=(plans[0].matrix, plans[1].matrix),
+        out_dim=out_dim,
+        noise_sigma_multiplier=noise_sigma_multiplier,
+        noise_spec=noise_spec,
+    )
+
+
+def _apply_quadratic_pair_batch(
+    x: torch.Tensor,
+    *,
+    rngs: tuple[FixedLayoutBatchRng, FixedLayoutBatchRng],
+    plans: tuple[QuadraticFunctionPlan, QuadraticFunctionPlan],
+    out_dim: int,
+    noise_sigma_multiplier: float,
+    noise_spec: NoiseSamplingSpec | None,
+) -> torch.Tensor:
+    feature_cap = min(int(x.shape[2]), 20)
+    augmented_inputs: list[torch.Tensor] = []
+    matrices: list[torch.Tensor] = []
+    for rng, plan in zip(rngs, plans, strict=True):
+        if int(x.shape[2]) > feature_cap:
+            indices = rng.keyed("feature_subset").randperm_indices(
+                length=int(x.shape[2]),
+                sample_size=feature_cap,
+            )
+            x_sub = torch.gather(
+                x,
+                2,
+                indices.unsqueeze(1).expand(-1, x.shape[1], -1),
+            )
+        else:
+            x_sub = x
+        ones = torch.ones((x_sub.shape[0], x_sub.shape[1], 1), device=x.device, dtype=x_sub.dtype)
+        x_aug = torch.cat([x_sub, ones], dim=2)
+        augmented_inputs.append(x_aug)
+        matrices.append(
+            _sample_random_matrix_from_plan_batch(
+                plan.matrix,
+                out_dim=int(x_aug.shape[2]),
+                in_dim=int(x_aug.shape[2]),
+                rng=rng.keyed("matrix"),
+                noise_sigma_multiplier=noise_sigma_multiplier,
+                noise_spec=noise_spec,
+                matrix_count=int(out_dim),
+            )
+        )
+    augmented_inputs_stacked = torch.stack(augmented_inputs, dim=1)
+    matrices_stacked = torch.stack(matrices, dim=1)
+    return torch.einsum(
+        "bkni,bkoij,bknj->bkno",
+        augmented_inputs_stacked,
+        matrices_stacked,
+        augmented_inputs_stacked,
+    )
+
+
+def _apply_discretization_pair_batch(
+    x: torch.Tensor,
+    *,
+    rngs: tuple[FixedLayoutBatchRng, FixedLayoutBatchRng],
+    plans: tuple[DiscretizationFunctionPlan, DiscretizationFunctionPlan],
+    out_dim: int,
+    noise_sigma_multiplier: float,
+    noise_spec: NoiseSamplingSpec | None,
+) -> torch.Tensor:
+    gathered_inputs: list[torch.Tensor] = []
+    linear_rngs: list[FixedLayoutBatchRng] = []
+    linear_matrix_plans: list[FixedLayoutMatrixPlan] = []
+    for rng, plan in zip(rngs, plans, strict=True):
+        n_centers = min(int(plan.n_centers), int(x.shape[1]))
+        center_idx = rng.keyed("center_index").randperm_indices(
+            length=int(x.shape[1]),
+            sample_size=n_centers,
+        )
+        centers = torch.gather(
+            x,
+            1,
+            center_idx.unsqueeze(-1).expand(-1, -1, x.shape[2]),
+        )
+        p = rng.keyed("lp_norm").log_uniform((rng.batch_size,), low=0.5, high=4.0)
+        nearest = _nearest_lp_center_indices(x, centers, p=p)
+        gathered_inputs.append(
+            torch.gather(
+                centers,
+                1,
+                nearest.unsqueeze(-1).expand(-1, -1, x.shape[2]),
+            )
+        )
+        linear_rngs.append(rng.keyed("linear"))
+        linear_matrix_plans.append(plan.linear_matrix)
+    return _apply_linear_pair_batch_from_branch_inputs(
+        torch.stack(gathered_inputs, dim=1),
+        rngs=(linear_rngs[0], linear_rngs[1]),
+        matrix_plans=(linear_matrix_plans[0], linear_matrix_plans[1]),
+        out_dim=out_dim,
+        noise_sigma_multiplier=noise_sigma_multiplier,
+        noise_spec=noise_spec,
+    )
+
+
+def _apply_gp_pair_batch(
+    x: torch.Tensor,
+    *,
+    rngs: tuple[FixedLayoutBatchRng, FixedLayoutBatchRng],
+    plans: tuple[GpFunctionPlan, GpFunctionPlan],
+    out_dim: int,
+    noise_sigma_multiplier: float,
+    noise_spec: NoiseSamplingSpec | None,
+) -> torch.Tensor:
+    batch_size, _, din = x.shape
+    p = 256
+    phis: list[torch.Tensor] = []
+    output_matrices: list[torch.Tensor] = []
+    for rng, plan in zip(rngs, plans, strict=True):
+        a = rng.keyed("a").log_uniform((batch_size,), low=2.0, high=20.0)
+        if str(plan.branch_kind) == "ha":
+            r = _sample_radial_ha_batch(rng.keyed("ha_radius"), n=p * din, a=a).view(
+                batch_size, p, din
+            )
+            signs = torch.where(
+                rng.keyed("ha_sign").uniform((batch_size, p, din), low=0.0, high=1.0) < 0.5,
+                -1.0,
+                1.0,
+            )
+            omega = r * signs
+            x_proj = x
+        else:
+            z = sample_noise_from_spec(
+                (batch_size, p, din),
+                generator=rng.keyed("projected_direction").torch_generator,
+                device=rng.device,
+                noise_spec=noise_spec,
+            )
+            z = z / torch.clamp(torch.norm(z, dim=2, keepdim=True), min=1e-6)
+            r = _sample_radial_ha_batch(rng.keyed("projected_radius"), n=p, a=a)
+            omega = z * r.unsqueeze(2)
+            weights = _sample_random_weights_batch(
+                rng.keyed("weights"),
+                dim=din,
+                correlation_name="gp_projected_weights_decay",
+                sigma_multiplier=float(noise_sigma_multiplier),
+                noise_spec=noise_spec,
+            )
+            alpha = rng.keyed("alpha").log_uniform((batch_size,), low=0.5, high=10.0)
+            a_mat = sample_noise_from_spec(
+                (batch_size, din, din),
+                generator=rng.keyed("matrix").torch_generator,
+                device=rng.device,
+                noise_spec=noise_spec,
+            )
+            matrices = alpha.view(-1, 1, 1) * (weights.unsqueeze(2) * a_mat)
+            x_proj = torch.einsum("bni,bij->bnj", x, matrices.transpose(1, 2))
+
+        variant = str(plan.variant)
+        if variant == "multiscale":
+            low_scale = rng.keyed("multiscale_low").log_uniform((batch_size,), low=0.35, high=1.0)
+            high_scale = rng.keyed("multiscale_high").log_uniform((batch_size,), low=1.5, high=6.0)
+            split = p // 2
+            feature_scale = torch.cat(
+                [
+                    low_scale.view(-1, 1).expand(-1, split),
+                    high_scale.view(-1, 1).expand(-1, p - split),
+                ],
+                dim=1,
+            ).to(device=rng.device, dtype=x.dtype)
+            omega = omega * feature_scale.unsqueeze(2)
+        elif variant not in {"standard", "periodic"}:
+            raise ValueError(f"Unknown GP variant: {plan.variant!r}")
+
+        b = rng.keyed("phase").uniform((batch_size, p), low=0.0, high=2.0 * math.pi)
+        phase_logits = torch.einsum("bnd,bpd->bnp", x_proj, omega)
+        if variant == "periodic":
+            harmonics = (
+                rng.keyed("periodic_harmonics")
+                .randint(1, 6, (batch_size, p))
+                .to(
+                    device=rng.device,
+                    dtype=x.dtype,
+                )
+            )
+            phase_logits = harmonics.unsqueeze(1) * phase_logits
+            phi = (
+                torch.cos(phase_logits + b.unsqueeze(1)) + torch.sin(phase_logits - b.unsqueeze(1))
+            ) / math.sqrt(2.0)
+        else:
+            phi = torch.cos(phase_logits + b.unsqueeze(1))
+        phis.append(phi)
+        output_matrices.append(
+            sample_noise_from_spec(
+                (batch_size, out_dim, p),
+                generator=rng.keyed("output_matrix").torch_generator,
+                device=rng.device,
+                noise_spec=noise_spec,
+            )
+        )
+    return torch.einsum(
+        "bknp,bkop->bkno", torch.stack(phis, dim=1), torch.stack(output_matrices, dim=1)
+    ) / math.sqrt(float(p))
+
+
+def _apply_em_pair_batch(
+    x: torch.Tensor,
+    *,
+    rngs: tuple[FixedLayoutBatchRng, FixedLayoutBatchRng],
+    plans: tuple[EmFunctionPlan, EmFunctionPlan],
+    out_dim: int,
+    noise_sigma_multiplier: float,
+    noise_spec: NoiseSamplingSpec | None,
+) -> torch.Tensor:
+    branch_probs: list[torch.Tensor] = []
+    linear_rngs: list[FixedLayoutBatchRng] = []
+    linear_matrix_plans: list[FixedLayoutMatrixPlan] = []
+    for rng, plan in zip(rngs, plans, strict=True):
+        m_val = max(2, int(plan.m_val))
+        base_idx = rng.keyed("base_index").randint(0, x.shape[1], (rng.batch_size, m_val))
+        centers = torch.gather(
+            x,
+            1,
+            base_idx.unsqueeze(-1).expand(-1, -1, x.shape[2]),
+        )
+        centers = centers + sample_noise_from_spec(
+            (rng.batch_size, m_val, x.shape[2]),
+            generator=rng.keyed("center_noise").torch_generator,
+            device=rng.device,
+            noise_spec=noise_spec,
+        )
+        sigma = torch.exp(
+            sample_noise_from_spec(
+                (rng.batch_size, m_val),
+                generator=rng.keyed("sigma").torch_generator,
+                device=rng.device,
+                noise_spec=noise_spec,
+                scale_multiplier=0.1,
+            )
+        )
+        p_val = rng.keyed("p_val").log_uniform((rng.batch_size,), low=1.0, high=4.0)
+        q_val = rng.keyed("q_val").log_uniform((rng.batch_size,), low=1.0, high=2.0)
+        dist_p = _lp_distances_to_centers(
+            x,
+            centers,
+            p=p_val,
+            take_root=True,
+        )
+        logits = -0.5 * torch.log(2.0 * math.pi * sigma**2).unsqueeze(1) - torch.pow(
+            dist_p / torch.clamp(sigma.unsqueeze(1), min=1e-6),
+            q_val.view(-1, 1, 1),
+        )
+        branch_probs.append(torch.softmax(logits, dim=2))
+        linear_rngs.append(rng.keyed("linear"))
+        linear_matrix_plans.append(plan.linear_matrix)
+    return _apply_linear_pair_batch_from_branch_inputs(
+        torch.stack(branch_probs, dim=1),
+        rngs=(linear_rngs[0], linear_rngs[1]),
+        matrix_plans=(linear_matrix_plans[0], linear_matrix_plans[1]),
+        out_dim=out_dim,
+        noise_sigma_multiplier=noise_sigma_multiplier,
+        noise_spec=noise_spec,
+    )
+
+
+def _apply_leaf_pair_batch(
+    x: torch.Tensor,
+    *,
+    rngs: tuple[FixedLayoutBatchRng, FixedLayoutBatchRng],
+    plans: tuple[
+        LinearFunctionPlan
+        | QuadraticFunctionPlan
+        | DiscretizationFunctionPlan
+        | GpFunctionPlan
+        | EmFunctionPlan,
+        LinearFunctionPlan
+        | QuadraticFunctionPlan
+        | DiscretizationFunctionPlan
+        | GpFunctionPlan
+        | EmFunctionPlan,
+    ],
+    out_dim: int,
+    noise_sigma_multiplier: float,
+    noise_spec: NoiseSamplingSpec | None,
+) -> torch.Tensor:
+    """Apply one exact paired leaf-family batch and return `[B, 2, rows, out_dim]`."""
+
+    lhs_plan, rhs_plan = plans
+    if isinstance(lhs_plan, LinearFunctionPlan) and isinstance(rhs_plan, LinearFunctionPlan):
+        return _apply_linear_pair_batch(
+            x,
+            rngs=rngs,
+            plans=(lhs_plan, rhs_plan),
+            out_dim=out_dim,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+        )
+    if isinstance(lhs_plan, QuadraticFunctionPlan) and isinstance(rhs_plan, QuadraticFunctionPlan):
+        return _apply_quadratic_pair_batch(
+            x,
+            rngs=rngs,
+            plans=(lhs_plan, rhs_plan),
+            out_dim=out_dim,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+        )
+    if isinstance(lhs_plan, DiscretizationFunctionPlan) and isinstance(
+        rhs_plan, DiscretizationFunctionPlan
+    ):
+        return _apply_discretization_pair_batch(
+            x,
+            rngs=rngs,
+            plans=(lhs_plan, rhs_plan),
+            out_dim=out_dim,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+        )
+    if isinstance(lhs_plan, GpFunctionPlan) and isinstance(rhs_plan, GpFunctionPlan):
+        return _apply_gp_pair_batch(
+            x,
+            rngs=rngs,
+            plans=(lhs_plan, rhs_plan),
+            out_dim=out_dim,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+        )
+    if isinstance(lhs_plan, EmFunctionPlan) and isinstance(rhs_plan, EmFunctionPlan):
+        return _apply_em_pair_batch(
+            x,
+            rngs=rngs,
+            plans=(lhs_plan, rhs_plan),
+            out_dim=out_dim,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+        )
+    raise ValueError("Unsupported paired fixed-layout leaf family combination.")
+
+
 __all__ = [
     "_apply_activation_plan",
     "_apply_discretization_batch",
+    "_apply_discretization_pair_batch",
     "_apply_em_batch",
+    "_apply_em_pair_batch",
     "_apply_gp_batch",
+    "_apply_gp_pair_batch",
+    "_apply_leaf_pair_batch",
     "_apply_linear_batch",
+    "_apply_linear_pair_batch",
     "_apply_nn_batch",
     "_apply_quadratic_batch",
+    "_apply_quadratic_pair_batch",
     "_apply_tree_batch",
     "_base_matrix_plan",
     "_sample_radial_ha_batch",

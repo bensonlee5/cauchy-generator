@@ -13,7 +13,11 @@ from dagzoo.diagnostics.effective_diversity import (
     run_effective_diversity_audit,
     write_effective_diversity_artifacts,
 )
-from dagzoo.diagnostics.effective_diversity.compare import summarize_comparison_status
+from dagzoo.diagnostics.effective_diversity.compare import (
+    STRUCTURAL_DIVERSITY_METRICS,
+    build_comparison_record,
+    summarize_comparison_status,
+)
 
 
 def _coverage_summary(*, mean: float, p25: float, p50: float, p75: float) -> dict[str, object]:
@@ -122,6 +126,49 @@ def test_compare_coverage_summaries_rejects_swapped_thresholds() -> None:
             warn_threshold_pct=10.0,
             fail_threshold_pct=5.0,
         )
+
+
+def test_compare_coverage_summaries_can_include_structural_summary() -> None:
+    baseline = _coverage_summary(mean=1.0, p25=0.8, p50=1.0, p75=1.2)
+    shifted = compare_coverage_summaries(
+        baseline_summary=baseline,
+        variant_summary=_coverage_summary(mean=1.6, p25=1.4, p50=1.5, p75=1.8),
+        warn_threshold_pct=2.5,
+        fail_threshold_pct=5.0,
+        include_structural_summary=True,
+    )
+
+    assert set(shifted["structural_diversity_metric_shift_pct"]) == set(
+        STRUCTURAL_DIVERSITY_METRICS
+    )
+    assert shifted["structural_diversity_composite_shift_pct"] == pytest.approx(
+        shifted["diversity_composite_shift_pct"]
+    )
+
+
+def test_build_comparison_record_keeps_public_audit_shape_stable() -> None:
+    baseline_entry = {
+        "label": "baseline",
+        "datasets_per_minute": 100.0,
+        "filter_accepted_datasets_per_minute": 50.0,
+        "coverage_summary": _coverage_summary(mean=1.0, p25=0.8, p50=1.0, p75=1.2),
+    }
+    variant_entry = {
+        "label": "variant",
+        "datasets_per_minute": 95.0,
+        "filter_accepted_datasets_per_minute": 48.0,
+        "coverage_summary": _coverage_summary(mean=1.1, p25=0.9, p50=1.05, p75=1.25),
+    }
+
+    comparison = build_comparison_record(
+        baseline_entry=baseline_entry,
+        variant_entry=variant_entry,
+        warn_threshold_pct=2.5,
+        fail_threshold_pct=5.0,
+    )
+
+    assert "structural_diversity_metric_shift_pct" not in comparison
+    assert "structural_diversity_composite_shift_pct" not in comparison
 
 
 def test_run_effective_diversity_audit_aggregates_variant_results(

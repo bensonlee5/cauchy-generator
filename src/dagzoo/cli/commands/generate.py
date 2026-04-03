@@ -179,11 +179,14 @@ def run_generate_command(args: argparse.Namespace) -> int:
     resolved_config = resolved["config"]
     seed = args.seed if args.seed is not None else resolved_config.seed
     prefer_cpu_for_mps_auto = str(resolved_config.runtime.layout_mode) != "fixed"
-    config, run_seed, requested_device, resolved_device = realize_generation_config_for_run(
-        resolved_config,
-        seed=seed,
-        device=str(resolved["requested_device"]),
-        prefer_cpu_for_mps_auto=prefer_cpu_for_mps_auto,
+    config, run_seed, requested_device, resolved_device, _carried_stress_profile = (
+        realize_generation_config_for_run(
+            resolved_config,
+            seed=seed,
+            device=str(resolved["requested_device"]),
+            prefer_cpu_for_mps_auto=prefer_cpu_for_mps_auto,
+            carried_stress_profile=resolved.get("carried_stress_profile"),
+        )
     )
     if bool(config.filter.enabled):
         raise_usage_error(

@@ -421,7 +421,7 @@ def generate_batch_iter(
         return
     _validate_public_generation_config(config)
 
-    realized_config, run_seed, _requested_device, resolved_device = (
+    realized_config, run_seed, _requested_device, resolved_device, _carried_stress_profile = (
         realize_generation_config_for_run(
             config,
             seed=seed,

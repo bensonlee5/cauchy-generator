@@ -68,7 +68,8 @@ class SingularValuesMatrixPlan:
 
 @dataclass(frozen=True, slots=True)
 class KernelMatrixPlan:
-    pass
+    gamma: float = 1.0
+    signed: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -645,7 +646,11 @@ def _matrix_plan_payload(plan: FixedLayoutMatrixPlan) -> dict[str, Any]:
     if isinstance(plan, SingularValuesMatrixPlan):
         return {"kind": "singular_values"}
     if isinstance(plan, KernelMatrixPlan):
-        return {"kind": "kernel"}
+        return {
+            "kind": "kernel",
+            "gamma": float(plan.gamma),
+            "signed": bool(plan.signed),
+        }
     return {
         "kind": "activation",
         "base_kind": str(plan.base_kind),

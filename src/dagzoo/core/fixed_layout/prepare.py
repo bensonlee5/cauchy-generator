@@ -66,7 +66,8 @@ def realize_generation_config_for_run(
     seed: int | None = None,
     device: str | None = None,
     prefer_cpu_for_mps_auto: bool = False,
-) -> tuple[GeneratorConfig, int, str, str]:
+    carried_stress_profile: str | None = None,
+) -> tuple[GeneratorConfig, int, str, str, str | None]:
     """Resolve one canonical single-run config with rows fixed for the full run."""
 
     run_seed = _resolve_run_seed(config, seed)
@@ -75,6 +76,11 @@ def realize_generation_config_for_run(
         config,
         device,
         prefer_cpu_for_mps_auto=prefer_cpu_for_mps_auto,
+    )
+    effective_carried_stress_profile = (
+        str(carried_stress_profile)
+        if carried_stress_profile is not None
+        else (None if config.stress.profile is None else str(config.stress.profile))
     )
 
     if config.stress.profile is not None:
@@ -99,7 +105,13 @@ def realize_generation_config_for_run(
         realized.dataset.n_train = int(n_train)
         realized.dataset.rows = DatasetRowsSpec(mode="fixed", value=int(total_rows))
 
-    return realized, int(run_seed), str(requested_device), str(resolved_device)
+    return (
+        realized,
+        int(run_seed),
+        str(requested_device),
+        str(resolved_device),
+        effective_carried_stress_profile,
+    )
 
 
 __all__ = [

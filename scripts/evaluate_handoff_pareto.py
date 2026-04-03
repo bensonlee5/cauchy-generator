@@ -27,6 +27,7 @@ from dagzoo.diagnostics.effective_diversity.compare import compare_coverage_summ
 from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME, iter_ndjson_records
 
 _RIDGE_LAMBDA = 1e-2
+_EASY_TASK_CEILING_MARGIN = 0.10
 _SUPPORTING_METRICS = (
     "graph_edge_density",
     "graph_depth_ratio",
@@ -383,23 +384,65 @@ def _entry_payload(
     }
 
 
+def _downstream_mean(entry: dict[str, Any]) -> float:
+    return float(entry["downstream"]["mean"])
+
+
+def _datasets_per_minute_value(entry: dict[str, Any]) -> float:
+    value = entry.get("datasets_per_minute")
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        return float(value)
+    return 0.0
+
+
+def _structural_diversity_value(entry: dict[str, Any]) -> float:
+    value = entry.get("structural_diversity_composite_shift_pct")
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        return float(value)
+    return 0.0
+
+
+def _easy_task_ceiling_threshold(baseline_entry: dict[str, Any]) -> float:
+    return float(_downstream_mean(baseline_entry) + _EASY_TASK_CEILING_MARGIN)
+
+
+def _passes_easy_task_ceiling(entry: dict[str, Any], *, baseline_entry: dict[str, Any]) -> bool:
+    return bool(_downstream_mean(entry) <= _easy_task_ceiling_threshold(baseline_entry))
+
+
+def _augment_variant_priority_fields(
+    entry: dict[str, Any],
+    *,
+    baseline_entry: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        **entry,
+        "easy_task_ceiling_pass": _passes_easy_task_ceiling(entry, baseline_entry=baseline_entry),
+        "easy_task_ceiling_margin": float(_EASY_TASK_CEILING_MARGIN),
+        "easy_task_ceiling_downstream_mean": _easy_task_ceiling_threshold(baseline_entry),
+    }
+
+
+def _rd005_priority_sort_key(entry: dict[str, Any]) -> tuple[float, float, float]:
+    return (
+        -_structural_diversity_value(entry),
+        -_datasets_per_minute_value(entry),
+        _downstream_mean(entry),
+    )
+
+
+def _rank_variants_for_rd005(variants: list[dict[str, Any]]) -> list[str]:
+    ranked = sorted(variants, key=_rd005_priority_sort_key)
+    return [str(entry["label"]) for entry in ranked]
+
+
 def _dominates(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    left_score = float(left["downstream"]["mean"])
-    right_score = float(right["downstream"]["mean"])
-    left_diversity = float(left.get("diversity_composite_shift_pct") or 0.0)
-    right_diversity = float(right.get("diversity_composite_shift_pct") or 0.0)
-    left_throughput = float(left.get("datasets_per_minute") or 0.0)
-    right_throughput = float(right.get("datasets_per_minute") or 0.0)
-    no_worse = (
-        left_score >= right_score
-        and left_diversity >= right_diversity
-        and left_throughput >= right_throughput
-    )
-    strictly_better = (
-        left_score > right_score
-        or left_diversity > right_diversity
-        or left_throughput > right_throughput
-    )
+    left_diversity = _structural_diversity_value(left)
+    right_diversity = _structural_diversity_value(right)
+    left_throughput = _datasets_per_minute_value(left)
+    right_throughput = _datasets_per_minute_value(right)
+    no_worse = left_diversity >= right_diversity and left_throughput >= right_throughput
+    strictly_better = left_diversity > right_diversity or left_throughput > right_throughput
     return bool(no_worse and strictly_better)
 
 
@@ -427,10 +470,16 @@ def _write_markdown_report(report: dict[str, Any], *, out_path: Path) -> None:
         f"- Datasets per run: {report['summary']['num_datasets']}",
         f"- Shared seed: {report['summary']['seed']}",
         f"- Device: `{report['summary']['device']}`",
+        "- Objective order: structural diversity, throughput, then lower downstream mean",
+        "- Easy-task ceiling downstream mean: "
+        f"{report['summary']['easy_task_ceiling_downstream_mean']:.4f}",
         "",
-        "## Pareto Frontier",
+        "## RD-005 Priority Order",
         "",
     ]
+    for label in report["summary"]["priority_variant_labels"]:
+        lines.append(f"- `{label}`")
+    lines.extend(["", "## Structural Frontier", ""])
     for label in report["summary"]["pareto_frontier_labels"]:
         lines.append(f"- `{label}`")
     lines.extend(["", "## Runs", ""])
@@ -456,6 +505,13 @@ def _write_markdown_report(report: dict[str, Any], *, out_path: Path) -> None:
             lines.append(
                 "- Diversity composite shift pct: "
                 f"{float(entry.get('diversity_composite_shift_pct') or 0.0):.2f}"
+            )
+            lines.append(
+                "- Structural diversity composite shift pct: "
+                f"{float(entry.get('structural_diversity_composite_shift_pct') or 0.0):.2f}"
+            )
+            lines.append(
+                f"- Easy-task ceiling pass: `{bool(entry.get('easy_task_ceiling_pass', False))}`"
             )
         lines.append("- Supporting metrics:")
         for metric, value in entry["supporting_metrics"].items():
@@ -500,6 +556,7 @@ def main() -> int:
                 variant_summary=entry["coverage_summary"],
                 warn_threshold_pct=float(args.warn_threshold_pct),
                 fail_threshold_pct=float(args.fail_threshold_pct),
+                include_structural_summary=True,
             )
         if comparison is not None:
             entry = {
@@ -507,10 +564,21 @@ def main() -> int:
                 "diversity_status": comparison["diversity_status"],
                 "diversity_composite_shift_pct": comparison["diversity_composite_shift_pct"],
                 "diversity_metric_shift_pct": comparison["diversity_metric_shift_pct"],
+                "structural_diversity_composite_shift_pct": comparison[
+                    "structural_diversity_composite_shift_pct"
+                ],
+                "structural_diversity_metric_shift_pct": comparison[
+                    "structural_diversity_metric_shift_pct"
+                ],
             }
-        variants.append(entry)
+        variants.append(_augment_variant_priority_fields(entry, baseline_entry=baseline))
 
-    frontier_labels = _pareto_frontier([baseline, *variants])
+    eligible_frontier_entries = [
+        baseline,
+        *[v for v in variants if v.get("easy_task_ceiling_pass")],
+    ]
+    frontier_labels = _pareto_frontier(eligible_frontier_entries)
+    priority_variant_labels = _rank_variants_for_rd005(variants)
     report = {
         "schema_name": "dagzoo_rd005_handoff_pareto_report",
         "schema_version": 1,
@@ -523,6 +591,9 @@ def main() -> int:
             "hardware_policy": str(args.hardware_policy),
             "warn_threshold_pct": float(args.warn_threshold_pct),
             "fail_threshold_pct": float(args.fail_threshold_pct),
+            "easy_task_ceiling_margin": float(_EASY_TASK_CEILING_MARGIN),
+            "easy_task_ceiling_downstream_mean": _easy_task_ceiling_threshold(baseline),
+            "priority_variant_labels": priority_variant_labels,
             "pareto_frontier_labels": frontier_labels,
         },
     }

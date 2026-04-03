@@ -50,6 +50,9 @@ from dagzoo.rng import KeyedRng
 from dagzoo.types import DatasetBundle
 
 from .batched import (
+    _generate_fixed_layout_graph_batch_prepared,
+    _generate_fixed_layout_validation_label_batch,
+    _prepare_fixed_layout_execution_context,
     build_fixed_layout_execution_plan,
     fixed_layout_plan_signature,
     generate_fixed_layout_graph_batch,
@@ -326,12 +329,19 @@ def _replay_emitted_fixed_layout_plan(
         if normalized_steering_execution_plan_root_path is None
         else normalized_steering_execution_plan_root_path
     )
+    stress_profile_name = metadata.get("layout_stress_profile_name")
+    if stress_profile_name is not None and (
+        not isinstance(stress_profile_name, str) or not stress_profile_name
+    ):
+        raise ValueError("metadata.layout_stress_profile_name must be a non-empty string when set.")
     execution_plan = build_fixed_layout_execution_plan(
         effective_config,
         layout,
         plan_seed=run_root.keyed(*effective_execution_plan_root_path).child_seed(),
         mechanism_logit_tilt=float(effective_shift.mechanism_logit_tilt),
+        stress_profile_name=None if stress_profile_name is None else str(stress_profile_name),
     )
+    prepared_execution_context = _prepare_fixed_layout_execution_context(layout, execution_plan)
 
     requested_device = metadata.get("requested_device")
     if not isinstance(requested_device, str) or not requested_device:
@@ -368,6 +378,8 @@ def _replay_emitted_fixed_layout_plan(
             if normalized_steering_execution_plan_root_path is None
             else list(normalized_steering_execution_plan_root_path)
         ),
+        stress_profile_name=None if stress_profile_name is None else str(stress_profile_name),
+        prepared_execution_context=prepared_execution_context,
     )
 
     emitted_layout_signature = metadata.get("layout_signature")
@@ -390,6 +402,7 @@ def _sample_fixed_layout_candidate(
     rows_seed: int,
     requested_device: str,
     resolved_device: str,
+    stress_profile_name: str | None = None,
 ) -> _FixedLayoutPlan:
     """Sample one fixed-layout plan candidate without replay validation."""
 
@@ -399,6 +412,7 @@ def _sample_fixed_layout_candidate(
         rows_seed=rows_seed,
         requested_device=requested_device,
         resolved_device=resolved_device,
+        stress_profile_name=stress_profile_name,
     )
 
 
@@ -452,7 +466,7 @@ def prepare_canonical_fixed_layout_run(
     if num_datasets < 0:
         raise ValueError(f"num_datasets must be >= 0, got {num_datasets}")
 
-    realized_config, run_seed, requested_device, resolved_device = (
+    realized_config, run_seed, requested_device, resolved_device, stress_profile_name = (
         realize_generation_config_for_run(
             config,
             seed=seed,
@@ -472,6 +486,7 @@ def prepare_canonical_fixed_layout_run(
                 rows_seed=rows_seed,
                 requested_device=requested_device,
                 resolved_device=resolved_device,
+                stress_profile_name=stress_profile_name,
             )
         except InvalidStructuralLayoutError as exc:
             last_error = str(exc.reason)
@@ -523,6 +538,7 @@ def _sample_fixed_layout_once(
     rows_seed: int,
     requested_device: str,
     resolved_device: str,
+    stress_profile_name: str | None = None,
 ) -> _FixedLayoutPlan:
     """Sample one fixed-layout plan candidate without replay validation retries."""
 
@@ -545,7 +561,9 @@ def _sample_fixed_layout_once(
         layout,
         plan_seed=execution_plan_seed,
         mechanism_logit_tilt=float(shift_params.mechanism_logit_tilt),
+        stress_profile_name=stress_profile_name,
     )
+    prepared_execution_context = _prepare_fixed_layout_execution_context(layout, execution_plan)
     return _FixedLayoutPlan(
         layout=layout,
         requested_device=requested_device,
@@ -557,6 +575,8 @@ def _sample_fixed_layout_once(
         candidate_attempt=candidate_attempt,
         execution_plan=execution_plan,
         plan_signature=fixed_layout_plan_signature(execution_plan),
+        stress_profile_name=stress_profile_name,
+        prepared_execution_context=prepared_execution_context,
     )
 
 
@@ -610,7 +630,9 @@ def _resolve_steered_plan_for_dataset(
         layout,
         plan_seed=execution_plan_seed,
         mechanism_logit_tilt=float(effective_shift.mechanism_logit_tilt),
+        stress_profile_name=base_plan.stress_profile_name,
     )
+    prepared_execution_context = _prepare_fixed_layout_execution_context(layout, execution_plan)
     plan_seed = layout_root.child_seed()
     return effective_config, _FixedLayoutPlan(
         layout=layout,
@@ -633,6 +655,8 @@ def _resolve_steered_plan_for_dataset(
         ),
         steering_layout_root_path=list(steering_layout_root_path),
         steering_execution_plan_root_path=list(steering_execution_plan_root_path),
+        stress_profile_name=base_plan.stress_profile_name,
+        prepared_execution_context=prepared_execution_context,
     )
 
 
@@ -700,6 +724,7 @@ def _resolve_heterogeneous_dataset_descriptor(
     dataset_index: int,
     num_datasets: int,
     dataset_root: KeyedRng,
+    stress_profile_name: str | None = None,
 ) -> _ResolvedDatasetDescriptor:
     """Resolve one fully heterogeneous per-dataset plan and finalization context."""
 
@@ -722,6 +747,7 @@ def _resolve_heterogeneous_dataset_descriptor(
                 rows_seed=rows_seed,
                 requested_device=requested_device,
                 resolved_device=resolved_device,
+                stress_profile_name=stress_profile_name,
             )
         except InvalidStructuralLayoutError as exc:
             last_error = str(exc.reason)
@@ -1160,6 +1186,7 @@ def _resolve_heterogeneous_descriptor_window(
     window_size: int,
     num_datasets: int,
     run_root: KeyedRng,
+    stress_profile_name: str | None = None,
 ) -> tuple[list[_ResolvedDatasetDescriptor], dict[str, float]]:
     """Resolve one contiguous descriptor window for heterogeneous-style execution."""
 
@@ -1175,6 +1202,7 @@ def _resolve_heterogeneous_descriptor_window(
             dataset_index=dataset_index + offset,
             num_datasets=num_datasets,
             dataset_root=run_root.keyed("dataset", dataset_index + offset),
+            stress_profile_name=stress_profile_name,
         )
         for offset in range(window_size)
     ]
@@ -1331,7 +1359,7 @@ def _generate_batch_with_heterogeneous_layout_iter(
 ) -> Iterator[DatasetBundle]:
     """Yield datasets from a fully heterogeneous per-dataset plan-sampling run."""
 
-    realized_config, run_seed, requested_device, validated_resolved_device = (
+    realized_config, run_seed, requested_device, validated_resolved_device, stress_profile_name = (
         realize_generation_config_for_run(
             config,
             seed=seed,
@@ -1361,6 +1389,7 @@ def _generate_batch_with_heterogeneous_layout_iter(
             window_size=chunk_size,
             num_datasets=num_datasets,
             run_root=run_root,
+            stress_profile_name=stress_profile_name,
         )
         if on_raw_batch_metrics is not None:
             on_raw_batch_metrics(descriptor_metrics)
@@ -1390,7 +1419,7 @@ def _generate_batch_with_stratified_layout_iter(
 ) -> Iterator[DatasetBundle]:
     """Yield datasets from a stratified heterogeneous scheduler."""
 
-    realized_config, run_seed, requested_device, validated_resolved_device = (
+    realized_config, run_seed, requested_device, validated_resolved_device, stress_profile_name = (
         realize_generation_config_for_run(
             config,
             seed=seed,
@@ -1420,6 +1449,7 @@ def _generate_batch_with_stratified_layout_iter(
             window_size=window_size,
             num_datasets=num_datasets,
             run_root=run_root,
+            stress_profile_name=stress_profile_name,
         )
         if on_raw_batch_metrics is not None:
             on_raw_batch_metrics(descriptor_metrics)
@@ -1551,15 +1581,31 @@ def _first_valid_classification_attempt_for_dataset(
     )
 
     for attempt in range(max(0, int(start_attempt)), attempts):
-        y_batch, _aux_meta_batch = generate_fixed_layout_label_batch(
-            config,
-            plan.layout,
-            execution_plan=plan.execution_plan,
-            dataset_seeds=[dataset_root.keyed("attempt", attempt, "raw_generation").child_seed()],
-            device=resolved_device,
-            noise_sigma_multiplier=float(shift_params.variance_sigma_multiplier),
-            noise_spec=noise_spec,
-        )
+        if plan.prepared_execution_context is not None:
+            y_batch, _aux_meta_batch = _generate_fixed_layout_validation_label_batch(
+                config,
+                plan.layout,
+                execution_plan=plan.execution_plan,
+                prepared_execution_context=plan.prepared_execution_context,
+                dataset_seeds=[
+                    dataset_root.keyed("attempt", attempt, "raw_generation").child_seed()
+                ],
+                device=resolved_device,
+                noise_sigma_multiplier=float(shift_params.variance_sigma_multiplier),
+                noise_spec=noise_spec,
+            )
+        else:
+            y_batch, _aux_meta_batch = generate_fixed_layout_label_batch(
+                config,
+                plan.layout,
+                execution_plan=plan.execution_plan,
+                dataset_seeds=[
+                    dataset_root.keyed("attempt", attempt, "raw_generation").child_seed()
+                ],
+                device=resolved_device,
+                noise_sigma_multiplier=float(shift_params.variance_sigma_multiplier),
+                noise_spec=noise_spec,
+            )
         if _raw_classification_labels_support_split(
             y_batch[0],
             dataset_root=dataset_root,
@@ -1568,6 +1614,124 @@ def _first_valid_classification_attempt_for_dataset(
         ):
             return int(attempt)
     return None
+
+
+def _grouped_validation_labels_for_attempts(
+    config: GeneratorConfig,
+    *,
+    plan: _FixedLayoutPlan,
+    dataset_roots: list[KeyedRng],
+    attempts: list[int],
+    resolved_device: str,
+    noise_sigma_multiplier: float,
+) -> list[tuple[torch.Tensor, int]]:
+    """Return grouped exact validation-label batches indexed back to the input dataset order."""
+
+    grouped_noise_runtime = _group_noise_runtime_chunk(
+        config,
+        dataset_roots=dataset_roots,
+        attempts=attempts,
+    )
+    raw_batch_by_offset: list[tuple[torch.Tensor, int] | None] = [None] * len(dataset_roots)
+    for group in grouped_noise_runtime:
+        noise_spec = _noise_sampling_spec(group.selection)
+        if plan.prepared_execution_context is not None:
+            y_batch, _aux_meta_batch = _generate_fixed_layout_validation_label_batch(
+                config,
+                plan.layout,
+                execution_plan=plan.execution_plan,
+                prepared_execution_context=plan.prepared_execution_context,
+                dataset_seeds=group.generation_seeds,
+                device=resolved_device,
+                noise_sigma_multiplier=float(noise_sigma_multiplier),
+                noise_spec=noise_spec,
+            )
+        else:
+            y_batch, _aux_meta_batch = generate_fixed_layout_label_batch(
+                config,
+                plan.layout,
+                execution_plan=plan.execution_plan,
+                dataset_seeds=group.generation_seeds,
+                device=resolved_device,
+                noise_sigma_multiplier=float(noise_sigma_multiplier),
+                noise_spec=noise_spec,
+            )
+        for local_index, chunk_offset in enumerate(group.chunk_offsets):
+            raw_batch_by_offset[int(chunk_offset)] = (y_batch, int(local_index))
+
+    resolved_batches: list[tuple[torch.Tensor, int]] = []
+    for chunk_offset, raw_batch_entry in enumerate(raw_batch_by_offset):
+        if raw_batch_entry is None:
+            raise RuntimeError(
+                "Missing grouped validation-label batch entry for fixed-layout chunk offset "
+                f"{chunk_offset}."
+            )
+        resolved_batches.append(raw_batch_entry)
+    return resolved_batches
+
+
+def _batched_valid_classification_attempts_for_datasets(
+    config: GeneratorConfig,
+    *,
+    plan: _FixedLayoutPlan,
+    dataset_roots: list[KeyedRng],
+    requested_device: str,
+    resolved_device: str,
+    start_attempt: int = 1,
+    attempt_budget: int | None = None,
+) -> list[int | None]:
+    """Return first-valid replay attempts for a dataset group using exact grouped validation."""
+
+    attempts = (
+        max(1, int(attempt_budget))
+        if attempt_budget is not None
+        else _plan_candidate_attempt_budget(config)
+    )
+    if not dataset_roots:
+        return []
+    if len(dataset_roots) == 1:
+        return [
+            _first_valid_classification_attempt_for_dataset(
+                config,
+                plan=plan,
+                dataset_root=dataset_roots[0],
+                requested_device=requested_device,
+                resolved_device=resolved_device,
+                start_attempt=start_attempt,
+                attempt_budget=attempts,
+            )
+        ]
+
+    shift_params = resolve_shift_runtime_params(config)
+    unresolved_offsets = list(range(len(dataset_roots)))
+    resolved_attempts: list[int | None] = [None] * len(dataset_roots)
+    for attempt in range(max(0, int(start_attempt)), attempts):
+        if not unresolved_offsets:
+            break
+        pending_dataset_roots = [dataset_roots[offset] for offset in unresolved_offsets]
+        pending_attempts = [int(attempt)] * len(pending_dataset_roots)
+        pending_batches = _grouped_validation_labels_for_attempts(
+            config,
+            plan=plan,
+            dataset_roots=pending_dataset_roots,
+            attempts=pending_attempts,
+            resolved_device=resolved_device,
+            noise_sigma_multiplier=float(shift_params.variance_sigma_multiplier),
+        )
+        next_unresolved_offsets: list[int] = []
+        for pending_offset, dataset_root in enumerate(pending_dataset_roots):
+            y_batch, local_index = pending_batches[pending_offset]
+            if _raw_classification_labels_support_split(
+                y_batch[local_index],
+                dataset_root=dataset_root,
+                attempt=attempt,
+                n_train=int(plan.n_train),
+            ):
+                resolved_attempts[unresolved_offsets[pending_offset]] = int(attempt)
+            else:
+                next_unresolved_offsets.append(unresolved_offsets[pending_offset])
+        unresolved_offsets = next_unresolved_offsets
+    return resolved_attempts
 
 
 def _fixed_layout_plan_classification_attempt_plan(
@@ -1592,29 +1756,17 @@ def _fixed_layout_plan_classification_attempt_plan(
         dataset_roots = [
             run_root.keyed("dataset", dataset_index + offset) for offset in range(chunk_size)
         ]
-        grouped_noise_runtime = _group_noise_runtime_chunk(
+        raw_batch_by_offset = _grouped_validation_labels_for_attempts(
             config,
+            plan=plan,
             dataset_roots=dataset_roots,
+            attempts=[0] * chunk_size,
+            resolved_device=resolved_device,
+            noise_sigma_multiplier=float(shift_params.variance_sigma_multiplier),
         )
-        raw_batch_by_offset: list[tuple[torch.Tensor, int] | None] = [None] * chunk_size
-        for group in grouped_noise_runtime:
-            noise_spec = _noise_sampling_spec(group.selection)
-            y_batch, _aux_meta_batch = generate_fixed_layout_label_batch(
-                config,
-                plan.layout,
-                execution_plan=plan.execution_plan,
-                dataset_seeds=group.generation_seeds,
-                device=resolved_device,
-                noise_sigma_multiplier=float(shift_params.variance_sigma_multiplier),
-                noise_spec=noise_spec,
-            )
-            for local_index, chunk_offset in enumerate(group.chunk_offsets):
-                raw_batch_by_offset[chunk_offset] = (y_batch, int(local_index))
+        invalid_offsets: list[int] = []
         for offset, dataset_root in enumerate(dataset_roots):
-            raw_batch_entry = raw_batch_by_offset[offset]
-            if raw_batch_entry is None:
-                raise RuntimeError("Missing grouped raw batch entry for fixed-layout chunk offset.")
-            y_batch, local_index = raw_batch_entry
+            y_batch, local_index = raw_batch_by_offset[offset]
             if _raw_classification_labels_support_split(
                 y_batch[local_index],
                 dataset_root=dataset_root,
@@ -1623,18 +1775,26 @@ def _fixed_layout_plan_classification_attempt_plan(
             ):
                 attempt_plan.append(0)
                 continue
-            replay_attempt = _first_valid_classification_attempt_for_dataset(
+            invalid_offsets.append(int(offset))
+            attempt_plan.append(-1)
+        if invalid_offsets:
+            replay_attempts = _batched_valid_classification_attempts_for_datasets(
                 config,
                 plan=plan,
-                dataset_root=dataset_root,
+                dataset_roots=[dataset_roots[offset] for offset in invalid_offsets],
                 requested_device=requested_device,
                 resolved_device=resolved_device,
                 start_attempt=1,
                 attempt_budget=replay_attempt_budget,
             )
-            if replay_attempt is None:
-                return None
-            attempt_plan.append(int(replay_attempt))
+            for offset, replay_attempt in zip(
+                invalid_offsets,
+                replay_attempts,
+                strict=True,
+            ):
+                if replay_attempt is None:
+                    return None
+                attempt_plan[dataset_index + offset] = int(replay_attempt)
         dataset_index += chunk_size
 
     return tuple(attempt_plan)
@@ -1699,6 +1859,7 @@ def _sample_fixed_layout(
     run_root = KeyedRng(run_seed)
     requested_device = (device or config.runtime.device or "auto").lower()
     resolved_device = _resolve_device(config, device)
+    stress_profile_name = None if config.stress.profile is None else str(config.stress.profile)
     rows_seed = run_root.child_seed("rows")
     attempts = max(1, int(config.filter.max_attempts))
     last_error = "unknown"
@@ -1712,6 +1873,7 @@ def _sample_fixed_layout(
                 rows_seed=rows_seed,
                 requested_device=requested_device,
                 resolved_device=resolved_device,
+                stress_profile_name=stress_profile_name,
             )
         except InvalidStructuralLayoutError as exc:
             last_error = str(exc.reason)
@@ -1749,6 +1911,18 @@ def _generate_fixed_layout_graph_batch_with_runtime_metrics(
     noise_spec,
     runtime_metrics_out: dict[str, float],
 ) -> tuple[torch.Tensor, torch.Tensor, list[dict[str, object]]]:
+    if plan.prepared_execution_context is not None:
+        return _generate_fixed_layout_graph_batch_prepared(
+            config,
+            plan.layout,
+            execution_plan=plan.execution_plan,
+            prepared_execution_context=plan.prepared_execution_context,
+            dataset_seeds=dataset_seeds,
+            device=resolved_device,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+            runtime_metrics_out=runtime_metrics_out,
+        )
     return generate_fixed_layout_graph_batch(
         config,
         plan.layout,

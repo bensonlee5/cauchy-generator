@@ -179,6 +179,7 @@ def test_resolve_generate_config_materializes_stress_profile() -> None:
     )
 
     assert resolved["config"].stress.profile is None
+    assert resolved["carried_stress_profile"] == _STRESS_PROFILE
     assert resolved["config"].dataset.task == "classification"
     assert resolved["config"].dataset.n_train == 768
     assert resolved["config"].dataset.n_test == 256
@@ -214,6 +215,7 @@ def test_resolve_generate_config_materializes_graph_breadth_stress_profile() -> 
     )
 
     assert resolved["config"].stress.profile is None
+    assert resolved["carried_stress_profile"] == _GRAPH_BREADTH_STRESS_PROFILE
     assert resolved["config"].dataset.n_features_min == 24
     assert resolved["config"].graph.n_nodes_max == 40
     assert resolved["config"].filter.enabled is False
@@ -233,11 +235,27 @@ def test_resolve_generate_config_materializes_compositional_stress_profile() -> 
     )
 
     assert resolved["config"].stress.profile is None
+    assert resolved["carried_stress_profile"] == _COMPOSITIONAL_STRESS_PROFILE
     assert resolved["config"].filter.enabled is False
     mix = resolved["config"].mechanism.function_family_mix
     assert mix["piecewise"] > mix["linear"]
     assert mix["product"] > mix["quadratic"]
     assert sum(float(value) for value in mix.values()) == pytest.approx(1.0)
+
+
+def test_resolve_generate_config_leaves_sideband_unset_without_stress_profile() -> None:
+    cfg = load_repo_config()
+
+    resolved = resolve_generate_config(
+        cfg,
+        device_override="cpu",
+        rows=None,
+        hardware_policy="none",
+        diagnostics_enabled=False,
+    )
+
+    assert resolved["config"].stress.profile is None
+    assert resolved["carried_stress_profile"] is None
 
 
 @pytest.mark.parametrize(

@@ -15,6 +15,7 @@ from dagzoo.bench.throughput import (
 from dagzoo.config import GeneratorConfig
 from dagzoo.hardware import HardwareInfo
 from dagzoo.rng import KeyedRng
+from dagzoo.runtime_profiling import record_runtime_profile_metric
 
 
 def _tiny_parallel_config() -> GeneratorConfig:
@@ -535,6 +536,78 @@ def test_run_throughput_benchmark_aggregates_raw_batch_metrics(monkeypatch) -> N
     assert result["feature_materialization_elapsed_seconds"] == pytest.approx(0.1)
 
 
+def test_run_throughput_benchmark_profile_runtime_adds_internal_metrics(monkeypatch) -> None:
+    def _stub_generate_batch_iter(
+        _config,
+        *,
+        num_datasets: int,
+        seed: int | None = None,
+        device: str | None = None,
+    ):
+        _ = (num_datasets, seed, device)
+        return iter(())
+
+    def _stub_prepare_canonical_fixed_layout_run(
+        _config,
+        *,
+        num_datasets: int,
+        seed: int | None = None,
+        device: str | None = None,
+        batch_size: int | None = None,
+        precompute_classification_attempt_plan: bool = True,
+    ):
+        _ = (batch_size, precompute_classification_attempt_plan)
+        return SimpleNamespace(
+            config=_config,
+            plan=object(),
+            run_seed=int(seed or 0),
+            batch_size=num_datasets,
+        )
+
+    def _stub_iter_prepared_canonical_batch_iter(
+        _prepared,
+        *,
+        num_datasets: int,
+        on_raw_batch_metrics=None,
+    ):
+        _ = on_raw_batch_metrics
+        record_runtime_profile_metric("profile_fixed_layout_rng_keyed_count", 3.0)
+        record_runtime_profile_metric("profile_rng_torch_generator_elapsed_seconds", 0.125)
+        record_runtime_profile_metric("profile_node_apply_tree_elapsed_seconds", 0.25)
+        record_runtime_profile_metric(
+            "profile_node_apply_piecewise_exclusive_elapsed_seconds", 0.05
+        )
+        record_runtime_profile_metric("profile_node_apply_product_call_count", 2.0)
+        yield from range(num_datasets)
+
+    monkeypatch.setattr(
+        "dagzoo.bench.throughput.generate_batch_iter",
+        _stub_generate_batch_iter,
+    )
+    monkeypatch.setattr(
+        "dagzoo.bench.throughput.prepare_canonical_fixed_layout_run",
+        _stub_prepare_canonical_fixed_layout_run,
+    )
+    monkeypatch.setattr(
+        "dagzoo.bench.throughput._iter_prepared_canonical_batch_iter",
+        _stub_iter_prepared_canonical_batch_iter,
+    )
+
+    result = run_throughput_benchmark(
+        GeneratorConfig(),
+        num_datasets=3,
+        warmup_datasets=0,
+        device="cpu",
+        profile_runtime=True,
+    )
+
+    assert result["profile_fixed_layout_rng_keyed_count"] == pytest.approx(3.0)
+    assert result["profile_rng_torch_generator_elapsed_seconds"] == pytest.approx(0.125)
+    assert result["profile_node_apply_tree_elapsed_seconds"] == pytest.approx(0.25)
+    assert result["profile_node_apply_piecewise_exclusive_elapsed_seconds"] == pytest.approx(0.05)
+    assert result["profile_node_apply_product_call_count"] == pytest.approx(2.0)
+
+
 def test_run_heterogeneous_throughput_benchmark_aggregates_stage_metrics(monkeypatch) -> None:
     iter_calls: list[tuple[int, int, str | None, bool]] = []
     sync_calls: list[str | None] = []
@@ -547,7 +620,7 @@ def test_run_heterogeneous_throughput_benchmark_aggregates_stage_metrics(monkeyp
         prefer_cpu_for_mps_auto: bool = False,
     ):
         assert prefer_cpu_for_mps_auto is True
-        return config, int(seed or 0), str(device or config.runtime.device), "cpu"
+        return config, int(seed or 0), str(device or config.runtime.device), "cpu", None
 
     def _stub_generate_batch_with_heterogeneous_layout_iter(
         _config,
@@ -616,7 +689,7 @@ def test_run_stratified_throughput_benchmark_aggregates_scheduler_metrics(monkey
         prefer_cpu_for_mps_auto: bool = False,
     ):
         assert prefer_cpu_for_mps_auto is True
-        return config, int(seed or 0), str(device or config.runtime.device), "cpu"
+        return config, int(seed or 0), str(device or config.runtime.device), "cpu", None
 
     def _stub_generate_batch_with_stratified_layout_iter(
         _config,

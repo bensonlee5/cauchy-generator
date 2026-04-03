@@ -124,9 +124,14 @@ Inspect first:
   `piecewise`, `product`, `gp`, and `tree` uptake while retaining the same
   anti-memorization steering path.
 - Main lever composition:
-  - non-default mechanism family mix
-  - slightly broader graph envelope than the carried baseline
-  - stricter target relevance floor than the default slice
+  - softened but still non-default mechanism family mix centered on
+    `piecewise`, `product`, `gp`, and `tree`
+  - broader feature and categorical-cardinality envelope than the carried
+    baseline
+  - raised graph floor plus a light target relevance floor instead of the
+    stricter structural gating used by the graph-breadth slice
+  - tuned fixed-layout batch target of `8_000_000` cells for better CPU
+    throughput on this heavier compositional regime
 
 Generate smoke run:
 

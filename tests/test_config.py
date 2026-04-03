@@ -657,8 +657,16 @@ def test_stress_profile_definition_exposes_relationship_slice_profiles() -> None
     assert graph_breadth["filter"]["min_target_indegree"] == 2
     assert graph_breadth["graph"]["n_nodes_max"] == 40
     assert compositional["filter"]["enabled"] is False
-    assert compositional["mechanism"]["function_family_mix"]["piecewise"] == pytest.approx(3.0)
-    assert compositional["mechanism"]["function_family_mix"]["linear"] == pytest.approx(0.5)
+    assert compositional["dataset"]["n_features_min"] == 12
+    assert compositional["dataset"]["n_features_max"] == 72
+    assert compositional["dataset"]["max_categorical_cardinality"] == 12
+    assert compositional["graph"]["n_nodes_min"] == 4
+    assert compositional["filter"]["min_target_indegree"] == 1
+    assert compositional["filter"]["min_target_relevant_feature_count"] == 2
+    assert compositional["filter"]["min_target_relevant_feature_fraction"] == pytest.approx(0.05)
+    assert compositional["runtime"]["fixed_layout_target_cells"] == 8_000_000
+    assert compositional["mechanism"]["function_family_mix"]["piecewise"] == pytest.approx(2.25)
+    assert compositional["mechanism"]["function_family_mix"]["linear"] == pytest.approx(0.75)
 
 
 def test_stress_profile_definition_rejects_unknown_name() -> None:
