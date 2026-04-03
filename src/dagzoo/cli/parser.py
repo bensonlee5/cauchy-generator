@@ -1,9 +1,10 @@
-"""CLI parser construction."""
+"""Click CLI construction."""
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
+
+import click
 
 from dagzoo.rng import SEED32_MAX, SEED32_MIN
 
@@ -15,313 +16,502 @@ from .commands.hardware import run_hardware_command
 from .commands.recipe import run_recipe_list_command
 from .parsing import (
     DEVICE_CHOICES,
-    HARDWARE_POLICY_CHOICES,
-    non_negative_int,
-    parse_fail_threshold_pct_arg,
-    parse_set_override,
-    parse_warn_threshold_pct_arg,
-    positive_int,
-    seed_32bit_int,
+    FAIL_THRESHOLD_PCT,
+    NON_NEGATIVE_INT,
+    POSITIVE_INT,
+    SEED32_INT,
+    SET_OVERRIDE,
+    WARN_THRESHOLD_PCT,
+    device_choice,
+    hardware_policy_choice,
 )
 
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
+BENCHMARK_PRESET_CHOICES = ("all", "cpu", "cuda_desktop", "cuda_h100", "custom")
+BENCHMARK_SUITE_CHOICES = ("smoke", "standard", "full")
+DIVERSITY_AUDIT_SUITE_CHOICES = ("smoke", "standard")
 
-def build_parser() -> argparse.ArgumentParser:
-    """Create the CLI parser and register all subcommands/options."""
 
-    parser = argparse.ArgumentParser(prog="dagzoo")
-    sub = parser.add_subparsers(dest="command", required=True)
+@click.group(context_settings=CONTEXT_SETTINGS)
+def cli() -> None:
+    """dagzoo command-line interface."""
 
-    g = sub.add_parser("generate", help="Generate synthetic datasets.")
-    g.set_defaults(handler=run_generate_command)
-    g.add_argument(
-        "--config",
-        required=True,
-        help="YAML config path or curated recipe reference (`recipe:<name>`).",
-    )
-    g.add_argument("--out", default=None, help="Output directory for parquet shards.")
-    g.add_argument(
-        "--handoff-root",
-        default=None,
-        help=(
-            "Optional handoff root; writes generated artifacts under "
-            "<handoff_root>/generated. Cannot be combined with --out or "
-            "--no-dataset-write."
-        ),
-    )
-    g.add_argument(
-        "--num-datasets",
-        type=positive_int,
-        default=10,
-        help="Number of datasets to generate.",
-    )
-    g.add_argument(
-        "--seed",
-        type=seed_32bit_int,
-        default=None,
-        help=f"Optional override for run seed in [{SEED32_MIN}, {SEED32_MAX}].",
-    )
-    g.add_argument(
-        "--rows",
-        default=None,
-        help=(
-            "Optional total-row spec override for generation. "
-            "Supports fixed int (e.g. 1024) or range (e.g. 400..60000)."
-        ),
-    )
-    g.add_argument(
-        "--device",
-        default=None,
-        choices=DEVICE_CHOICES,
-        help="Device override (auto/cpu/cuda/mps).",
-    )
-    g.add_argument(
-        "--hardware-policy",
-        default="none",
-        choices=HARDWARE_POLICY_CHOICES,
-        help="Explicit hardware policy to apply to config (default: none).",
-    )
-    g.add_argument(
-        "--no-dataset-write",
-        action="store_true",
-        help="Generate in memory only and do not write parquet files.",
-    )
-    g.add_argument(
-        "--diagnostics",
-        action="store_true",
-        help="Enable diagnostics coverage aggregation artifacts for this run.",
-    )
-    g.add_argument(
-        "--diagnostics-out-dir",
-        default=None,
-        help="Optional directory for diagnostics artifacts (defaults to output directory).",
-    )
-    g.add_argument(
-        "--set",
-        dest="set_overrides",
-        type=parse_set_override,
-        action="append",
-        default=None,
-        help="Repeatable advanced override in dotted.path=value form.",
-    )
-    g.add_argument(
-        "--print-effective-config",
-        action="store_true",
-        help="Print resolved effective config YAML before generation.",
-    )
-    g.add_argument(
-        "--print-resolution-trace",
-        action="store_true",
-        help="Print field-level override trace for resolved config before generation.",
-    )
 
-    f = sub.add_parser(
-        "filter",
-        help="Replay deferred filtering over generated shard outputs.",
-    )
-    f.set_defaults(handler=run_filter_command)
-    f.add_argument(
-        "--in",
-        dest="in_dir",
-        required=True,
-        help="Input directory containing shard_* outputs (or a single shard directory).",
-    )
-    f.add_argument(
-        "--out",
-        required=True,
-        help="Directory for deferred filter manifest/summary artifacts.",
-    )
-    f.add_argument(
-        "--curated-out",
-        default=None,
-        help="Optional output directory for accepted-only curated shards.",
-    )
-    f.add_argument(
-        "--set",
-        dest="set_overrides",
-        type=parse_set_override,
-        action="append",
-        default=None,
-        help="Repeatable advanced override in filter.<field>=value form.",
-    )
+@cli.command("generate", context_settings=CONTEXT_SETTINGS, help="Generate synthetic datasets.")
+@click.option(
+    "--config",
+    required=True,
+    help="YAML config path or curated recipe reference (`recipe:<name>`).",
+)
+@click.option(
+    "--out",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Output directory for parquet shards.",
+)
+@click.option(
+    "--handoff-root",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=(
+        "Optional handoff root; writes generated artifacts under "
+        "<handoff_root>/generated. Cannot be combined with --out or "
+        "--no-dataset-write."
+    ),
+)
+@click.option(
+    "--num-datasets",
+    type=POSITIVE_INT,
+    default=10,
+    show_default=True,
+    help="Number of datasets to generate.",
+)
+@click.option(
+    "--seed",
+    type=SEED32_INT,
+    default=None,
+    help=f"Optional override for run seed in [{SEED32_MIN}, {SEED32_MAX}].",
+)
+@click.option(
+    "--rows",
+    default=None,
+    help=(
+        "Optional total-row spec override for generation. "
+        "Supports fixed int (e.g. 1024) or range (e.g. 400..60000)."
+    ),
+)
+@click.option(
+    "--device",
+    default=None,
+    type=device_choice(),
+    help=f"Device override ({'/'.join(DEVICE_CHOICES)}).",
+)
+@click.option(
+    "--hardware-policy",
+    default="none",
+    type=hardware_policy_choice(),
+    help="Explicit hardware policy to apply to config (default: none).",
+)
+@click.option(
+    "--no-dataset-write",
+    is_flag=True,
+    help="Generate in memory only and do not write parquet files.",
+)
+@click.option(
+    "--diagnostics",
+    is_flag=True,
+    help="Enable diagnostics coverage aggregation artifacts for this run.",
+)
+@click.option(
+    "--diagnostics-out-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Optional directory for diagnostics artifacts (defaults to output directory).",
+)
+@click.option(
+    "--set",
+    "set_overrides",
+    type=SET_OVERRIDE,
+    multiple=True,
+    help="Repeatable advanced override in dotted.path=value form.",
+)
+@click.option(
+    "--print-effective-config",
+    is_flag=True,
+    help="Print resolved effective config YAML before generation.",
+)
+@click.option(
+    "--print-resolution-trace",
+    is_flag=True,
+    help="Print field-level override trace for resolved config before generation.",
+)
+def generate_command(
+    *,
+    config: str,
+    out: Path | None,
+    handoff_root: Path | None,
+    num_datasets: int,
+    seed: int | None,
+    rows: str | None,
+    device: str | None,
+    hardware_policy: str,
+    no_dataset_write: bool,
+    diagnostics: bool,
+    diagnostics_out_dir: Path | None,
+    set_overrides: tuple[tuple[str, object], ...],
+    print_effective_config: bool,
+    print_resolution_trace: bool,
+) -> int:
+    """Execute the generate command."""
 
-    b = sub.add_parser("benchmark", help="Run benchmark suite across one or more presets.")
-    b.set_defaults(handler=run_benchmark_command)
-    b.add_argument(
-        "--config",
-        default=None,
-        help="Optional YAML config path or `recipe:<name>` for preset 'custom'.",
-    )
-    b.add_argument(
-        "--device",
-        default=None,
-        choices=DEVICE_CHOICES,
-        help="Device override for preset 'custom' or a single resolved preset.",
-    )
-    b.add_argument(
-        "--num-datasets",
-        type=positive_int,
-        default=None,
-        help="Override benchmark dataset count.",
-    )
-    b.add_argument(
-        "--warmup",
-        type=non_negative_int,
-        default=None,
-        help="Override benchmark warmup count.",
-    )
-    b.add_argument(
-        "--hardware-policy",
-        default="none",
-        choices=HARDWARE_POLICY_CHOICES,
-        help="Explicit hardware policy to apply to configs (default: none).",
-    )
-    b.add_argument("--json-out", default=None, help="Optional path to write suite summary JSON.")
-    b.add_argument(
-        "--suite",
-        default=None,
-        choices=["smoke", "standard", "full"],
-        help="Benchmark suite level. Defaults to config benchmark.suite.",
-    )
-    b.add_argument(
-        "--preset",
-        action="append",
-        default=None,
-        choices=["all", "cpu", "cuda_desktop", "cuda_h100", "custom"],
-        help="Benchmark preset key. Repeat to run multiple presets.",
-    )
-    b.add_argument(
-        "--baseline",
-        default=None,
-        help="Optional baseline JSON path for regression checks.",
-    )
-    b.add_argument("--out-dir", default=None, help="Optional directory for summary artifacts.")
-    b.add_argument(
-        "--fail-on-regression",
-        action="store_true",
-        help="Return non-zero exit code if regression status is fail.",
-    )
-    b.add_argument(
-        "--warn-threshold-pct",
-        type=float,
-        default=None,
-        help="Warning degradation threshold percentage.",
-    )
-    b.add_argument(
-        "--fail-threshold-pct",
-        type=float,
-        default=None,
-        help="Failure degradation threshold percentage.",
-    )
-    b.add_argument(
-        "--no-memory",
-        action="store_true",
-        help="Disable memory collection for benchmark presets.",
-    )
-    b.add_argument(
-        "--collect-reproducibility",
-        action="store_true",
-        help="Force reproducibility checks even outside full suite mode.",
-    )
-    b.add_argument(
-        "--save-baseline",
-        default=None,
-        help="Optional path to write a baseline JSON derived from this run.",
-    )
-    b.add_argument(
-        "--diagnostics",
-        action="store_true",
-        help="Enable diagnostics coverage aggregation artifacts for each benchmark preset run.",
-    )
-    b.add_argument(
-        "--diagnostics-out-dir",
-        default=None,
-        help="Optional root directory for benchmark diagnostics artifacts.",
-    )
-    b.add_argument(
-        "--print-effective-config",
-        action="store_true",
-        help="Print each preset's resolved effective config YAML before execution.",
-    )
-    b.add_argument(
-        "--print-resolution-trace",
-        action="store_true",
-        help="Print each preset's field-level override trace before execution.",
+    return run_generate_command(
+        config=config,
+        out=out,
+        handoff_root=handoff_root,
+        num_datasets=num_datasets,
+        seed=seed,
+        rows=rows,
+        device=device,
+        hardware_policy=hardware_policy,
+        no_dataset_write=no_dataset_write,
+        diagnostics=diagnostics,
+        diagnostics_out_dir=diagnostics_out_dir,
+        set_overrides=set_overrides,
+        print_effective_config=print_effective_config,
+        print_resolution_trace=print_resolution_trace,
     )
 
-    d = sub.add_parser(
-        "diversity-audit",
-        help="Compare accepted-corpus diversity for a baseline config and one or more variants.",
-    )
-    d.set_defaults(handler=run_diversity_audit_command)
-    d.add_argument(
-        "--baseline-config",
-        required=True,
-        help="Baseline generator config YAML path or `recipe:<name>`.",
-    )
-    d.add_argument(
-        "--variant-config",
-        action="append",
-        required=True,
-        help="Variant generator config YAML path or `recipe:<name>`. Repeat for multiple variants.",
-    )
-    d.add_argument(
-        "--warn-threshold-pct",
-        type=parse_warn_threshold_pct_arg,
-        default=2.5,
-        help="Warn threshold for composite diversity shift vs baseline.",
-    )
-    d.add_argument(
-        "--fail-threshold-pct",
-        type=parse_fail_threshold_pct_arg,
-        default=5.0,
-        help="Fail threshold for composite diversity shift vs baseline.",
-    )
-    d.add_argument(
-        "--fail-on-regression",
-        action="store_true",
-        help="Return non-zero exit code if any variant reaches fail severity.",
-    )
-    d.add_argument(
-        "--suite",
-        choices=["smoke", "standard"],
-        default="standard",
-        help="Probe size to use for the baseline and each variant.",
-    )
-    d.add_argument(
-        "--num-datasets",
-        type=positive_int,
-        default=None,
-        help="Optional override for per-config dataset count.",
-    )
-    d.add_argument(
-        "--warmup",
-        type=non_negative_int,
-        default=None,
-        help="Optional override for per-config warmup count.",
-    )
-    d.add_argument(
-        "--out-dir",
-        default=str(Path("effective_config_artifacts") / "diversity_audit"),
-        help="Output directory for diversity audit artifacts.",
-    )
-    d.add_argument(
-        "--device",
-        default=None,
-        choices=DEVICE_CHOICES,
-        help="Optional device override for scale-phase generation.",
+
+@cli.command(
+    "filter",
+    context_settings=CONTEXT_SETTINGS,
+    help="Replay deferred filtering over generated shard outputs.",
+)
+@click.option(
+    "--in",
+    "in_dir",
+    required=True,
+    type=click.Path(path_type=Path),
+    help="Input directory containing shard_* outputs (or a single shard directory).",
+)
+@click.option(
+    "--out",
+    required=True,
+    type=click.Path(path_type=Path),
+    help="Directory for deferred filter manifest/summary artifacts.",
+)
+@click.option(
+    "--curated-out",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Optional output directory for accepted-only curated shards.",
+)
+@click.option(
+    "--set",
+    "set_overrides",
+    type=SET_OVERRIDE,
+    multiple=True,
+    help="Repeatable advanced override in filter.<field>=value form.",
+)
+def filter_command(
+    *,
+    in_dir: Path,
+    out: Path,
+    curated_out: Path | None,
+    set_overrides: tuple[tuple[str, object], ...],
+) -> int:
+    """Execute the filter command."""
+
+    return run_filter_command(
+        in_dir=str(in_dir),
+        out=str(out),
+        curated_out=str(curated_out) if curated_out is not None else None,
+        set_overrides=set_overrides,
     )
 
-    h = sub.add_parser("hardware", help="Inspect detected hardware and tier mapping.")
-    h.set_defaults(handler=run_hardware_command)
-    h.add_argument(
-        "--device",
-        default=None,
-        choices=DEVICE_CHOICES,
-        help="Requested device (auto/cpu/cuda/mps).",
+
+@cli.command(
+    "benchmark",
+    context_settings=CONTEXT_SETTINGS,
+    help="Run benchmark suite across one or more presets.",
+)
+@click.option(
+    "--config",
+    default=None,
+    help="Optional YAML config path or `recipe:<name>` for preset 'custom'.",
+)
+@click.option(
+    "--device",
+    default=None,
+    type=device_choice(),
+    help=f"Device override for preset 'custom' or a single resolved preset ({'/'.join(DEVICE_CHOICES)}).",
+)
+@click.option(
+    "--num-datasets",
+    type=POSITIVE_INT,
+    default=None,
+    help="Override benchmark dataset count.",
+)
+@click.option(
+    "--warmup",
+    type=NON_NEGATIVE_INT,
+    default=None,
+    help="Override benchmark warmup count.",
+)
+@click.option(
+    "--hardware-policy",
+    default="none",
+    type=hardware_policy_choice(),
+    help="Explicit hardware policy to apply to configs (default: none).",
+)
+@click.option(
+    "--json-out",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Optional path to write suite summary JSON.",
+)
+@click.option(
+    "--suite",
+    default=None,
+    type=click.Choice(BENCHMARK_SUITE_CHOICES),
+    help="Benchmark suite level. Defaults to config benchmark.suite.",
+)
+@click.option(
+    "--preset",
+    multiple=True,
+    default=(),
+    type=click.Choice(BENCHMARK_PRESET_CHOICES),
+    help="Benchmark preset key. Repeat to run multiple presets.",
+)
+@click.option(
+    "--baseline",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Optional baseline JSON path for regression checks.",
+)
+@click.option(
+    "--out-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Optional directory for summary artifacts.",
+)
+@click.option(
+    "--fail-on-regression",
+    is_flag=True,
+    help="Return non-zero exit code if regression status is fail.",
+)
+@click.option(
+    "--warn-threshold-pct",
+    type=WARN_THRESHOLD_PCT,
+    default=None,
+    help="Warning degradation threshold percentage.",
+)
+@click.option(
+    "--fail-threshold-pct",
+    type=FAIL_THRESHOLD_PCT,
+    default=None,
+    help="Failure degradation threshold percentage.",
+)
+@click.option(
+    "--no-memory",
+    is_flag=True,
+    help="Disable memory collection for benchmark presets.",
+)
+@click.option(
+    "--collect-reproducibility",
+    is_flag=True,
+    help="Force reproducibility checks even outside full suite mode.",
+)
+@click.option(
+    "--save-baseline",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Optional path to write a baseline JSON derived from this run.",
+)
+@click.option(
+    "--diagnostics",
+    is_flag=True,
+    help="Enable diagnostics coverage aggregation artifacts for each benchmark preset run.",
+)
+@click.option(
+    "--diagnostics-out-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Optional root directory for benchmark diagnostics artifacts.",
+)
+@click.option(
+    "--print-effective-config",
+    is_flag=True,
+    help="Print each preset's resolved effective config YAML before execution.",
+)
+@click.option(
+    "--print-resolution-trace",
+    is_flag=True,
+    help="Print each preset's field-level override trace before execution.",
+)
+def benchmark_command(
+    *,
+    config: str | None,
+    device: str | None,
+    num_datasets: int | None,
+    warmup: int | None,
+    hardware_policy: str,
+    json_out: Path | None,
+    suite: str | None,
+    preset: tuple[str, ...],
+    baseline: Path | None,
+    out_dir: Path | None,
+    fail_on_regression: bool,
+    warn_threshold_pct: float | None,
+    fail_threshold_pct: float | None,
+    no_memory: bool,
+    collect_reproducibility: bool,
+    save_baseline: Path | None,
+    diagnostics: bool,
+    diagnostics_out_dir: Path | None,
+    print_effective_config: bool,
+    print_resolution_trace: bool,
+) -> int:
+    """Execute the benchmark command."""
+
+    return run_benchmark_command(
+        config=config,
+        device=device,
+        num_datasets=num_datasets,
+        warmup=warmup,
+        hardware_policy=hardware_policy,
+        json_out=json_out,
+        suite=suite,
+        preset=preset,
+        baseline=baseline,
+        out_dir=out_dir,
+        fail_on_regression=fail_on_regression,
+        warn_threshold_pct=warn_threshold_pct,
+        fail_threshold_pct=fail_threshold_pct,
+        no_memory=no_memory,
+        collect_reproducibility=collect_reproducibility,
+        save_baseline=save_baseline,
+        diagnostics=diagnostics,
+        diagnostics_out_dir=diagnostics_out_dir,
+        print_effective_config=print_effective_config,
+        print_resolution_trace=print_resolution_trace,
     )
 
-    r = sub.add_parser("recipe", help="Inspect the curated public recipe catalog.")
-    r_sub = r.add_subparsers(dest="recipe_command", required=True)
-    r_list = r_sub.add_parser("list", help="List curated recipe references.")
-    r_list.set_defaults(handler=run_recipe_list_command)
-    return parser
+
+@cli.command(
+    "diversity-audit",
+    context_settings=CONTEXT_SETTINGS,
+    help="Compare accepted-corpus diversity for a baseline config and one or more variants.",
+)
+@click.option(
+    "--baseline-config",
+    required=True,
+    help="Baseline generator config YAML path or `recipe:<name>`.",
+)
+@click.option(
+    "--variant-config",
+    multiple=True,
+    required=True,
+    help="Variant generator config YAML path or `recipe:<name>`. Repeat for multiple variants.",
+)
+@click.option(
+    "--warn-threshold-pct",
+    type=WARN_THRESHOLD_PCT,
+    default=2.5,
+    show_default=True,
+    help="Warn threshold for composite diversity shift vs baseline.",
+)
+@click.option(
+    "--fail-threshold-pct",
+    type=FAIL_THRESHOLD_PCT,
+    default=5.0,
+    show_default=True,
+    help="Fail threshold for composite diversity shift vs baseline.",
+)
+@click.option(
+    "--fail-on-regression",
+    is_flag=True,
+    help="Return non-zero exit code if any variant reaches fail severity.",
+)
+@click.option(
+    "--suite",
+    type=click.Choice(DIVERSITY_AUDIT_SUITE_CHOICES),
+    default="standard",
+    show_default=True,
+    help="Probe size to use for the baseline and each variant.",
+)
+@click.option(
+    "--num-datasets",
+    type=POSITIVE_INT,
+    default=None,
+    help="Optional override for per-config dataset count.",
+)
+@click.option(
+    "--warmup",
+    type=NON_NEGATIVE_INT,
+    default=None,
+    help="Optional override for per-config warmup count.",
+)
+@click.option(
+    "--out-dir",
+    type=click.Path(path_type=Path),
+    default=Path("effective_config_artifacts") / "diversity_audit",
+    show_default=True,
+    help="Output directory for diversity audit artifacts.",
+)
+@click.option(
+    "--device",
+    default=None,
+    type=device_choice(),
+    help="Optional device override for scale-phase generation.",
+)
+def diversity_audit_command(
+    *,
+    baseline_config: str,
+    variant_config: tuple[str, ...],
+    warn_threshold_pct: float,
+    fail_threshold_pct: float,
+    fail_on_regression: bool,
+    suite: str,
+    num_datasets: int | None,
+    warmup: int | None,
+    out_dir: Path,
+    device: str | None,
+) -> int:
+    """Execute the diversity-audit command."""
+
+    return run_diversity_audit_command(
+        baseline_config=baseline_config,
+        variant_config=variant_config,
+        warn_threshold_pct=warn_threshold_pct,
+        fail_threshold_pct=fail_threshold_pct,
+        fail_on_regression=fail_on_regression,
+        suite=suite,
+        num_datasets=num_datasets,
+        warmup=warmup,
+        out_dir=out_dir,
+        device=device,
+    )
+
+
+@cli.command(
+    "hardware",
+    context_settings=CONTEXT_SETTINGS,
+    help="Inspect detected hardware and tier mapping.",
+)
+@click.option(
+    "--device",
+    default=None,
+    type=device_choice(),
+    help=f"Requested device ({'/'.join(DEVICE_CHOICES)}).",
+)
+def hardware_command(*, device: str | None) -> int:
+    """Execute the hardware command."""
+
+    return run_hardware_command(device=device)
+
+
+@cli.group(
+    "recipe",
+    context_settings=CONTEXT_SETTINGS,
+    help="Inspect the curated public recipe catalog.",
+)
+def recipe_group() -> None:
+    """Recipe subcommands."""
+
+
+@recipe_group.command(
+    "list",
+    context_settings=CONTEXT_SETTINGS,
+    help="List curated recipe references.",
+)
+def recipe_list_command() -> int:
+    """Execute the recipe list command."""
+
+    return run_recipe_list_command()
+
+
+def build_cli() -> click.Group:
+    """Return the root Click command for the public CLI."""
+
+    return cli

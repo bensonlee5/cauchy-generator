@@ -3,11 +3,11 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import platform
 import shutil
 import stat
+import sys
 import tarfile
 import tempfile
 import urllib.error
@@ -16,31 +16,13 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+import click
+
 _RELEASE_API_TEMPLATE = "https://api.github.com/repos/gohugoio/hugo/releases/tags/v{version}"
 _RELEASE_DOWNLOAD_TEMPLATE = (
     "https://github.com/gohugoio/hugo/releases/download/v{version}/{asset_name}"
 )
-
-
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", required=True, help="Hugo version without the leading v.")
-    parser.add_argument(
-        "--extended",
-        action="store_true",
-        help="Install the extended Hugo build.",
-    )
-    parser.add_argument(
-        "--bin-dir",
-        required=True,
-        help="Directory where the extracted Hugo binary should be written.",
-    )
-    parser.add_argument(
-        "--github-path-file",
-        default=None,
-        help="Optional path to the GitHub Actions PATH file.",
-    )
-    return parser.parse_args()
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
 def _normalized_system(value: str | None = None) -> str:
@@ -234,35 +216,67 @@ def _extract_hugo_binary(archive_path: Path, *, out_dir: Path) -> Path:
     return destination
 
 
-def main() -> int:
-    args = _parse_args()
-    version = str(args.version).strip().removeprefix("v")
-    bin_dir = Path(args.bin_dir).resolve()
+@click.command(context_settings=CONTEXT_SETTINGS)
+@click.option("--version", required=True, help="Hugo version without the leading v.")
+@click.option("--extended", is_flag=True, help="Install the extended Hugo build.")
+@click.option(
+    "--bin-dir",
+    required=True,
+    help="Directory where the extracted Hugo binary should be written.",
+)
+@click.option(
+    "--github-path-file",
+    default=None,
+    help="Optional path to the GitHub Actions PATH file.",
+)
+def cli(
+    *,
+    version: str,
+    extended: bool,
+    bin_dir: str,
+    github_path_file: str | None,
+) -> int:
+    """Install one pinned Hugo release into a local bin directory."""
+
+    version = str(version).strip().removeprefix("v")
+    bin_dir = Path(bin_dir).resolve()
 
     with tempfile.TemporaryDirectory(prefix="dagzoo_hugo_") as temp_dir:
         temp_root = Path(temp_dir)
         archive_path = _download_direct_release_asset(
             version=version,
             destination_dir=temp_root,
-            extended=bool(args.extended),
+            extended=bool(extended),
         )
         if archive_path is None:
             release_payload = _fetch_release(version)
             asset_name, download_url = _select_asset_download_url(
                 release_payload,
                 version=version,
-                extended=bool(args.extended),
+                extended=bool(extended),
             )
             archive_path = temp_root / asset_name
             _download_file(download_url, archive_path)
         binary_path = _extract_hugo_binary(archive_path, out_dir=bin_dir)
 
-    github_path_file = str(args.github_path_file) if args.github_path_file else None
     if github_path_file is not None:
         with Path(github_path_file).open("a", encoding="utf-8") as handle:
             handle.write(f"{bin_dir}\n")
     print(f"Installed Hugo {version} to {binary_path}")
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        result = cli.main(args=argv, prog_name="install_hugo.py", standalone_mode=False)
+    except click.ClickException as exc:
+        exc.show(file=sys.stderr)
+        return int(exc.exit_code)
+    except click.exceptions.Exit as exc:
+        return int(exc.exit_code)
+    except click.Abort:
+        return 1
+    return 0 if result is None else int(result)
 
 
 if __name__ == "__main__":

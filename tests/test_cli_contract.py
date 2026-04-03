@@ -1,8 +1,10 @@
-import argparse
+from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
-from dagzoo.cli.parser import build_parser
+import dagzoo.cli.parser as cli_parser
+from dagzoo.cli.parser import build_cli
 from dagzoo.cli.parsing import DEVICE_CHOICES, HARDWARE_POLICY_CHOICES
 
 _COMMAND_BASE_ARGS = {
@@ -11,69 +13,105 @@ _COMMAND_BASE_ARGS = {
 }
 
 
+@pytest.fixture
+def runner() -> CliRunner:
+    return CliRunner()
+
+
+def _stub_command(monkeypatch: pytest.MonkeyPatch, command: str, seen: dict[str, object]) -> None:
+    def _stub(**kwargs: object) -> int:
+        seen.update(kwargs)
+        return 0
+
+    target = "run_generate_command" if command == "generate" else "run_benchmark_command"
+    monkeypatch.setattr(cli_parser, target, _stub)
+
+
 @pytest.mark.parametrize("command", sorted(_COMMAND_BASE_ARGS))
 @pytest.mark.parametrize("device", DEVICE_CHOICES)
-def test_cli_parser_accepts_supported_device_choices(command: str, device: str) -> None:
-    parser = build_parser()
+def test_cli_accepts_supported_device_choices(
+    runner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    device: str,
+) -> None:
+    seen: dict[str, object] = {}
+    _stub_command(monkeypatch, command, seen)
 
-    args = parser.parse_args([*_COMMAND_BASE_ARGS[command], "--device", device])
+    args = [*_COMMAND_BASE_ARGS[command], "--device", device]
+    if command == "generate":
+        args.extend(["--num-datasets", "1", "--no-dataset-write"])
+    result = runner.invoke(build_cli(), args)
 
-    assert args.device == device
+    assert result.exit_code == 0
+    assert seen["device"] == device
 
 
 @pytest.mark.parametrize("command", sorted(_COMMAND_BASE_ARGS))
-def test_cli_parser_rejects_invalid_device_choice(command: str) -> None:
-    parser = build_parser()
+def test_cli_rejects_invalid_device_choice(runner: CliRunner, command: str) -> None:
+    args = [*_COMMAND_BASE_ARGS[command], "--device", "invalid-device"]
+    if command == "generate":
+        args.extend(["--num-datasets", "1", "--no-dataset-write"])
 
-    with pytest.raises(SystemExit) as exc_info:
-        parser.parse_args([*_COMMAND_BASE_ARGS[command], "--device", "invalid-device"])
+    result = runner.invoke(build_cli(), args)
 
-    assert int(exc_info.value.code) == 2
+    assert result.exit_code == 2
 
 
 @pytest.mark.parametrize("command", sorted(_COMMAND_BASE_ARGS))
 @pytest.mark.parametrize("hardware_policy", HARDWARE_POLICY_CHOICES)
-def test_cli_parser_accepts_supported_hardware_policies(command: str, hardware_policy: str) -> None:
-    parser = build_parser()
+def test_cli_accepts_supported_hardware_policies(
+    runner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    hardware_policy: str,
+) -> None:
+    seen: dict[str, object] = {}
+    _stub_command(monkeypatch, command, seen)
 
-    args = parser.parse_args([*_COMMAND_BASE_ARGS[command], "--hardware-policy", hardware_policy])
+    args = [*_COMMAND_BASE_ARGS[command], "--hardware-policy", hardware_policy]
+    if command == "generate":
+        args.extend(["--num-datasets", "1", "--no-dataset-write"])
+    result = runner.invoke(build_cli(), args)
 
-    assert args.hardware_policy == hardware_policy
+    assert result.exit_code == 0
+    assert seen["hardware_policy"] == hardware_policy
 
 
 @pytest.mark.parametrize("command", sorted(_COMMAND_BASE_ARGS))
-def test_cli_parser_rejects_invalid_hardware_policy_choice(command: str) -> None:
-    parser = build_parser()
+def test_cli_rejects_invalid_hardware_policy_choice(runner: CliRunner, command: str) -> None:
+    args = [*_COMMAND_BASE_ARGS[command], "--hardware-policy", "missing-policy"]
+    if command == "generate":
+        args.extend(["--num-datasets", "1", "--no-dataset-write"])
 
-    with pytest.raises(SystemExit) as exc_info:
-        parser.parse_args([*_COMMAND_BASE_ARGS[command], "--hardware-policy", "missing-policy"])
+    result = runner.invoke(build_cli(), args)
 
-    assert int(exc_info.value.code) == 2
+    assert result.exit_code == 2
 
 
-def test_cli_parser_accepts_generate_handoff_root() -> None:
-    parser = build_parser()
+def test_cli_accepts_generate_handoff_root(
+    runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: dict[str, object] = {}
+    _stub_command(monkeypatch, "generate", seen)
 
-    args = parser.parse_args(
+    result = runner.invoke(
+        build_cli(),
         [
             "generate",
             "--config",
             "configs/default.yaml",
             "--handoff-root",
             "handoffs/smoke",
-        ]
+        ],
     )
 
-    assert args.handoff_root == "handoffs/smoke"
+    assert result.exit_code == 0
+    assert seen["handoff_root"] == Path("handoffs/smoke")
 
 
-def test_cli_parser_exposes_only_supported_top_level_commands() -> None:
-    parser = build_parser()
-    subparsers_action = next(
-        action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
-    )
-
-    assert set(subparsers_action.choices) == {
+def test_cli_exposes_only_supported_top_level_commands() -> None:
+    assert set(build_cli().commands) == {
         "benchmark",
         "diversity-audit",
         "filter",
@@ -83,30 +121,32 @@ def test_cli_parser_exposes_only_supported_top_level_commands() -> None:
     }
 
 
-def test_top_level_help_omits_removed_filter_calibration_subcommand() -> None:
-    parser = build_parser()
+def test_top_level_help_omits_removed_filter_calibration_subcommand(runner: CliRunner) -> None:
+    result = runner.invoke(build_cli(), ["--help"])
 
-    assert "filter-calibration" not in parser.format_help()
-
-
-def test_generate_help_mentions_handoff_incompatible_flags() -> None:
-    parser = build_parser()
-    subparsers_action = next(
-        action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
-    )
-    help_text = subparsers_action.choices["generate"].format_help()
-
-    assert "Cannot be combined" in help_text
-    assert "--out" in help_text
-    assert "--no-dataset-write" in help_text
+    assert result.exit_code == 0
+    assert "filter-calibration" not in result.output
 
 
-def test_benchmark_help_mentions_device_single_preset_constraint() -> None:
-    parser = build_parser()
-    subparsers_action = next(
-        action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
-    )
-    help_text = subparsers_action.choices["benchmark"].format_help()
+def test_generate_help_mentions_handoff_incompatible_flags(runner: CliRunner) -> None:
+    result = runner.invoke(build_cli(), ["generate", "--help"])
 
-    assert "preset 'custom'" in help_text
-    assert "resolved preset" in help_text
+    assert result.exit_code == 0
+    assert "Cannot be combined" in result.output
+    assert "--out" in result.output
+    assert "--no-dataset-write" in result.output
+
+
+def test_benchmark_help_mentions_device_single_preset_constraint(runner: CliRunner) -> None:
+    result = runner.invoke(build_cli(), ["benchmark", "--help"])
+
+    assert result.exit_code == 0
+    assert "preset 'custom'" in result.output
+    assert "resolved preset" in result.output
+
+
+def test_recipe_help_exposes_list_subcommand(runner: CliRunner) -> None:
+    result = runner.invoke(build_cli(), ["recipe", "--help"])
+
+    assert result.exit_code == 0
+    assert "list" in result.output

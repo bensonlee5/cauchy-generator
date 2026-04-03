@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import datetime as dt
 import json
 import subprocess
@@ -11,6 +10,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import click
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
@@ -38,6 +39,7 @@ FEATURE_RUNS: tuple[tuple[str, str], ...] = (
     ("mechanism_gp_smoke", "configs/preset_mechanism_gp_benchmark_smoke.yaml"),
     ("mechanism_piecewise_smoke", "configs/preset_mechanism_piecewise_benchmark_smoke.yaml"),
 )
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
 @dataclass(slots=True)
@@ -449,36 +451,48 @@ def run_h100_validation(
     return manifest
 
 
-def _build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="./.venv/bin/python scripts/ci/h100_validation.py",
-        description="Run the bounded H100 benchmark validation workflow.",
+@click.command(context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "--out-root",
+    default=str(Path("benchmarks") / "results" / "gpu_h100_validation"),
+    show_default=True,
+    help="Artifact root for benchmark summaries, telemetry, and the validation manifest.",
+)
+@click.option(
+    "--telemetry-interval-seconds",
+    type=float,
+    default=1.0,
+    show_default=True,
+    help="Polling interval for host-level nvidia-smi sampling.",
+)
+def cli(*, out_root: str, telemetry_interval_seconds: float) -> int:
+    """CLI entrypoint for the H100 validation runner."""
+
+    manifest = run_h100_validation(
+        out_root=out_root,
+        telemetry_interval_seconds=float(telemetry_interval_seconds),
     )
-    parser.add_argument(
-        "--out-root",
-        default=str(Path("benchmarks") / "results" / "gpu_h100_validation"),
-        help="Artifact root for benchmark summaries, telemetry, and the validation manifest.",
-    )
-    parser.add_argument(
-        "--telemetry-interval-seconds",
-        type=float,
-        default=1.0,
-        help="Polling interval for host-level nvidia-smi sampling.",
-    )
-    return parser
+    print(f"Validation manifest: {Path(out_root).resolve() / 'validation_manifest.json'}")
+    return 0 if manifest.get("overall_status") == "pass" else 1
+
+
+def build_cli() -> click.Command:
+    """Return the Click command for the H100 validation runner."""
+
+    return cli
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entrypoint for the H100 validation runner."""
-
-    parser = _build_arg_parser()
-    args = parser.parse_args(argv)
-    manifest = run_h100_validation(
-        out_root=args.out_root,
-        telemetry_interval_seconds=float(args.telemetry_interval_seconds),
-    )
-    print(f"Validation manifest: {Path(args.out_root).resolve() / 'validation_manifest.json'}")
-    return 0 if manifest.get("overall_status") == "pass" else 1
+    try:
+        result = cli.main(args=argv, prog_name="h100_validation.py", standalone_mode=False)
+    except click.ClickException as exc:
+        exc.show(file=sys.stderr)
+        return int(exc.exit_code)
+    except click.exceptions.Exit as exc:
+        return int(exc.exit_code)
+    except click.Abort:
+        return 1
+    return 0 if result is None else int(result)
 
 
 if __name__ == "__main__":  # pragma: no cover

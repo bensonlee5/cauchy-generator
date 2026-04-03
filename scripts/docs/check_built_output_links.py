@@ -10,7 +10,6 @@ fails when:
 
 from __future__ import annotations
 
-import argparse
 import posixpath
 import re
 import sys
@@ -18,8 +17,11 @@ from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlparse
 
+import click
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SITE_ROOT = REPO_ROOT / "site"
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 ATTR_RE = re.compile(
     r"(?:\bhref|\bsrc)\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))",
@@ -119,20 +121,12 @@ def _built_target_exists(output_dir: Path, rel_path: str) -> bool:
     )
 
 
-def parse_args(argv: Iterable[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "output_dir",
-        nargs="?",
-        default="site/public",
-        help="Directory containing built Hugo output.",
-    )
-    return parser.parse_args(list(argv))
+@click.command(context_settings=CONTEXT_SETTINGS)
+@click.argument("output_dir", required=False)
+def cli(*, output_dir: str | None) -> int:
+    """Validate internal links in built Hugo output."""
 
-
-def main(argv: Iterable[str] | None = None) -> int:
-    args = parse_args(sys.argv[1:] if argv is None else argv)
-    output_dir = (REPO_ROOT / args.output_dir).resolve()
+    output_dir = (REPO_ROOT / (output_dir or "site/public")).resolve()
     if not output_dir.exists():
         print(f"Built output directory does not exist: {output_dir}")
         return 1
@@ -197,6 +191,23 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     print("Built-output link check passed.")
     return 0
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    try:
+        result = cli.main(
+            args=list(argv) if argv is not None else None,
+            prog_name="check_built_output_links.py",
+            standalone_mode=False,
+        )
+    except click.ClickException as exc:
+        exc.show(file=sys.stderr)
+        return int(exc.exit_code)
+    except click.exceptions.Exit as exc:
+        return int(exc.exit_code)
+    except click.Abort:
+        return 1
+    return 0 if result is None else int(result)
 
 
 if __name__ == "__main__":

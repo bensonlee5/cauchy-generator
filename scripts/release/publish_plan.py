@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import sys
@@ -12,11 +11,15 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+import click
+
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from devlib.semver import SemVer, allowed_release_successors, read_pyproject_version  # noqa: E402
+
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
 @dataclass(frozen=True)
@@ -125,21 +128,27 @@ def _write_github_outputs(decision: PublishDecision) -> None:
         handle.write(f"tag_name={tag_name}\n")
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--package-name", required=True)
-    parser.add_argument("--pyproject", default="pyproject.toml")
-    parser.add_argument("--expected-version")
-    parser.add_argument("--tag-name")
-    args = parser.parse_args(argv)
+@click.command(context_settings=CONTEXT_SETTINGS)
+@click.option("--package-name", required=True)
+@click.option("--pyproject", default="pyproject.toml", show_default=True)
+@click.option("--expected-version", default=None)
+@click.option("--tag-name", default=None)
+def cli(
+    *,
+    package_name: str,
+    pyproject: str,
+    expected_version: str | None,
+    tag_name: str | None,
+) -> int:
+    """Resolve whether one package version should publish to PyPI."""
 
-    current_version = read_pyproject_version(args.pyproject)
-    published_versions = fetch_published_versions(args.package_name)
+    current_version = read_pyproject_version(pyproject)
+    published_versions = fetch_published_versions(package_name)
     decision = resolve_publish_decision(
         current_version=current_version,
         published_versions=published_versions,
-        expected_version=args.expected_version,
-        tag_name=args.tag_name,
+        expected_version=expected_version,
+        tag_name=tag_name,
     )
     _write_github_outputs(decision)
     json.dump(
@@ -153,6 +162,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     sys.stdout.write("\n")
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        result = cli.main(args=argv, prog_name="publish_plan.py", standalone_mode=False)
+    except click.ClickException as exc:
+        exc.show(file=sys.stderr)
+        return int(exc.exit_code)
+    except click.exceptions.Exit as exc:
+        return int(exc.exit_code)
+    except click.Abort:
+        return 1
+    return 0 if result is None else int(result)
 
 
 if __name__ == "__main__":

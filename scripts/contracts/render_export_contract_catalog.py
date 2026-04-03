@@ -3,15 +3,16 @@
 
 from __future__ import annotations
 
-import argparse
 import sys
 from pathlib import Path
 
+import click
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INVENTORY_PATH = REPO_ROOT / "reference" / "export_contract_inventory.yaml"
 DEFAULT_OUTPUT_PATH = REPO_ROOT / "docs" / "export-contract-fields.md"
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
 def _normalize_inventory_path(value: object) -> str:
@@ -91,26 +92,43 @@ def render_markdown() -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
-    parser.add_argument("--check", action="store_true")
-    args = parser.parse_args(argv)
+@click.command(context_settings=CONTEXT_SETTINGS)
+@click.option("--output", type=click.Path(path_type=Path), default=DEFAULT_OUTPUT_PATH)
+@click.option("--check", is_flag=True)
+def cli(*, output: Path, check: bool) -> int:
+    """Render dagzoo's export-contract field catalog from the checked-in inventory."""
 
     rendered = render_markdown()
-    if args.check:
-        existing = args.output.read_text(encoding="utf-8")
+    if check:
+        existing = output.read_text(encoding="utf-8")
         if existing != rendered:
             print(
-                f"{args.output} is out of date with {INVENTORY_PATH.relative_to(REPO_ROOT)}.",
+                f"{output} is out of date with {INVENTORY_PATH.relative_to(REPO_ROOT)}.",
                 file=sys.stderr,
             )
             return 1
         return 0
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(rendered, encoding="utf-8")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(rendered, encoding="utf-8")
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        result = cli.main(
+            args=argv,
+            prog_name="render_export_contract_catalog.py",
+            standalone_mode=False,
+        )
+    except click.ClickException as exc:
+        exc.show(file=sys.stderr)
+        return int(exc.exit_code)
+    except click.exceptions.Exit as exc:
+        return int(exc.exit_code)
+    except click.Abort:
+        return 1
+    return 0 if result is None else int(result)
 
 
 if __name__ == "__main__":

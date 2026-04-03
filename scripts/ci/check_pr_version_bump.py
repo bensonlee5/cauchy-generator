@@ -3,11 +3,12 @@
 
 from __future__ import annotations
 
-import argparse
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+import click
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPT_DIR) not in sys.path:
@@ -19,6 +20,8 @@ from devlib.semver import (  # noqa: E402
     read_pyproject_version,
     read_pyproject_version_text,
 )
+
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
 @dataclass(frozen=True)
@@ -75,16 +78,14 @@ def resolve_pr_version_decision(*, head_version: str, base_version: str) -> PRVe
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--pyproject", default="pyproject.toml")
-    parser.add_argument("--base-ref", default="origin/main")
-    args = parser.parse_args(argv)
+@click.command(context_settings=CONTEXT_SETTINGS)
+@click.option("--pyproject", default="pyproject.toml", show_default=True)
+@click.option("--base-ref", default="origin/main", show_default=True)
+def cli(*, pyproject: str, base_ref: str) -> int:
+    """Validate that a pull request version bump is unchanged or a single patch/minor step."""
 
-    head_version = read_pyproject_version(args.pyproject)
-    base_version = read_base_pyproject_version(
-        base_ref=args.base_ref, pyproject_path=args.pyproject
-    )
+    head_version = read_pyproject_version(pyproject)
+    base_version = read_base_pyproject_version(base_ref=base_ref, pyproject_path=pyproject)
     decision = resolve_pr_version_decision(
         head_version=head_version,
         base_version=base_version,
@@ -94,6 +95,19 @@ def main(argv: list[str] | None = None) -> int:
         f"base={decision.base_version} reason={decision.reason}"
     )
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        result = cli.main(args=argv, prog_name="check_pr_version_bump.py", standalone_mode=False)
+    except click.ClickException as exc:
+        exc.show(file=sys.stderr)
+        return int(exc.exit_code)
+    except click.exceptions.Exit as exc:
+        return int(exc.exit_code)
+    except click.Abort:
+        return 1
+    return 0 if result is None else int(result)
 
 
 if __name__ == "__main__":

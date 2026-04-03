@@ -13,7 +13,6 @@ Use `--check` in CI to fail when generated site inputs are out of date.
 
 from __future__ import annotations
 
-import argparse
 import posixpath
 import re
 import shutil
@@ -23,6 +22,7 @@ from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import urlparse
 
+import click
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -137,6 +137,7 @@ PAGE_METADATA: dict[str, PageMeta] = {
 
 # Standard Markdown inline-link pattern: [label](target)
 MD_LINK_RE = re.compile(r"(!?\[[^\]]+\]\()([^\)]+)(\))")
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
 def _read_text(path: Path) -> str:
@@ -349,21 +350,18 @@ def sync(check: bool) -> list[Path]:
     return changed
 
 
-def parse_args(argv: Iterable[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="Do not write files; fail if outputs are out of sync.",
-    )
-    return parser.parse_args(list(argv))
+@click.command(context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "--check",
+    is_flag=True,
+    help="Do not write files; fail if outputs are out of sync.",
+)
+def cli(*, check: bool) -> int:
+    """Sync docs sources into the Hugo docs site."""
 
+    changed = sync(check=check)
 
-def main(argv: Iterable[str] | None = None) -> int:
-    args = parse_args(sys.argv[1:] if argv is None else argv)
-    changed = sync(check=args.check)
-
-    if args.check:
+    if check:
         if changed:
             print("Docs sync is out of date. Regenerate with:")
             print("  .venv/bin/python scripts/docs/sync_hugo_content.py")
@@ -381,6 +379,23 @@ def main(argv: Iterable[str] | None = None) -> int:
     else:
         print("No updates needed.")
     return 0
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    try:
+        result = cli.main(
+            args=list(argv) if argv is not None else None,
+            prog_name="sync_hugo_content.py",
+            standalone_mode=False,
+        )
+    except click.ClickException as exc:
+        exc.show(file=sys.stderr)
+        return int(exc.exit_code)
+    except click.exceptions.Exit as exc:
+        return int(exc.exit_code)
+    except click.Abort:
+        return 1
+    return 0 if result is None else int(result)
 
 
 if __name__ == "__main__":

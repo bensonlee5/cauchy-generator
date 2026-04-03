@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import argparse
-
 from dagzoo.recipes import iter_recipe_specs
 
 
-def run_recipe_list_command(_args: argparse.Namespace) -> int:
+def run_recipe_list_command() -> int:
     """Print the curated public recipe catalog."""
 
     print("Curated dagzoo recipes")

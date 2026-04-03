@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import math
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean, median
@@ -13,6 +13,7 @@ from tempfile import TemporaryDirectory
 from time import perf_counter
 from typing import Any
 
+import click
 import numpy as np
 import yaml
 
@@ -36,6 +37,7 @@ _SUPPORTING_METRICS = (
     "graph_target_ancestor_fraction",
     "mechanism_family_cooccurrence_ratio",
 )
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
 @dataclass(slots=True)
@@ -45,54 +47,20 @@ class _VariantSpec:
     regime_id: str
 
 
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Generate matched handoff corpora and compare downstream score, diversity shift, "
-            "and throughput for baseline vs RD-005 variants."
-        )
-    )
-    parser.add_argument("--baseline-config", required=True, help="Baseline config YAML path.")
-    parser.add_argument("--out-root", required=True, help="Output root for generated runs.")
-    parser.add_argument(
-        "--variant-config",
-        action="append",
-        default=[],
-        help="Additional full config YAML path to evaluate as one variant. Repeatable.",
-    )
-    parser.add_argument(
-        "--stress-profile",
-        action="append",
-        default=[],
-        help=("Stress profile name to evaluate by applying it to the baseline config. Repeatable."),
-    )
-    parser.add_argument("--num-datasets", type=int, default=8, help="Datasets per run.")
-    parser.add_argument("--seed", type=int, default=0, help="Shared generation seed.")
-    parser.add_argument("--device", default="cpu", help="Generation device.")
-    parser.add_argument(
-        "--hardware-policy",
-        default="none",
-        help="Hardware policy passed through to `dagzoo generate`.",
-    )
-    parser.add_argument("--rows", default=None, help="Optional rows override.")
-    parser.add_argument(
-        "--warn-threshold-pct",
-        type=float,
-        default=2.5,
-        help="Warn threshold passed to diversity-summary comparison.",
-    )
-    parser.add_argument(
-        "--fail-threshold-pct",
-        type=float,
-        default=5.0,
-        help="Fail threshold passed to diversity-summary comparison.",
-    )
-    parser.add_argument(
-        "--reuse-existing",
-        action="store_true",
-        help="Reuse existing handoff runs under out-root when a manifest already exists.",
-    )
-    return parser.parse_args()
+@dataclass(slots=True)
+class _CliArgs:
+    baseline_config: str
+    out_root: str
+    variant_config: tuple[str, ...]
+    stress_profile: tuple[str, ...]
+    num_datasets: int
+    seed: int
+    device: str
+    hardware_policy: str
+    rows: str | None
+    warn_threshold_pct: float
+    fail_threshold_pct: float
+    reuse_existing: bool
 
 
 def _sanitize_label(label: str) -> str:
@@ -101,7 +69,7 @@ def _sanitize_label(label: str) -> str:
     return collapsed.lower() or "variant"
 
 
-def _build_variant_specs(args: argparse.Namespace, *, temp_dir: Path) -> list[_VariantSpec]:
+def _build_variant_specs(args: _CliArgs, *, temp_dir: Path) -> list[_VariantSpec]:
     baseline_config_path = Path(args.baseline_config).resolve()
     specs: list[_VariantSpec] = [
         _VariantSpec(
@@ -141,7 +109,7 @@ def _build_variant_specs(args: argparse.Namespace, *, temp_dir: Path) -> list[_V
 def _run_generate(
     spec: _VariantSpec,
     *,
-    args: argparse.Namespace,
+    args: _CliArgs,
     out_root: Path,
 ) -> tuple[Path, float]:
     run_root = out_root / _sanitize_label(spec.label)
@@ -521,8 +489,85 @@ def _write_markdown_report(report: dict[str, Any], *, out_path: Path) -> None:
     out_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
-def main() -> int:
-    args = _parse_args()
+@click.command(
+    context_settings=CONTEXT_SETTINGS,
+    help=(
+        "Generate matched handoff corpora and compare downstream score, diversity shift, "
+        "and throughput for baseline vs RD-005 variants."
+    ),
+)
+@click.option("--baseline-config", required=True, help="Baseline config YAML path.")
+@click.option("--out-root", required=True, help="Output root for generated runs.")
+@click.option(
+    "--variant-config",
+    multiple=True,
+    default=(),
+    help="Additional full config YAML path to evaluate as one variant. Repeatable.",
+)
+@click.option(
+    "--stress-profile",
+    multiple=True,
+    default=(),
+    help="Stress profile name to evaluate by applying it to the baseline config. Repeatable.",
+)
+@click.option("--num-datasets", type=int, default=8, show_default=True, help="Datasets per run.")
+@click.option("--seed", type=int, default=0, show_default=True, help="Shared generation seed.")
+@click.option("--device", default="cpu", show_default=True, help="Generation device.")
+@click.option(
+    "--hardware-policy",
+    default="none",
+    show_default=True,
+    help="Hardware policy passed through to `dagzoo generate`.",
+)
+@click.option("--rows", default=None, help="Optional rows override.")
+@click.option(
+    "--warn-threshold-pct",
+    type=float,
+    default=2.5,
+    show_default=True,
+    help="Warn threshold passed to diversity-summary comparison.",
+)
+@click.option(
+    "--fail-threshold-pct",
+    type=float,
+    default=5.0,
+    show_default=True,
+    help="Fail threshold passed to diversity-summary comparison.",
+)
+@click.option(
+    "--reuse-existing",
+    is_flag=True,
+    help="Reuse existing handoff runs under out-root when a manifest already exists.",
+)
+def cli(
+    *,
+    baseline_config: str,
+    out_root: str,
+    variant_config: tuple[str, ...],
+    stress_profile: tuple[str, ...],
+    num_datasets: int,
+    seed: int,
+    device: str,
+    hardware_policy: str,
+    rows: str | None,
+    warn_threshold_pct: float,
+    fail_threshold_pct: float,
+    reuse_existing: bool,
+) -> int:
+    args = _CliArgs(
+        baseline_config=baseline_config,
+        out_root=out_root,
+        variant_config=variant_config,
+        stress_profile=stress_profile,
+        num_datasets=num_datasets,
+        seed=seed,
+        device=device,
+        hardware_policy=hardware_policy,
+        rows=rows,
+        warn_threshold_pct=warn_threshold_pct,
+        fail_threshold_pct=fail_threshold_pct,
+        reuse_existing=reuse_existing,
+    )
     out_root = Path(args.out_root).resolve()
     out_root.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(prefix="rd005_pareto_", dir=str(out_root)) as temp_dir_text:
@@ -604,6 +649,19 @@ def main() -> int:
     print(f"Wrote Pareto summary: {json_path}")
     print(f"Wrote Pareto markdown: {md_path}")
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        result = cli.main(args=argv, prog_name="evaluate_handoff_pareto.py", standalone_mode=False)
+    except click.ClickException as exc:
+        exc.show(file=sys.stderr)
+        return int(exc.exit_code)
+    except click.exceptions.Exit as exc:
+        return int(exc.exit_code)
+    except click.Abort:
+        return 1
+    return 0 if result is None else int(result)
 
 
 if __name__ == "__main__":
