@@ -6581,6 +6581,10 @@ def test_generate_one_keyed_replay_layout_root_path_replays_layout_signature() -
             r"metadata\.resolved_device must be a non-empty string",
         ),
         (
+            lambda bundle: bundle.metadata.__setitem__("layout_stress_profile_name", ""),
+            r"metadata\.layout_stress_profile_name must be a non-empty string",
+        ),
+        (
             lambda bundle: bundle.metadata.pop("layout_plan_seed"),
             r"metadata\.layout_plan_seed must be an integer",
         ),
