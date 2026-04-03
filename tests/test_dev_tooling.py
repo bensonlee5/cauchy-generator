@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from click.testing import CliRunner
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_ROOT = REPO_ROOT / "scripts"
@@ -96,20 +95,19 @@ def test_release_contract_warns_for_internal_code_change() -> None:
 
 def test_dev_cli_prunes_unsupported_wrapper_commands() -> None:
     module = _load_dev_cli()
-    runner = CliRunner()
-    result = runner.invoke(module.build_cli(), ["--help"])
+    parser = module.build_parser()
+    subparsers_action = next(
+        action for action in parser._actions if getattr(action, "choices", None) is not None
+    )
 
-    assert result.exit_code == 0
-    assert set(module.build_cli().commands) == {
-        "bootstrap",
-        "contract",
-        "impact",
-        "review-base",
-    }
-    assert "verify" not in result.output
-    assert "deps" not in result.output
-    assert "doctor" not in result.output
-    assert "ready" not in result.output
+    assert "impact" in subparsers_action.choices
+    assert "contract" in subparsers_action.choices
+    assert "bootstrap" in subparsers_action.choices
+    assert "review-base" in subparsers_action.choices
+    assert "verify" not in subparsers_action.choices
+    assert "deps" not in subparsers_action.choices
+    assert "doctor" not in subparsers_action.choices
+    assert "ready" not in subparsers_action.choices
 
 
 def test_fast_pr_workflow_uses_ci_runner_not_dev_verify() -> None:
