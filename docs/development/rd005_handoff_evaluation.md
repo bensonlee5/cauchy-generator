@@ -55,6 +55,11 @@ ceiling. The supported maintainer loop for that comparison is:
   - `structural_diversity_composite_shift_pct`
   - `easy_task_ceiling_pass`
   - `priority_variant_labels`
+- For the graph/source-shape lane (`#293`), compare baseline against
+  `anti_memorization_piecewise_classification_graph_breadth_slice_v1` and read
+  `graph_target_ancestor_fraction`, `graph_ancestor_overlap_mean`,
+  `graph_reachability_ratio`, and `graph_depth_ratio` before looking at
+  throughput.
 - `--reuse-existing` can be used to avoid regenerating already-materialized
   handoff roots.
 - For the matrix/kernel correlation lane (`#294`), start with the compositional

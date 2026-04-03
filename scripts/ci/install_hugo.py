@@ -10,12 +10,16 @@ import shutil
 import stat
 import tarfile
 import tempfile
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Any
 
 _RELEASE_API_TEMPLATE = "https://api.github.com/repos/gohugoio/hugo/releases/tags/v{version}"
+_RELEASE_DOWNLOAD_TEMPLATE = (
+    "https://github.com/gohugoio/hugo/releases/download/v{version}/{asset_name}"
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -110,6 +114,13 @@ def _fetch_release(version: str) -> dict[str, Any]:
     return payload
 
 
+def _direct_asset_download_url(*, version: str, asset_name: str) -> str:
+    return _RELEASE_DOWNLOAD_TEMPLATE.format(
+        version=str(version).strip().removeprefix("v"),
+        asset_name=str(asset_name),
+    )
+
+
 def _select_asset_download_url(
     release_payload: dict[str, Any],
     *,
@@ -158,6 +169,35 @@ def _download_file(url: str, destination: Path) -> None:
         shutil.copyfileobj(response, handle)
 
 
+def _download_direct_release_asset(
+    *,
+    version: str,
+    destination_dir: Path,
+    system: str | None = None,
+    machine: str | None = None,
+    extended: bool,
+) -> Path | None:
+    for asset_name in _candidate_asset_names(
+        version=version,
+        system=system,
+        machine=machine,
+        extended=extended,
+    ):
+        archive_path = destination_dir / asset_name
+        try:
+            _download_file(
+                _direct_asset_download_url(version=version, asset_name=asset_name), archive_path
+            )
+        except urllib.error.HTTPError as exc:
+            if exc.code not in {403, 404}:
+                raise
+            continue
+        except urllib.error.URLError:
+            continue
+        return archive_path
+    return None
+
+
 def _extract_hugo_binary(archive_path: Path, *, out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     binary_name = "hugo.exe" if archive_path.suffix == ".zip" else "hugo"
@@ -199,17 +239,22 @@ def main() -> int:
     version = str(args.version).strip().removeprefix("v")
     bin_dir = Path(args.bin_dir).resolve()
 
-    release_payload = _fetch_release(version)
-    asset_name, download_url = _select_asset_download_url(
-        release_payload,
-        version=version,
-        extended=bool(args.extended),
-    )
-
     with tempfile.TemporaryDirectory(prefix="dagzoo_hugo_") as temp_dir:
         temp_root = Path(temp_dir)
-        archive_path = temp_root / asset_name
-        _download_file(download_url, archive_path)
+        archive_path = _download_direct_release_asset(
+            version=version,
+            destination_dir=temp_root,
+            extended=bool(args.extended),
+        )
+        if archive_path is None:
+            release_payload = _fetch_release(version)
+            asset_name, download_url = _select_asset_download_url(
+                release_payload,
+                version=version,
+                extended=bool(args.extended),
+            )
+            archive_path = temp_root / asset_name
+            _download_file(download_url, archive_path)
         binary_path = _extract_hugo_binary(archive_path, out_dir=bin_dir)
 
     github_path_file = str(args.github_path_file) if args.github_path_file else None
