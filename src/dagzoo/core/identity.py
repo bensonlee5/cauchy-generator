@@ -2,26 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
 from collections.abc import Mapping
 from typing import Any
 
 from dagzoo.core.fixed_layout.prepare import normalize_fixed_layout_target_cells
-from dagzoo.math import sanitize_json
-
-
-def stable_blake2s_hex(payload: Mapping[str, Any], *, digest_size: int = 16) -> str:
-    """Return a stable BLAKE2s hex digest for sanitized JSON-compatible payloads."""
-
-    encoded = json.dumps(
-        sanitize_json(dict(payload)),
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.blake2s(encoded, digest_size=int(digest_size)).hexdigest()
+from dagzoo.identity_hash import stable_blake2s_hex
 
 
 def _require_mapping(value: object, *, path: str) -> Mapping[str, Any]:

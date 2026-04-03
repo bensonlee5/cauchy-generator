@@ -36,5 +36,6 @@ changes are justified.
 - Remaining `partial` items should only expand further if the diversity and
   downstream handoff evaluations show that the current correlated reuse is still
   insufficient.
-- `RD-002` stays deferred. Hard interventions can be evaluated later without
-  changing the current `RD-005` comparison loop.
+- `RD-002` runtime semantics stay deferred. The schema/identity slice `#255`
+  can land independently, and hard interventions can still be evaluated later
+  without changing the current `RD-005` comparison loop.

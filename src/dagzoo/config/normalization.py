@@ -5,12 +5,16 @@ from __future__ import annotations
 from dagzoo.math import normalize_positive_weights
 
 from .constants import (
+    _INTERVENTION_MODE_VALUE_MAP,
+    _INTERVENTION_TARGET_KIND_VALUE_MAP,
     _LAYOUT_MODE_VALUE_MAP,
     _MECHANISM_FAMILY_VALUE_MAP,
     _MISSINGNESS_MECHANISM_VALUE_MAP,
     _NOISE_FAMILY_VALUE_MAP,
     _NOISE_MIXTURE_COMPONENT_VALUE_MAP,
     _SHIFT_MODE_VALUE_MAP,
+    InterventionMode,
+    InterventionTargetKind,
     LayoutMode,
     MechanismFamily,
     MissingnessMechanism,
@@ -49,6 +53,42 @@ def normalize_missing_mechanism(value: str) -> MissingnessMechanism:
     if result is None:
         raise ValueError(
             f"Unsupported missing_mechanism '{value}'. Expected none, mcar, mar, or mnar."
+        )
+    return result
+
+
+def normalize_intervention_mode(value: object) -> InterventionMode:
+    """Normalize intervention mode into a validated internal value."""
+
+    if isinstance(value, bool) or not isinstance(value, str):
+        raise ValueError(
+            "Unsupported intervention.mode "
+            f"'{value}'. Expected observational or hard_interventional."
+        )
+    normalized = value.strip().lower()
+    result = _INTERVENTION_MODE_VALUE_MAP.get(normalized)
+    if result is None:
+        raise ValueError(
+            "Unsupported intervention.mode "
+            f"'{value}'. Expected observational or hard_interventional."
+        )
+    return result
+
+
+def normalize_intervention_target_kind(value: object) -> InterventionTargetKind:
+    """Normalize one intervention target kind into a validated internal value."""
+
+    if isinstance(value, bool) or not isinstance(value, str):
+        raise ValueError(
+            "Unsupported intervention.targets[].target_kind "
+            f"'{value}'. Expected target, feature_node, or latent_node."
+        )
+    normalized = value.strip().lower()
+    result = _INTERVENTION_TARGET_KIND_VALUE_MAP.get(normalized)
+    if result is None:
+        raise ValueError(
+            "Unsupported intervention.targets[].target_kind "
+            f"'{value}'. Expected target, feature_node, or latent_node."
         )
     return result
 

@@ -11,11 +11,16 @@ from typing import Any
 
 import yaml
 
+from dagzoo.identity_hash import stable_blake2s_hex
 from dagzoo.rng import SEED32_MAX, SEED32_MIN
 
 from .constants import (
     _NOISE_MIXTURE_COMPONENT_VALUE_MAP,
     _PRODUCT_COMPONENT_FAMILIES,
+    INTERVENTION_MODE_OBSERVATIONAL,
+    INTERVENTION_TARGET_KIND_FEATURE_NODE,
+    INTERVENTION_TARGET_KIND_LATENT_NODE,
+    INTERVENTION_TARGET_KIND_TARGET,
     MAX_SUPPORTED_CLASS_COUNT,
     MISSINGNESS_MECHANISM_NONE,
     NOISE_FAMILY_GAUSSIAN,
@@ -26,6 +31,8 @@ from .constants import (
     SHIFT_MODE_MIXED,
     SHIFT_MODE_NOISE_DRIFT,
     SHIFT_MODE_OFF,
+    InterventionMode,
+    InterventionTargetKind,
     MechanismFamily,
     MissingnessMechanism,
     NoiseFamily,
@@ -36,6 +43,8 @@ from .constants import (
 from .normalization import (
     _normalize_function_family_mix,
     _normalize_noise_mixture_weights,
+    normalize_intervention_mode,
+    normalize_intervention_target_kind,
     normalize_layout_mode,
     normalize_missing_mechanism,
     normalize_noise_family,
@@ -476,6 +485,13 @@ def effective_config_payload(config: "GeneratorConfig") -> dict[str, Any]:
     stress_payload = payload.get("stress")
     if isinstance(stress_payload, dict) and stress_payload.get("profile") is None:
         payload.pop("stress", None)
+    intervention_payload = payload.get("intervention")
+    if (
+        isinstance(intervention_payload, dict)
+        and intervention_payload.get("mode") == INTERVENTION_MODE_OBSERVATIONAL
+        and not intervention_payload.get("targets")
+    ):
+        payload.pop("intervention", None)
     return payload
 
 
@@ -613,6 +629,78 @@ def _normalize_mechanism_fields(mechanism: MechanismConfig) -> None:
     """Stage 1: normalize mechanism section fields."""
 
     mechanism.function_family_mix = _normalize_function_family_mix(mechanism.function_family_mix)
+
+
+def _normalize_intervention_target_fields(
+    target: "InterventionTargetConfig",
+    *,
+    index: int,
+) -> None:
+    """Stage 1: normalize one intervention target selector."""
+
+    target.target_kind = normalize_intervention_target_kind(target.target_kind)
+    if target.index is None:
+        normalized_index = None
+    else:
+        normalized_index = _validate_int_field(
+            field_name=f"intervention.targets[{index}].index",
+            value=target.index,
+            minimum=0,
+        )
+    target.index = normalized_index
+    if isinstance(target.value, bool):
+        raise ValueError(
+            f"intervention.targets[{index}].value must be a finite value, got {target.value!r}."
+        )
+    try:
+        parsed_value = float(target.value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"intervention.targets[{index}].value must be a finite value, got {target.value!r}."
+        ) from exc
+    if not math.isfinite(parsed_value):
+        raise ValueError(
+            f"intervention.targets[{index}].value must be a finite value, got {target.value!r}."
+        )
+    target.value = parsed_value
+
+
+def _normalize_intervention_fields(intervention: "InterventionConfig") -> None:
+    """Stage 1: normalize intervention section fields."""
+
+    intervention.mode = normalize_intervention_mode(intervention.mode)
+    if intervention.signature is None:
+        normalized_signature = None
+    elif isinstance(intervention.signature, bool) or not isinstance(intervention.signature, str):
+        raise ValueError("intervention.signature must be a non-empty string or null.")
+    else:
+        normalized_signature = intervention.signature.strip().lower()
+        if not normalized_signature:
+            raise ValueError("intervention.signature must be a non-empty string or null.")
+    raw_targets = intervention.targets
+    if not isinstance(raw_targets, list):
+        raise ValueError("intervention.targets must be a list.")
+    normalized_targets: list[InterventionTargetConfig] = []
+    for index, raw_target in enumerate(raw_targets):
+        if isinstance(raw_target, InterventionTargetConfig):
+            target = copy.deepcopy(raw_target)
+        else:
+            if not isinstance(raw_target, dict):
+                raise ValueError(
+                    "intervention.targets entries must be mappings or "
+                    f"InterventionTargetConfig objects, got {type(raw_target).__name__}."
+                )
+            target = InterventionTargetConfig(**raw_target)
+        _normalize_intervention_target_fields(target, index=index)
+        normalized_targets.append(target)
+    normalized_targets.sort(
+        key=lambda target: (
+            str(target.target_kind),
+            -1 if target.index is None else int(target.index),
+        )
+    )
+    intervention.targets = normalized_targets
+    intervention.signature = normalized_signature
 
 
 def _normalize_shift_fields(shift: ShiftConfig) -> None:
@@ -1010,6 +1098,11 @@ def _normalize_generation_sections(config: GeneratorConfig) -> None:
         value=config.mechanism,
         section_type=MechanismConfig,
     )
+    config.intervention = _coerce_section(
+        section_name="intervention",
+        value=config.intervention,
+        section_type=InterventionConfig,
+    )
     config.shift = _coerce_section(
         section_name="shift",
         value=config.shift,
@@ -1059,6 +1152,7 @@ def _normalize_generation_sections(config: GeneratorConfig) -> None:
     _normalize_dataset_fields(config.dataset)
     _normalize_graph_fields(config.graph)
     _normalize_mechanism_fields(config.mechanism)
+    _normalize_intervention_fields(config.intervention)
     _normalize_shift_fields(config.shift)
     _normalize_noise_fields(config.noise)
     _normalize_steering_fields(config.steering)
@@ -1154,6 +1248,97 @@ def _stage2_validate_mechanism_constraints(mechanism: MechanismConfig) -> None:
             f"mechanism.function_family_mix assigns positive weight to '{family}' but none of its "
             f"component families are enabled. Add one of: {supported}."
         )
+
+
+def _stage2_validate_intervention_constraints(config: "GeneratorConfig") -> None:
+    """Stage 2: validate intervention-mode compatibility and selector stability."""
+
+    intervention = config.intervention
+    if intervention.mode == INTERVENTION_MODE_OBSERVATIONAL:
+        if intervention.targets:
+            raise ValueError(
+                "intervention.targets must be empty when intervention.mode is observational."
+            )
+        return
+
+    if not intervention.targets:
+        raise ValueError(
+            "intervention.targets must include at least one target when "
+            "intervention.mode is hard_interventional."
+        )
+
+    seen_targets: set[tuple[str, int | None]] = set()
+    for index, target in enumerate(intervention.targets):
+        path = f"intervention.targets[{index}]"
+        target_key = (str(target.target_kind), target.index)
+        if target_key in seen_targets:
+            raise ValueError(f"{path} duplicates an earlier intervention target selector.")
+        seen_targets.add(target_key)
+
+        if target.target_kind == INTERVENTION_TARGET_KIND_TARGET:
+            if target.index is not None:
+                raise ValueError(f"{path}.index must be unset when {path}.target_kind is 'target'.")
+            continue
+
+        if target.index is None:
+            raise ValueError(
+                f"{path}.index is required when {path}.target_kind is {target.target_kind!r}."
+            )
+
+        if target.target_kind == INTERVENTION_TARGET_KIND_FEATURE_NODE and int(target.index) >= int(
+            config.dataset.n_features_min
+        ):
+            raise ValueError(
+                f"{path}.index must be < dataset.n_features_min ({config.dataset.n_features_min}) "
+                "so the selected feature node exists for every generated dataset."
+            )
+        if target.target_kind == INTERVENTION_TARGET_KIND_LATENT_NODE and int(target.index) >= int(
+            config.graph.n_nodes_min
+        ):
+            raise ValueError(
+                f"{path}.index must be < graph.n_nodes_min ({config.graph.n_nodes_min}) "
+                "so the selected latent node exists for every generated graph."
+            )
+
+
+def _canonical_intervention_signature_payload(
+    intervention: "InterventionConfig",
+) -> dict[str, Any]:
+    """Return the canonical payload used for hard-intervention signatures."""
+
+    return {
+        "mode": str(intervention.mode),
+        "targets": [
+            {
+                "target_kind": str(target.target_kind),
+                "index": None if target.index is None else int(target.index),
+                "value": float(target.value),
+            }
+            for target in intervention.targets
+        ],
+    }
+
+
+def _finalize_intervention_identity(intervention: "InterventionConfig") -> None:
+    """Populate or validate the derived intervention signature."""
+
+    if intervention.mode == INTERVENTION_MODE_OBSERVATIONAL:
+        intervention.signature = None
+        return
+
+    expected_signature = stable_blake2s_hex(_canonical_intervention_signature_payload(intervention))
+    if intervention.signature is not None and intervention.signature != expected_signature:
+        raise ValueError(
+            "intervention.signature does not match the canonical hard-intervention identity. "
+            f"Expected {expected_signature!r}, got {intervention.signature!r}."
+        )
+    intervention.signature = expected_signature
+
+
+def _finalize_derived_generation_fields(config: "GeneratorConfig") -> None:
+    """Populate derived config identity fields after validation succeeds."""
+
+    _finalize_intervention_identity(config.intervention)
 
 
 def _stage2_validate_shift_constraints(shift: ShiftConfig) -> None:
@@ -1371,6 +1556,7 @@ def _validate_generation_config(config: GeneratorConfig) -> None:
     _stage2_validate_dataset_constraints(config.dataset)
     _stage2_validate_graph_constraints(config.graph)
     _stage2_validate_mechanism_constraints(config.mechanism)
+    _stage2_validate_intervention_constraints(config)
     _stage2_validate_shift_constraints(config.shift)
     _stage2_validate_noise_constraints(config.noise)
     _stage2_validate_steering_constraints(config.steering)
@@ -1382,6 +1568,7 @@ def _normalize_and_validate_generation_config(config: GeneratorConfig) -> None:
 
     _normalize_generation_sections(config)
     _validate_generation_config(config)
+    _finalize_derived_generation_fields(config)
 
 
 @dataclass(slots=True)
@@ -1413,6 +1600,20 @@ class GraphConfig:
 @dataclass(slots=True)
 class MechanismConfig:
     function_family_mix: dict[MechanismFamily, float] | None = None
+
+
+@dataclass(slots=True)
+class InterventionTargetConfig:
+    target_kind: InterventionTargetKind = INTERVENTION_TARGET_KIND_TARGET
+    index: int | None = None
+    value: float = 0.0
+
+
+@dataclass(slots=True)
+class InterventionConfig:
+    mode: InterventionMode = INTERVENTION_MODE_OBSERVATIONAL
+    targets: list[InterventionTargetConfig] = field(default_factory=list)
+    signature: str | None = None
 
 
 @dataclass(slots=True)
@@ -1533,6 +1734,7 @@ class GeneratorConfig:
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     graph: GraphConfig = field(default_factory=GraphConfig)
     mechanism: MechanismConfig = field(default_factory=MechanismConfig)
+    intervention: InterventionConfig = field(default_factory=InterventionConfig)
     shift: ShiftConfig = field(default_factory=ShiftConfig)
     noise: NoiseConfig = field(default_factory=NoiseConfig)
     steering: SteeringConfig = field(default_factory=SteeringConfig)
@@ -1589,9 +1791,14 @@ class GeneratorConfig:
             steering_present=steering_present,
             steering_payload=steering_payload,
         )
+        _, intervention_payload = _section_mapping_payload(
+            data,
+            section_name="intervention",
+        )
         dataset = DatasetConfig(**(data.get("dataset") or {}))
         graph = GraphConfig(**(data.get("graph") or {}))
         mechanism = MechanismConfig(**(data.get("mechanism") or {}))
+        intervention = InterventionConfig(**intervention_payload)
         shift = ShiftConfig(**(data.get("shift") or {}))
         noise = NoiseConfig(**(data.get("noise") or {}))
         steering = SteeringConfig(**steering_payload)
@@ -1611,6 +1818,7 @@ class GeneratorConfig:
             dataset=dataset,
             graph=graph,
             mechanism=mechanism,
+            intervention=intervention,
             shift=shift,
             noise=noise,
             steering=steering,

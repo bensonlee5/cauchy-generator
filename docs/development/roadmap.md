@@ -81,7 +81,7 @@ Lower rank means higher priority. Rank `0` is reserved for completed items retai
 | 0    | RD-008     | Meta-feature coverage steering                                         | implemented | Now       | `#246 -> #251 -> #256 -> #261 -> #266` (completed)                                                               |
 | 1    | RD-005     | Robustness stress profiles (hard-task/adversarial regimes)             | research    | Now       | `#247 -> #252 -> #257 -> #262 -> #267`                                                                           |
 | 2    | RD-013     | Time-series generation tracks for PFN pretraining                      | research    | Later     | `#248 -> #253 -> (#258 + #263) -> #268`                                                                          |
-| 3    | RD-002     | Interventional and counterfactual generation modes                     | research    | Later     | `#249 -> #255 -> (#259 + #265) -> #269`                                                                          |
+| 3    | RD-002     | Observational and hard-interventional generation modes                 | research    | Later     | `#249 -> #255` (completed schema/identity slice) -> `(#259 + #265) -> #269`                                     |
 | 4    | RD-010     | Hardware-adaptive autotuning beyond coarse FLOPs tiers                 | planned     | Later     | `#250 -> #254 -> #260 -> #264 -> (#270 + #271) -> #272`                                                          |
 
 ## Dependency Graph
@@ -120,8 +120,8 @@ graph TD
 
   RD002E["RD-002 epic #249"]
   RD002A["#255 spec(interventions)"]
-  RD002B["#259 feat(interventions)"]
-  RD002C["#265 feat(intervention metadata)"]
+  RD002B["#259 feat(hard interventions)"]
+  RD002C["#265 feat(intervention contracts)"]
   RD002D["#269 docs(interventions)"]
 
   RD010E["RD-010 epic #250"]
@@ -168,9 +168,9 @@ graph TD
 | README Mission/Pillar Claim                                         | Current State | Evidence in Repo                                                                                                                                                                                                                                                                                              | Gap                                                                                                                                              | Roadmap IDs    |
 | ------------------------------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
 | Foundation model pretraining with diverse structural priors         | `partial`     | Canonical fixed-layout generation, `dataset.rows`, deferred filtering, effective-diversity audits, diagnostics coverage aggregation, explicit noise/shift controls, stage-level throughput metrics, generate-handoff manifests, steering, and the shipped `piecewise` plus widened `gp` paths are implemented | Time-series generation tracks and broader named reference/stress packs remain active follow-on work                                              | RD-013, RD-005 |
-| Causal discovery with ground-truth DAGs and interventional datasets | `partial`     | DAG lineage metadata is emitted per dataset and persisted as compact shard-level artifacts with schema validation and benchmark guardrails                                                                                                                                                                    | Interventional/counterfactual generation semantics are not implemented                                                                           | RD-002         |
+| Causal discovery with ground-truth DAGs and interventional datasets | `partial`     | DAG lineage metadata is emitted per dataset and persisted as compact shard-level artifacts with schema validation and benchmark guardrails                                                                                                                                                                    | Hard-interventional generation semantics and intervention contracts are not implemented yet; counterfactual support is deferred                   | RD-002         |
 | Robustness testing with hard tasks, shifts, adversarial regimes     | `partial`     | Deferred filtering, diagnostics proxies, missingness mechanisms, explicit noise-family controls, shift/drift controls, and steering are implemented with deterministic controls and benchmark guardrails                                                                                                      | Named hard-task and adversarial profile suites are not implemented yet                                                                           | RD-005         |
-| Causal structural integrity (hierarchical dependencies)             | `implemented` | Graph-driven node pipeline, canonical fixed-layout execution, DAG lineage artifacts, shipped mechanism-family diversity controls, and keyed RNG semantic reproducibility are implemented                                                                                                                      | Remaining active work is interventional/counterfactual dataset semantics rather than structural correctness                                      | RD-002         |
+| Causal structural integrity (hierarchical dependencies)             | `implemented` | Graph-driven node pipeline, canonical fixed-layout execution, DAG lineage artifacts, shipped mechanism-family diversity controls, and keyed RNG semantic reproducibility are implemented                                                                                                                      | Remaining active work is hard-interventional dataset semantics and intervention contracts rather than structural correctness                     | RD-002         |
 | Tabular realism (mixed type + postprocess hooks)                    | `partial`     | Numeric/categorical converters, postprocess hooks, many-class rollout within the current `<=32` class envelope, configurable missingness, explicit noise families, shipped mechanism diversity controls, steering, and canonical fixed-layout generation are implemented                                      | Named robustness compositions over the shipped levers remain active work                                                                         | RD-005         |
 | PFN task coverage (classification, regression, time-series)         | `partial`     | Classification and regression generation pipelines are fully supported with deterministic seeds, keyed replay metadata, and benchmark workflows                                                                                                                                                               | No time-series generation mode, temporal metadata contract, or temporal diagnostics/guardrails                                                   | RD-013         |
 | Staged complexity scaling (features/nodes/samples)                  | `retired`     | Historical staged-complexity implementation (RD-006) has been retired in favor of explicit split sizing and fixed-layout generation                                                                                                                                                                           | Not active                                                                                                                                       | RD-006         |
@@ -243,24 +243,29 @@ Use the canonical docs instead:
   - Integration tests cover classification and regression generation + artifact persistence.
   - Existing config defaults remain backward-compatible.
 
-### RD-002: Interventional and Counterfactual Generation Modes
+### RD-002: Observational and Hard-Interventional Generation Modes
 
 - Status: `research`
 - Milestone: `Later`
 - Mission alignment: causal discovery
 - Pillar alignment: causal structural integrity
-- Goal: support observational + interventional sampling tracks with explicit intervention specs.
-- GitHub tracking: `#249 -> #255 -> (#259 + #265) -> #269`
-- Repo touchpoints: `src/dagzoo/config/`, `src/dagzoo/core/dataset.py`, `src/dagzoo/core/node_pipeline.py`, `src/dagzoo/cli/`
+- Goal: support observational and hard-interventional sampling tracks with explicit intervention specs and stable intervention identities on the canonical generation path.
+- GitHub tracking: `#249 -> #255` (completed schema/identity slice) -> `(#259 + #265) -> #269`
+- Repo touchpoints: `src/dagzoo/config/`, `src/dagzoo/core/dataset.py`, `src/dagzoo/core/fixed_layout/runtime.py`, `src/dagzoo/core/generation_runtime.py`, `src/dagzoo/io/parquet_writer.py`, `src/dagzoo/core/generate_handoff.py`
+- Delivered scope:
+  - `#255` completed the config schema and validation slice for observational and hard-interventional authoring.
+  - Resolved/effective config now canonicalizes `intervention.targets` and derives `intervention.signature` for stable downstream identity.
+  - Default observational config remains backward-compatible and omits empty intervention state from effective-config artifacts.
 - Exit criteria:
-  - Config supports opt-in intervention mode with safe default (`off`).
-  - Generated artifacts contain intervention set and pre/post intervention metadata.
-  - Acceptance tests verify truncated-factorization behavior for fixed interventions.
+  - Config supports opt-in intervention mode with safe default observational generation.
+  - Hard interventions execute with clear truncated-factorization semantics for fixed interventions.
+  - Public and replay artifact contracts record stable intervention metadata needed by downstream consumers.
+  - Counterfactual scope remains explicitly deferred until there is a separate paired-output contract and replay design.
 - Delivery issues:
-  - `#255` `spec(interventions): define intervention-mode schema and validation`
-  - `#259` `feat(interventions): implement observational/interventional/counterfactual sampling semantics`
-  - `#265` `feat(interventions): emit intervention metadata and artifact contracts`
-  - `#269` `docs(interventions): add presets, tests, and benchmark guardrails`
+  - `#255` `spec(interventions): define observational and hard-interventional schema and validation` (completed schema/identity slice)
+  - `#259` `feat(interventions): implement observational and hard-interventional sampling semantics`
+  - `#265` `feat(interventions): emit intervention metadata across public, replay, and handoff contracts`
+  - `#269` `docs(interventions): add presets, tests, and guardrails for observational and interventional workflows`
 
 ### RD-003: Missingness Generation (MCAR/MAR/MNAR)
 
@@ -583,7 +588,7 @@ Use the canonical docs instead:
 ### Later
 
 - RD-013 time-series generation tracks
-- RD-002 interventional and counterfactual generation modes
+- RD-002 observational and hard-interventional generation modes
 - RD-010 hardware-adaptive autotuning
 
 ## Dependencies and Sequencing
@@ -615,7 +620,7 @@ Use the canonical docs instead:
 - RD-013 fans out after `#253` into the temporal runtime lane `#258` and the metadata-contract lane `#263`, which rejoin at docs and guardrails `#268`.
 - RD-013 remains later because the near-term downstream contract is one-way tabular corpus handoff, not temporal generation.
 - RD-002 builds on completed RD-001 lineage artifacts for intervention metadata extensions.
-- RD-002 fans out after `#255` into sampling semantics `#259` and metadata contracts `#265`, which rejoin at docs and guardrails `#269`.
+- RD-002 now fans out after the completed schema/identity slice `#255` into hard-interventional sampling semantics `#259` and metadata contracts `#265`, which rejoin at docs and guardrails `#269`.
 - RD-010 moves linearly through spec, scoring, and orchestration (`#254 -> #260 -> #264`) before splitting into generate-path integration `#270` and telemetry/reporting `#271`, which rejoin at docs and guardrails `#272`.
 - RD-010 remains opt-in and benchmark-guarded, but is sequenced later because downstream handoff, curriculum-aware harder-front steering, and reproducible stress-profile composition are more urgent than adaptive tuning.
 

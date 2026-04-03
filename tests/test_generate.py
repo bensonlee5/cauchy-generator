@@ -10,6 +10,7 @@ from conftest import load_repo_config
 import dagzoo
 import dagzoo.core
 from dagzoo.config import (
+    INTERVENTION_MODE_HARD_INTERVENTIONAL,
     NOISE_FAMILY_GAUSSIAN,
     NOISE_FAMILY_LAPLACE,
     NOISE_FAMILY_MIXTURE,
@@ -354,6 +355,15 @@ def test_generate_one_omits_steering_from_metadata_config() -> None:
     assert "steering" not in bundle.metadata["config"]
 
 
+def test_generate_one_omits_default_intervention_from_metadata_config() -> None:
+    cfg = _tiny_regression_config()
+    assert cfg.intervention.mode == "observational"
+
+    bundle = generate_one(cfg, seed=10, device="cpu")
+
+    assert "intervention" not in bundle.metadata["config"]
+
+
 def test_generate_one_with_stress_profile_omits_stress_from_metadata_config() -> None:
     cfg = load_repo_config()
     cfg.stress.profile = "anti_memorization_piecewise_classification_slice_v1"
@@ -379,6 +389,19 @@ def test_generate_one_with_relationship_stress_profile_materializes_locked_field
     assert bool(bundle.metadata["config"]["filter"]["enabled"]) is False
     assert int(bundle.metadata["config"]["filter"]["min_target_indegree"]) == 2
     assert "stress" not in bundle.metadata["config"]
+
+
+def test_generate_one_rejects_hard_interventional_mode_until_sampling_ships() -> None:
+    cfg = _tiny_regression_config()
+    cfg.intervention.mode = INTERVENTION_MODE_HARD_INTERVENTIONAL
+    cfg.intervention.targets = [{"target_kind": "target", "value": 1.0}]  # type: ignore[list-item]
+    cfg.validate_generation_constraints()
+
+    with pytest.raises(
+        ValueError,
+        match=r"Interventional generation is not implemented yet",
+    ):
+        generate_one(cfg, seed=10, device="cpu")
 
 
 def test_generate_one_with_compositional_stress_profile_records_internal_layout_stress_name() -> (
