@@ -86,9 +86,9 @@ ______________________________________________________________________
 
 `GeneratorConfig` validation is explicit and runs in three stages:
 
-1. Stage 1: field-level normalization and typing per section (`dataset`, `graph`, `mechanism`, `shift`, `noise`, `runtime`, `output`, `diagnostics`, `benchmark`, `filter`)
+1. Stage 1: field-level normalization and typing per section (`dataset`, `graph`, `mechanism`, `intervention`, `shift`, `noise`, `steering`, `stress`, `runtime`, `output`, `diagnostics`, `benchmark`, `filter`)
 1. Stage 2: cross-field constraints (for example shift mode compatibility, missingness constraints, and min/max envelopes)
-1. Stage 3: post-override revalidation by re-running stage 1 + stage 2 through `GeneratorConfig.validate_generation_constraints()`
+1. Stage 3: post-override revalidation by re-running stage 1 + stage 2 through `GeneratorConfig.validate_generation_constraints()`, then populating any derived identity fields such as `intervention.signature`
 
 `resolve_generate_config()` and `resolve_benchmark_preset_config()` both call stage 3 after applying all runtime overrides/caps.
 
@@ -102,6 +102,10 @@ Each run writes:
 
 - `<effective_config_root>/effective_config.yaml`
 - `<effective_config_root>/effective_config_trace.yaml`
+
+Observational configs omit the `intervention` section entirely. Hard-interventional
+configs keep the canonical sorted `intervention.targets` payload and include the
+derived `intervention.signature` field in `effective_config.yaml`.
 
 `effective_config_root` is:
 

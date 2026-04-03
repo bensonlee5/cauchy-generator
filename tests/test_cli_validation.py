@@ -259,6 +259,79 @@ def test_generate_cli_stress_profile_effective_config_is_concrete(
     )
 
 
+def test_generate_cli_hard_intervention_effective_config_is_canonical(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = load_repo_config()
+    cfg.dataset.n_features_min = 4
+    cfg.dataset.n_features_max = 8
+    cfg.graph.n_nodes_min = 3
+    cfg.graph.n_nodes_max = 5
+    cfg.intervention.mode = "hard_interventional"
+    cfg.intervention.targets = [
+        {"target_kind": "target", "value": 1.0},  # type: ignore[list-item]
+        {"target_kind": "feature_node", "index": 1, "value": 2.0},  # type: ignore[list-item]
+    ]
+    cfg.validate_generation_constraints()
+    config_path = write_config(tmp_path, cfg, "hard_intervention.yaml")
+    out_dir = tmp_path / "hard_intervention_run"
+
+    def _stub_generate_batch_iter(
+        config,
+        *,
+        num_datasets: int,
+        seed: int | None = None,
+        device: str | None = None,
+    ):
+        _ = seed
+        _ = device
+        assert config.intervention.signature == cfg.intervention.signature
+        assert [str(target.target_kind) for target in config.intervention.targets] == [
+            "feature_node",
+            "target",
+        ]
+        for _ in range(num_datasets):
+            yield object()
+
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.generate.generate_batch_iter",
+        _stub_generate_batch_iter,
+    )
+
+    code = main(
+        [
+            "generate",
+            "--config",
+            str(config_path),
+            "--num-datasets",
+            "1",
+            "--device",
+            "cpu",
+            "--hardware-policy",
+            "none",
+            "--out",
+            str(out_dir),
+            "--no-dataset-write",
+        ]
+    )
+
+    assert code == 0
+    effective_config = yaml.safe_load(
+        (out_dir / "effective_config.yaml").read_text(encoding="utf-8")
+    )
+    assert effective_config["intervention"] == {
+        "mode": "hard_interventional",
+        "targets": [
+            {"target_kind": "feature_node", "index": 1, "value": 2.0},
+            {"target_kind": "target", "index": None, "value": 1.0},
+        ],
+        "signature": cfg.intervention.signature,
+    }
+
+    roundtripped = GeneratorConfig.from_dict(effective_config)
+    assert roundtripped.intervention.signature == cfg.intervention.signature
+
+
 def test_fixed_layout_subcommand_is_removed() -> None:
     with pytest.raises(SystemExit) as exc:
         main(["fixed-layout", "sample", "--config", "configs/default.yaml"])

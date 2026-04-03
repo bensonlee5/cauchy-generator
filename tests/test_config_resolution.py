@@ -134,6 +134,39 @@ def test_resolve_generate_config_applies_rows_override() -> None:
     assert any(event["path"] == "dataset.rows" and event["source"] == "cli.rows" for event in trace)
 
 
+def test_resolve_generate_config_preserves_hard_intervention_signature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = GeneratorConfig.from_dict(
+        {
+            "dataset": {"n_features_min": 4, "n_features_max": 8},
+            "graph": {"n_nodes_min": 3, "n_nodes_max": 5},
+            "runtime": {"layout_mode": "stratified"},
+            "intervention": {
+                "mode": "hard_interventional",
+                "targets": [
+                    {"target_kind": "target", "value": 1.0},
+                    {"target_kind": "feature_node", "index": 1, "value": 2.0},
+                ],
+            },
+        }
+    )
+    baseline_signature = str(cfg.intervention.signature)
+    monkeypatch.setattr("dagzoo.core.config_resolution.detect_hardware", _mock_cuda_datacenter)
+
+    resolved = resolve_generate_config(
+        cfg,
+        device_override="cuda",
+        rows=None,
+        hardware_policy="cuda_tiered_v1",
+        diagnostics_enabled=False,
+    )
+
+    assert resolved["config"].intervention.signature == baseline_signature
+    trace = serialize_resolution_events(resolved["trace_events"])
+    assert not any(str(event["path"]).startswith("intervention.") for event in trace)
+
+
 def test_resolve_generate_config_materializes_stress_profile() -> None:
     cfg = GeneratorConfig.from_dict({"stress": {"profile": _STRESS_PROFILE}})
 

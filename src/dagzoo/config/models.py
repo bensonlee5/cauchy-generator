@@ -11,6 +11,7 @@ from typing import Any
 
 import yaml
 
+from dagzoo.identity_hash import stable_blake2s_hex
 from dagzoo.rng import SEED32_MAX, SEED32_MIN
 
 from .constants import (
@@ -666,6 +667,14 @@ def _normalize_intervention_fields(intervention: "InterventionConfig") -> None:
     """Stage 1: normalize intervention section fields."""
 
     intervention.mode = normalize_intervention_mode(intervention.mode)
+    if intervention.signature is None:
+        normalized_signature = None
+    elif isinstance(intervention.signature, bool) or not isinstance(intervention.signature, str):
+        raise ValueError("intervention.signature must be a non-empty string or null.")
+    else:
+        normalized_signature = intervention.signature.strip().lower()
+        if not normalized_signature:
+            raise ValueError("intervention.signature must be a non-empty string or null.")
     raw_targets = intervention.targets
     if not isinstance(raw_targets, list):
         raise ValueError("intervention.targets must be a list.")
@@ -682,7 +691,14 @@ def _normalize_intervention_fields(intervention: "InterventionConfig") -> None:
             target = InterventionTargetConfig(**raw_target)
         _normalize_intervention_target_fields(target, index=index)
         normalized_targets.append(target)
+    normalized_targets.sort(
+        key=lambda target: (
+            str(target.target_kind),
+            -1 if target.index is None else int(target.index),
+        )
+    )
     intervention.targets = normalized_targets
+    intervention.signature = normalized_signature
 
 
 def _normalize_shift_fields(shift: ShiftConfig) -> None:
@@ -1288,6 +1304,48 @@ def _stage2_validate_intervention_constraints(config: "GeneratorConfig") -> None
             )
 
 
+def _canonical_intervention_signature_payload(
+    intervention: "InterventionConfig",
+) -> dict[str, Any]:
+    """Return the canonical payload used for hard-intervention signatures."""
+
+    return {
+        "mode": str(intervention.mode),
+        "targets": [
+            {
+                "target_kind": str(target.target_kind),
+                "index": None if target.index is None else int(target.index),
+                "value": float(target.value),
+            }
+            for target in intervention.targets
+        ],
+    }
+
+
+def _finalize_intervention_identity(intervention: "InterventionConfig") -> None:
+    """Populate or validate the derived intervention signature."""
+
+    if intervention.mode == INTERVENTION_MODE_OBSERVATIONAL:
+        intervention.signature = None
+        return
+
+    expected_signature = stable_blake2s_hex(
+        _canonical_intervention_signature_payload(intervention)
+    )
+    if intervention.signature is not None and intervention.signature != expected_signature:
+        raise ValueError(
+            "intervention.signature does not match the canonical hard-intervention identity. "
+            f"Expected {expected_signature!r}, got {intervention.signature!r}."
+        )
+    intervention.signature = expected_signature
+
+
+def _finalize_derived_generation_fields(config: "GeneratorConfig") -> None:
+    """Populate derived config identity fields after validation succeeds."""
+
+    _finalize_intervention_identity(config.intervention)
+
+
 def _stage2_validate_shift_constraints(shift: ShiftConfig) -> None:
     """Stage 2: validate shift mode and override compatibility."""
 
@@ -1515,6 +1573,7 @@ def _normalize_and_validate_generation_config(config: GeneratorConfig) -> None:
 
     _normalize_generation_sections(config)
     _validate_generation_config(config)
+    _finalize_derived_generation_fields(config)
 
 
 @dataclass(slots=True)
@@ -1559,6 +1618,7 @@ class InterventionTargetConfig:
 class InterventionConfig:
     mode: InterventionMode = INTERVENTION_MODE_OBSERVATIONAL
     targets: list[InterventionTargetConfig] = field(default_factory=list)
+    signature: str | None = None
 
 
 @dataclass(slots=True)

@@ -148,6 +148,98 @@ def test_intervention_section_accepts_hard_interventional_authoring() -> None:
     assert cfg.intervention.targets[0].target_kind == "latent_node"
     assert int(cfg.intervention.targets[0].index) == 1
     assert float(cfg.intervention.targets[0].value) == pytest.approx(2.5)
+    assert isinstance(cfg.intervention.signature, str)
+    assert len(cfg.intervention.signature) == 32
+
+
+def test_hard_intervention_signature_is_order_insensitive_and_targets_are_canonicalized() -> None:
+    payload_a = {
+        "dataset": {"n_features_min": 4, "n_features_max": 8},
+        "graph": {"n_nodes_min": 3, "n_nodes_max": 5},
+        "intervention": {
+            "mode": "hard_interventional",
+            "targets": [
+                {"target_kind": "target", "value": 1.0},
+                {"target_kind": "latent_node", "index": 0, "value": 3.0},
+                {"target_kind": "feature_node", "index": 1, "value": 2.0},
+            ],
+        },
+    }
+    payload_b = {
+        "dataset": {"n_features_min": 4, "n_features_max": 8},
+        "graph": {"n_nodes_min": 3, "n_nodes_max": 5},
+        "intervention": {
+            "mode": "hard_interventional",
+            "targets": [
+                {"target_kind": "feature_node", "index": 1, "value": 2.0},
+                {"target_kind": "target", "value": 1.0},
+                {"target_kind": "latent_node", "index": 0, "value": 3.0},
+            ],
+        },
+    }
+
+    cfg_a = GeneratorConfig.from_dict(payload_a)
+    cfg_b = GeneratorConfig.from_dict(payload_b)
+
+    assert cfg_a.intervention.signature == cfg_b.intervention.signature
+    assert [
+        (str(target.target_kind), target.index, float(target.value))
+        for target in cfg_a.intervention.targets
+    ] == [
+        ("feature_node", 1, pytest.approx(2.0)),
+        ("latent_node", 0, pytest.approx(3.0)),
+        ("target", None, pytest.approx(1.0)),
+    ]
+    assert [
+        (str(target.target_kind), target.index, float(target.value))
+        for target in cfg_b.intervention.targets
+    ] == [
+        (str(target.target_kind), target.index, float(target.value))
+        for target in cfg_a.intervention.targets
+    ]
+
+
+def test_hard_intervention_effective_config_roundtrips_with_matching_signature() -> None:
+    cfg = GeneratorConfig.from_dict(
+        {
+            "dataset": {"n_features_min": 4, "n_features_max": 8},
+            "graph": {"n_nodes_min": 3, "n_nodes_max": 5},
+            "intervention": {
+                "mode": "hard_interventional",
+                "targets": [
+                    {"target_kind": "target", "value": 1.0},
+                    {"target_kind": "feature_node", "index": 1, "value": 2.0},
+                ],
+            },
+        }
+    )
+
+    payload = effective_config_payload(cfg)
+    roundtripped = GeneratorConfig.from_dict(payload)
+
+    assert payload["intervention"]["signature"] == cfg.intervention.signature
+    assert roundtripped.to_dict() == cfg.to_dict()
+
+
+def test_hard_intervention_rejects_mismatched_signature() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"intervention\.signature does not match the canonical hard-intervention identity",
+    ):
+        GeneratorConfig.from_dict(
+            {
+                "dataset": {"n_features_min": 4, "n_features_max": 8},
+                "graph": {"n_nodes_min": 3, "n_nodes_max": 5},
+                "intervention": {
+                    "mode": "hard_interventional",
+                    "signature": "wrong-signature",
+                    "targets": [
+                        {"target_kind": "target", "value": 1.0},
+                        {"target_kind": "feature_node", "index": 1, "value": 2.0},
+                    ],
+                },
+            }
+        )
 
 
 def test_intervention_section_rejects_non_mapping_payload() -> None:
@@ -170,6 +262,20 @@ def test_intervention_observational_mode_rejects_targets() -> None:
         )
 
 
+def test_intervention_observational_mode_clears_authored_signature_and_is_omitted_from_payload() -> None:
+    cfg = GeneratorConfig.from_dict(
+        {
+            "intervention": {
+                "mode": "observational",
+                "signature": " authored-but-cleared ",
+            }
+        }
+    )
+
+    assert cfg.intervention.signature is None
+    assert "intervention" not in effective_config_payload(cfg)
+
+
 def test_intervention_hard_mode_requires_targets() -> None:
     with pytest.raises(
         ValueError,
@@ -179,6 +285,14 @@ def test_intervention_hard_mode_requires_targets() -> None:
         ),
     ):
         GeneratorConfig.from_dict({"intervention": {"mode": "hard_interventional"}})
+
+
+def test_intervention_rejects_counterfactual_mode() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"Unsupported intervention\.mode 'counterfactual'",
+    ):
+        GeneratorConfig.from_dict({"intervention": {"mode": "counterfactual"}})
 
 
 def test_intervention_target_selector_constraints_validate_against_minimum_envelopes() -> None:
