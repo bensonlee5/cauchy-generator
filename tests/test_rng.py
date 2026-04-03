@@ -80,6 +80,12 @@ def test_keyed_rng_keyed_chaining_matches_flat_derivation() -> None:
     assert root.keyed("dataset", 4).child_seed("plan") == root.child_seed("dataset", 4, "plan")
 
 
+def test_keyed_rng_reuses_cached_child_namespaces() -> None:
+    root = KeyedRng(seed=17)
+
+    assert root.keyed("dataset", 4) is root.keyed("dataset", 4)
+
+
 def test_keyed_rng_from_generator_uses_ambient_nonce_in_child_seed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -119,6 +125,16 @@ def test_keyed_rng_torch_rng_is_deterministic_for_same_key() -> None:
     root = KeyedRng(seed=123)
     draws_a = torch.rand(8, generator=root.torch_rng("node", 2), device="cpu")
     draws_b = torch.rand(8, generator=root.torch_rng("node", 2), device="cpu")
+    torch.testing.assert_close(draws_a, draws_b)
+
+
+def test_keyed_rng_torch_rng_returns_fresh_clones_of_cached_template() -> None:
+    root = KeyedRng(seed=123)
+    first = root.torch_rng("node", 2)
+    _ = torch.rand(8, generator=first, device="cpu")
+    draws_a = torch.rand(8, generator=root.torch_rng("node", 2), device="cpu")
+    draws_b = torch.rand(8, generator=root.torch_rng("node", 2), device="cpu")
+
     torch.testing.assert_close(draws_a, draws_b)
 
 

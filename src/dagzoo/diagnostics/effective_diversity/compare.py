@@ -27,6 +27,18 @@ CORE_DIVERSITY_METRICS: tuple[str, ...] = (
     "graph_target_ancestor_fraction",
     "mechanism_family_cooccurrence_ratio",
 )
+STRUCTURAL_DIVERSITY_METRICS: tuple[str, ...] = (
+    "categorical_ratio",
+    "cat_cardinality_mean",
+    "graph_edge_density",
+    "graph_indegree_std",
+    "graph_outdegree_std",
+    "graph_depth_ratio",
+    "graph_reachability_ratio",
+    "graph_ancestor_overlap_mean",
+    "graph_target_ancestor_fraction",
+    "mechanism_family_cooccurrence_ratio",
+)
 
 
 def validate_diversity_thresholds(
@@ -115,6 +127,30 @@ def metric_shift_pct(
     return float(weighted_shift * 100.0)
 
 
+def _metric_shift_map(
+    *,
+    baseline_summary: dict[str, Any],
+    variant_summary: dict[str, Any],
+    metrics: tuple[str, ...],
+) -> dict[str, float]:
+    shifts: dict[str, float] = {}
+    for metric in metrics:
+        shift = metric_shift_pct(
+            baseline_summary=baseline_summary,
+            variant_summary=variant_summary,
+            metric=metric,
+        )
+        if shift is not None:
+            shifts[metric] = float(shift)
+    return shifts
+
+
+def _composite_shift_pct(metric_shift_map: dict[str, float]) -> float | None:
+    if not metric_shift_map:
+        return None
+    return float(median(metric_shift_map.values()))
+
+
 def classify_diversity_status(
     composite_shift_pct: float | None,
     *,
@@ -142,20 +178,17 @@ def compare_coverage_summaries(
     variant_summary: dict[str, Any],
     warn_threshold_pct: float,
     fail_threshold_pct: float,
+    include_structural_summary: bool = False,
 ) -> dict[str, Any]:
     """Compare one variant coverage summary against a baseline summary."""
 
-    metric_shift_map: dict[str, float] = {}
-    for metric in CORE_DIVERSITY_METRICS:
-        shift = metric_shift_pct(
-            baseline_summary=baseline_summary,
-            variant_summary=variant_summary,
-            metric=metric,
-        )
-        if shift is not None:
-            metric_shift_map[metric] = float(shift)
-    composite_shift_pct = float(median(metric_shift_map.values())) if metric_shift_map else None
-    return {
+    metric_shift_map = _metric_shift_map(
+        baseline_summary=baseline_summary,
+        variant_summary=variant_summary,
+        metrics=CORE_DIVERSITY_METRICS,
+    )
+    composite_shift_pct = _composite_shift_pct(metric_shift_map)
+    comparison = {
         "diversity_metric_shift_pct": metric_shift_map,
         "diversity_composite_shift_pct": composite_shift_pct,
         "diversity_status": classify_diversity_status(
@@ -164,6 +197,17 @@ def compare_coverage_summaries(
             fail_threshold_pct=fail_threshold_pct,
         ),
     }
+    if include_structural_summary:
+        structural_metric_shift_map = _metric_shift_map(
+            baseline_summary=baseline_summary,
+            variant_summary=variant_summary,
+            metrics=STRUCTURAL_DIVERSITY_METRICS,
+        )
+        comparison["structural_diversity_metric_shift_pct"] = structural_metric_shift_map
+        comparison["structural_diversity_composite_shift_pct"] = _composite_shift_pct(
+            structural_metric_shift_map
+        )
+    return comparison
 
 
 def build_comparison_record(

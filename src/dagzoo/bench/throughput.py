@@ -25,6 +25,7 @@ from dagzoo.hardware_policy import (
     round_fixed_layout_target_cells,
 )
 from dagzoo.rng import KeyedRng
+from dagzoo.runtime_profiling import runtime_profile_scope
 from dagzoo.types import DatasetBundle
 
 from .runtime_support import _synchronize_accelerator
@@ -265,16 +266,19 @@ def run_heterogeneous_throughput_benchmark(
     warmup_datasets: int = 10,
     device: str | None = None,
     on_bundle: Callable[[DatasetBundle], object] | None = None,
+    profile_runtime: bool = False,
 ) -> dict[str, Any]:
     """Measure end-to-end throughput for the public heterogeneous generation path."""
 
     run_config = clone_generator_config(config, revalidate=False)
     run_config.runtime.layout_mode = "heterogeneous"
-    _, _run_seed, _requested_device, resolved_device = realize_generation_config_for_run(
-        run_config,
-        seed=_throughput_measure_seed(config),
-        device=device,
-        prefer_cpu_for_mps_auto=True,
+    _, _run_seed, _requested_device, resolved_device, _carried_stress_profile = (
+        realize_generation_config_for_run(
+            run_config,
+            seed=_throughput_measure_seed(config),
+            device=device,
+            prefer_cpu_for_mps_auto=True,
+        )
     )
     timing_device = str(resolved_device)
     if warmup_datasets > 0:
@@ -294,15 +298,16 @@ def run_heterogeneous_throughput_benchmark(
     def _on_raw_batch_metrics(metrics: dict[str, float]) -> None:
         _accumulate_raw_batch_metrics(raw_batch_metric_totals, metrics)
 
-    for bundle in _generate_batch_with_heterogeneous_layout_iter(
-        run_config,
-        num_datasets=num_datasets,
-        seed=_throughput_measure_seed(config),
-        device=device,
-        on_raw_batch_metrics=_on_raw_batch_metrics,
-    ):
-        if on_bundle is not None:
-            on_bundle(bundle)
+    with runtime_profile_scope(enabled=profile_runtime) as runtime_profile:
+        for bundle in _generate_batch_with_heterogeneous_layout_iter(
+            run_config,
+            num_datasets=num_datasets,
+            seed=_throughput_measure_seed(config),
+            device=device,
+            on_raw_batch_metrics=_on_raw_batch_metrics,
+        ):
+            if on_bundle is not None:
+                on_bundle(bundle)
     _synchronize_accelerator(timing_device)
     elapsed = time.perf_counter() - start
     cpu_time_seconds = time.process_time() - start_cpu
@@ -321,6 +326,7 @@ def run_heterogeneous_throughput_benchmark(
         "slo_pass_100_datasets_per_min": dpm >= THROUGHPUT_SLO_DATASETS_PER_MINUTE,
         "generation_mode": "heterogeneous_grouped",
         **raw_batch_metric_totals,
+        **({} if runtime_profile is None else runtime_profile.snapshot()),
     }
 
 
@@ -331,16 +337,19 @@ def run_stratified_throughput_benchmark(
     warmup_datasets: int = 10,
     device: str | None = None,
     on_bundle: Callable[[DatasetBundle], object] | None = None,
+    profile_runtime: bool = False,
 ) -> dict[str, Any]:
     """Measure end-to-end throughput for the public stratified generation path."""
 
     run_config = clone_generator_config(config, revalidate=False)
     run_config.runtime.layout_mode = "stratified"
-    _, _run_seed, _requested_device, resolved_device = realize_generation_config_for_run(
-        run_config,
-        seed=_throughput_measure_seed(config),
-        device=device,
-        prefer_cpu_for_mps_auto=True,
+    _, _run_seed, _requested_device, resolved_device, _carried_stress_profile = (
+        realize_generation_config_for_run(
+            run_config,
+            seed=_throughput_measure_seed(config),
+            device=device,
+            prefer_cpu_for_mps_auto=True,
+        )
     )
     timing_device = str(resolved_device)
     if warmup_datasets > 0:
@@ -360,15 +369,16 @@ def run_stratified_throughput_benchmark(
     def _on_raw_batch_metrics(metrics: dict[str, float]) -> None:
         _accumulate_raw_batch_metrics(raw_batch_metric_totals, metrics)
 
-    for bundle in _generate_batch_with_stratified_layout_iter(
-        run_config,
-        num_datasets=num_datasets,
-        seed=_throughput_measure_seed(config),
-        device=device,
-        on_raw_batch_metrics=_on_raw_batch_metrics,
-    ):
-        if on_bundle is not None:
-            on_bundle(bundle)
+    with runtime_profile_scope(enabled=profile_runtime) as runtime_profile:
+        for bundle in _generate_batch_with_stratified_layout_iter(
+            run_config,
+            num_datasets=num_datasets,
+            seed=_throughput_measure_seed(config),
+            device=device,
+            on_raw_batch_metrics=_on_raw_batch_metrics,
+        ):
+            if on_bundle is not None:
+                on_bundle(bundle)
     _synchronize_accelerator(timing_device)
     elapsed = time.perf_counter() - start
     cpu_time_seconds = time.process_time() - start_cpu
@@ -387,6 +397,7 @@ def run_stratified_throughput_benchmark(
         "slo_pass_100_datasets_per_min": dpm >= THROUGHPUT_SLO_DATASETS_PER_MINUTE,
         "generation_mode": "heterogeneous_stratified",
         **raw_batch_metric_totals,
+        **({} if runtime_profile is None else runtime_profile.snapshot()),
     }
 
 
@@ -398,6 +409,7 @@ def run_throughput_benchmark(
     device: str | None = None,
     on_bundle: Callable[[DatasetBundle], object] | None = None,
     benchmark_fast_prepare: bool = True,
+    profile_runtime: bool = False,
 ) -> dict[str, Any]:
     """Measure end-to-end generation throughput for a benchmark preset."""
 
@@ -416,30 +428,31 @@ def run_throughput_benchmark(
     start = time.perf_counter()
     start_cpu = time.process_time()
     raw_batch_metric_totals = _empty_raw_batch_metric_totals()
-    prepared = prepare_canonical_fixed_layout_run(
-        run_config,
-        num_datasets=num_datasets,
-        seed=_throughput_measure_seed(config),
-        device=device,
-        precompute_classification_attempt_plan=_benchmark_precompute_classification_attempt_plan(
-            config,
-            benchmark_fast_prepare=benchmark_fast_prepare,
-        ),
-    )
-    _synchronize_accelerator(timing_device)
-    prepare_elapsed_seconds = time.perf_counter() - start
-    prepare_cpu_time_seconds = time.process_time() - start_cpu
+    with runtime_profile_scope(enabled=profile_runtime) as runtime_profile:
+        prepared = prepare_canonical_fixed_layout_run(
+            run_config,
+            num_datasets=num_datasets,
+            seed=_throughput_measure_seed(config),
+            device=device,
+            precompute_classification_attempt_plan=_benchmark_precompute_classification_attempt_plan(
+                config,
+                benchmark_fast_prepare=benchmark_fast_prepare,
+            ),
+        )
+        _synchronize_accelerator(timing_device)
+        prepare_elapsed_seconds = time.perf_counter() - start
+        prepare_cpu_time_seconds = time.process_time() - start_cpu
 
-    def _on_raw_batch_metrics(metrics: dict[str, float]) -> None:
-        _accumulate_raw_batch_metrics(raw_batch_metric_totals, metrics)
+        def _on_raw_batch_metrics(metrics: dict[str, float]) -> None:
+            _accumulate_raw_batch_metrics(raw_batch_metric_totals, metrics)
 
-    for bundle in _iter_prepared_canonical_batch_iter(
-        prepared,
-        num_datasets=num_datasets,
-        on_raw_batch_metrics=_on_raw_batch_metrics,
-    ):
-        if on_bundle is not None:
-            on_bundle(bundle)
+        for bundle in _iter_prepared_canonical_batch_iter(
+            prepared,
+            num_datasets=num_datasets,
+            on_raw_batch_metrics=_on_raw_batch_metrics,
+        ):
+            if on_bundle is not None:
+                on_bundle(bundle)
     _synchronize_accelerator(timing_device)
     elapsed = time.perf_counter() - start
     cpu_time_seconds = time.process_time() - start_cpu
@@ -458,4 +471,5 @@ def run_throughput_benchmark(
         "slo_pass_100_datasets_per_min": dpm >= THROUGHPUT_SLO_DATASETS_PER_MINUTE,
         "generation_mode": "fixed_batched",
         **raw_batch_metric_totals,
+        **({} if runtime_profile is None else runtime_profile.snapshot()),
     }

@@ -365,6 +365,7 @@ def test_generate_one_with_stress_profile_omits_stress_from_metadata_config() ->
     assert int(bundle.metadata["config"]["dataset"]["n_test"]) == 256
     assert "stress" not in bundle.metadata["config"]
     assert "steering" not in bundle.metadata["config"]
+    assert bundle.metadata["layout_stress_profile_name"] == cfg.stress.profile
 
 
 def test_generate_one_with_relationship_stress_profile_materializes_locked_fields() -> None:
@@ -378,6 +379,21 @@ def test_generate_one_with_relationship_stress_profile_materializes_locked_field
     assert bool(bundle.metadata["config"]["filter"]["enabled"]) is False
     assert int(bundle.metadata["config"]["filter"]["min_target_indegree"]) == 2
     assert "stress" not in bundle.metadata["config"]
+
+
+def test_generate_one_with_compositional_stress_profile_records_internal_layout_stress_name() -> (
+    None
+):
+    cfg = load_repo_config()
+    cfg.stress.profile = "anti_memorization_piecewise_classification_compositional_slice_v1"
+
+    bundle = generate_one(cfg, seed=10, device="cpu")
+
+    assert "stress" not in bundle.metadata["config"]
+    assert (
+        bundle.metadata["layout_stress_profile_name"]
+        == "anti_memorization_piecewise_classification_compositional_slice_v1"
+    )
 
 
 def test_generate_batch_dynamic_steering_changes_metadata_over_dataset_order() -> None:
@@ -4108,6 +4124,99 @@ def test_fixed_layout_plan_classification_attempt_plan_does_not_scalarize_other_
     assert retry_calls == [dataset_roots[0].child_seed()]
 
 
+def test_fixed_layout_plan_classification_attempt_plan_batches_retry_validation_for_multiple_pending_datasets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_config()
+    cfg.dataset.task = "classification"
+    cfg.filter.enabled = False
+    cfg.filter.max_attempts = 3
+    cfg.dataset.n_train = 4
+    cfg.dataset.n_test = 2
+    plan = _FixedLayoutPlan(
+        layout=_layout_stub(
+            feature_types=["num", "num"],
+            graph_nodes=2,
+            adjacency=torch.zeros((2, 2), dtype=torch.bool),
+            feature_node_assignment=[0, 1],
+            target_node_assignment=1,
+        ),
+        requested_device="cpu",
+        resolved_device="cpu",
+        plan_seed=19,
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        layout_signature="layout_sig",
+        execution_plan=FixedLayoutExecutionPlan(),
+        plan_signature="plan_sig",
+    )
+    run_root = KeyedRng(888)
+    dataset_roots = [run_root.keyed("dataset", idx) for idx in range(3)]
+    grouped_attempt_calls: list[list[int]] = []
+
+    def _stub_grouped_validation_labels_for_attempts(
+        _config: GeneratorConfig,
+        *,
+        plan: _FixedLayoutPlan,
+        dataset_roots: list[KeyedRng],
+        attempts: list[int],
+        resolved_device: str,
+        noise_sigma_multiplier: float,
+    ) -> list[tuple[torch.Tensor, int]]:
+        _ = (plan, resolved_device, noise_sigma_multiplier)
+        grouped_attempt_calls.append(list(attempts))
+        y_batch = torch.zeros(
+            (len(dataset_roots), cfg.dataset.n_train + cfg.dataset.n_test),
+            dtype=torch.int64,
+        )
+        return [(y_batch, local_index) for local_index in range(len(dataset_roots))]
+
+    invalid_attempt_zero_roots = {
+        dataset_roots[0].child_seed(),
+        dataset_roots[1].child_seed(),
+    }
+
+    def _stub_raw_classification_labels_support_split(
+        _y: torch.Tensor,
+        *,
+        dataset_root: KeyedRng,
+        attempt: int,
+        n_train: int,
+    ) -> bool:
+        _ = n_train
+        if dataset_root.child_seed() in invalid_attempt_zero_roots:
+            return attempt == 1
+        return attempt == 0
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._grouped_validation_labels_for_attempts",
+        _stub_grouped_validation_labels_for_attempts,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._raw_classification_labels_support_split",
+        _stub_raw_classification_labels_support_split,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._first_valid_classification_attempt_for_dataset",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("multiple pending datasets should stay on the grouped retry path")
+        ),
+    )
+
+    attempt_plan = _fixed_layout_plan_classification_attempt_plan(
+        cfg,
+        plan=plan,
+        requested_device="cpu",
+        resolved_device="cpu",
+        run_root=run_root,
+        num_datasets=3,
+        batch_size=3,
+    )
+
+    assert attempt_plan == (1, 1, 0)
+    assert grouped_attempt_calls == [[0, 0, 0], [1, 1]]
+
+
 def test_fixed_layout_plan_classification_attempt_plan_caps_replay_budget_to_filter_attempts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4229,6 +4338,31 @@ def test_fixed_layout_plan_classification_attempt_plan_caps_replay_budget_to_fil
 
     assert attempt_plan == (1,)
     assert observed_attempt_budgets == [2]
+
+
+def test_fixed_layout_plan_classification_attempt_plan_replay_fixture_is_stable() -> None:
+    cfg = load_repo_config()
+    cfg.dataset.task = "classification"
+    cfg.filter.enabled = False
+    cfg.filter.max_attempts = 3
+    cfg.runtime.layout_mode = "fixed"
+    plan = _sample_fixed_layout(cfg, seed=701, device="cpu")
+
+    assert plan.prepared_execution_context is not None
+    assert plan.layout_signature == "edcc78abca24aae79b3a85ef48f1e378"
+    assert plan.plan_signature == "b3a06637a1004dcbd9b546008c777a1a"
+
+    attempt_plan = _fixed_layout_plan_classification_attempt_plan(
+        cfg,
+        plan=plan,
+        requested_device="cpu",
+        resolved_device="cpu",
+        run_root=KeyedRng(444),
+        num_datasets=6,
+        batch_size=3,
+    )
+
+    assert attempt_plan == (0, 0, 0, 0, 0, 0)
 
 
 def test_generate_one_returns_torch_tensors_on_cpu() -> None:
@@ -4541,7 +4675,9 @@ def test_prepare_canonical_fixed_layout_run_uses_candidate_root_for_regression(
         rows_seed: int,
         requested_device: str,
         resolved_device: str,
+        stress_profile_name: str | None = None,
     ) -> _FixedLayoutPlan:
+        del stress_profile_name
         sample_calls.append(
             (
                 tuple(keyed_rng.path),
@@ -5633,7 +5769,9 @@ def test_prepare_canonical_fixed_layout_run_precomputes_run_wide_classification_
         rows_seed: int,
         requested_device: str,
         resolved_device: str,
+        stress_profile_name: str | None = None,
     ) -> _FixedLayoutPlan:
+        del stress_profile_name
         assert requested_device == "cpu"
         assert resolved_device == "cpu"
         sample_calls.append((tuple(keyed_rng.path), int(rows_seed)))
@@ -5681,7 +5819,9 @@ def test_prepare_canonical_fixed_layout_run_leaves_classification_attempt_plan_u
         rows_seed: int,
         requested_device: str,
         resolved_device: str,
+        stress_profile_name: str | None = None,
     ) -> _FixedLayoutPlan:
+        del stress_profile_name
         assert tuple(keyed_rng.path) == ("plan_candidate", 0)
         assert int(rows_seed) == KeyedRng(17).child_seed("rows")
         assert requested_device == "cpu"
@@ -6487,7 +6627,7 @@ def test_generate_batch_graph_steering_preserves_base_replay_roots_and_replays_p
     assert "steering_layout_root_path" not in steered_keyed_replay
     assert "steering_execution_plan_root_path" not in steered_keyed_replay
     assert replayed_plan.layout_signature == steered_bundle.metadata["layout_signature"]
-    assert int(steered_bundle.metadata["layout_plan_schema_version"]) == 10
+    assert int(steered_bundle.metadata["layout_plan_schema_version"]) == 11
     assert str(steered_bundle.metadata["layout_execution_contract"]) == "chunk_batched_v3"
     assert str(replayed_plan.layout_signature) == str(steered_bundle.metadata["layout_signature"])
     assert str(replayed_plan.plan_signature) == str(

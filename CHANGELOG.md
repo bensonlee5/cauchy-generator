@@ -10,6 +10,32 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.19.2] - 2026-04-02
+
+### Added
+
+- Added maintainer-only structural-diversity summaries to the RD-005 handoff
+  Pareto tooling so compositional-slice tuning can optimize for graph and
+  relationship diversity separately from the broader baseline-drift composite.
+- Added exact replay-engine regression coverage for compiled higher-order
+  function execution, grouped classification-attempt retry planning, and
+  internal runtime profiling paths.
+
+### Changed
+
+- Canonicalized fixed-layout random-weight reuse across standalone sampling,
+  random-matrix helpers, and batched execution, and extended compositional-slice
+  matrix/kernel correlation so kernel hyperparameters and matrix-family/base-kind
+  choices are resolved at plan time with deterministic replay.
+- Retuned the RD-005 compositional stress slice toward broader structural
+  diversity, then recovered part of the lost CPU throughput through shared
+  fixed-layout prepare/execution optimizations and exact higher-order execution
+  fusion.
+- Extended the fixed-layout engine to reuse prepared subtree execution metadata,
+  batch exact replay-validation retries across pending datasets, and expose
+  maintainer-only higher-order exclusive timing counters when runtime profiling
+  is enabled.
+
 ## [0.19.1] - 2026-04-02
 
 ### Added

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from dataclasses import dataclass, field
 
 import torch
+
+from dagzoo.runtime_profiling import record_runtime_profile_metric
 
 SEED32_MIN = 0
 SEED32_MAX = (2**32) - 1
@@ -45,6 +48,21 @@ class KeyedRng:
     seed: int
     path: tuple[str | int, ...] = ()
     _ambient_nonce: tuple[int, ...] = field(default=(), repr=False)
+    _child_cache: dict[tuple[str | int, ...], "KeyedRng"] = field(
+        default_factory=dict,
+        repr=False,
+        compare=False,
+    )
+    _child_seed_cache: dict[tuple[str | int, ...], int] = field(
+        default_factory=dict,
+        repr=False,
+        compare=False,
+    )
+    _generator_template_cache: dict[tuple[str, tuple[str | int, ...]], torch.Generator] = field(
+        default_factory=dict,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         """Normalize public path input to an immutable tuple."""
@@ -61,26 +79,51 @@ class KeyedRng:
     def keyed(self, *components: str | int) -> "KeyedRng":
         """Return a child namespace with the provided semantic path appended."""
 
-        return KeyedRng(
+        normalized = tuple(components)
+        if not normalized:
+            return self
+        cached = self._child_cache.get(normalized)
+        if cached is not None:
+            return cached
+        child = KeyedRng(
             seed=self.seed,
-            path=self.path + tuple(components),
+            path=self.path + normalized,
             _ambient_nonce=self._ambient_nonce,
         )
+        self._child_cache[normalized] = child
+        return child
 
     def child_seed(self, *components: str | int) -> int:
         """Return a deterministic seed for this namespace and child components."""
 
+        normalized = tuple(components)
+        cached = self._child_seed_cache.get(normalized)
+        if cached is not None:
+            return cached
         ambient_components: tuple[str | int, ...] = ()
         if self._ambient_nonce:
             ambient_components = (_AMBIENT_NONCE_MARKER, *self._ambient_nonce)
-        return derive_seed(self.seed, *ambient_components, *self.path, *components)
+        derived = derive_seed(self.seed, *ambient_components, *self.path, *normalized)
+        self._child_seed_cache[normalized] = derived
+        return derived
 
     def torch_rng(self, *components: str | int, device: str = "cpu") -> torch.Generator:
         """Return a torch Generator for this namespace and child components."""
 
-        g = torch.Generator(device=device)
-        g.manual_seed(self.child_seed(*components))
-        return g
+        normalized = tuple(components)
+        cache_key = (str(device), normalized)
+        start = time.perf_counter()
+        template = self._generator_template_cache.get(cache_key)
+        if template is None:
+            template = torch.Generator(device=device)
+            template.manual_seed(self.child_seed(*normalized))
+            self._generator_template_cache[cache_key] = template
+        generator = template.clone_state()
+        record_runtime_profile_metric(
+            "profile_rng_torch_generator_elapsed_seconds",
+            time.perf_counter() - start,
+        )
+        return generator
 
 
 def keyed_rng_from_generator(generator: torch.Generator, *components: str | int) -> KeyedRng:

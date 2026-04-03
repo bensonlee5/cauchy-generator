@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass, field
 
 import torch
@@ -10,8 +11,10 @@ import torch
 from dagzoo.core.layout_types import AggregationKind
 from dagzoo.math import row_normalize
 from dagzoo.rng import KeyedRng
+from dagzoo.runtime_profiling import record_runtime_profile_metric
 from dagzoo.sampling.correlated import sample_correlated_num_tensor
-from dagzoo.sampling.noise import NoiseSamplingSpec, sample_noise_from_spec
+from dagzoo.sampling.noise import NoiseSamplingSpec
+from dagzoo.sampling.random_weights import sample_random_weight_tensor
 
 _PAIRWISE_CENTER_BLOCK_SIZE = 32
 
@@ -139,6 +142,11 @@ class FixedLayoutBatchRng:
     device: str
     generator: torch.Generator | None = field(default=None, repr=False)
     keyed_root: KeyedRng | None = field(default=None, repr=False)
+    _child_template_cache: dict[tuple[str | int, ...], tuple[KeyedRng, torch.Generator]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         if self.keyed_root is None and self.seed is not None:
@@ -190,13 +198,34 @@ class FixedLayoutBatchRng:
         return self.generator
 
     def keyed(self, *components: str | int) -> FixedLayoutBatchRng:
+        start = time.perf_counter()
+        record_runtime_profile_metric("profile_fixed_layout_rng_keyed_count", 1.0)
         if self.keyed_root is None:
+            record_runtime_profile_metric(
+                "profile_fixed_layout_rng_keyed_elapsed_seconds",
+                time.perf_counter() - start,
+            )
             return self
-        return FixedLayoutBatchRng.from_keyed_rng(
-            self.keyed_root.keyed(*components),
+        normalized = tuple(components)
+        cached = self._child_template_cache.get(normalized)
+        if cached is None:
+            child_root = self.keyed_root.keyed(*normalized)
+            child_template = child_root.torch_rng(device=self.device)
+            cached = (child_root, child_template)
+            self._child_template_cache[normalized] = cached
+        child_root, child_template = cached
+        child = FixedLayoutBatchRng(
+            seed=None,
             batch_size=self.batch_size,
             device=self.device,
+            generator=child_template.clone_state(),
+            keyed_root=child_root,
         )
+        record_runtime_profile_metric(
+            "profile_fixed_layout_rng_keyed_elapsed_seconds",
+            time.perf_counter() - start,
+        )
+        return child
 
     def normal(self, shape: tuple[int, ...]) -> torch.Tensor:
         return torch.randn(shape, generator=self.generator, device=self.device)
@@ -275,61 +304,51 @@ def _sample_random_weights_batch(
     )
     if len(normalized_parameter_shape) > len(normalized_leading_shape):
         raise ValueError("parameter_shape cannot be longer than leading_shape.")
-
-    leading = (rng.batch_size, *normalized_leading_shape, int(dim))
     q_shape = (rng.batch_size, *normalized_parameter_shape)
-    if q is None:
-        q_low = 0.1 / math.log(dim + 1.0)
+    q_low = 0.1 / math.log(dim + 1.0)
+
+    def _sample_q(shape: tuple[int, ...]) -> torch.Tensor:
         q_rng = rng.keyed("q")
         if correlation_name is not None and q_rng.keyed_root is not None:
-            q = sample_correlated_num_tensor(
+            return sample_correlated_num_tensor(
                 q_rng.keyed_root,
                 name=f"{correlation_name}_q",
-                shape=q_shape,
+                shape=shape,
                 low=q_low,
                 high=6.0,
                 device=rng.device,
                 log_scale=True,
             )
-        else:
-            q = q_rng.log_uniform(q_shape, low=q_low, high=6.0)
-    if sigma is None:
+        return q_rng.log_uniform(shape, low=q_low, high=6.0)
+
+    def _sample_sigma(shape: tuple[int, ...]) -> torch.Tensor:
         sigma_rng = rng.keyed("sigma")
         if correlation_name is not None and sigma_rng.keyed_root is not None:
-            sigma = sample_correlated_num_tensor(
+            return sample_correlated_num_tensor(
                 sigma_rng.keyed_root,
                 name=f"{correlation_name}_sigma",
-                shape=q_shape,
+                shape=shape,
                 low=1e-4,
                 high=10.0,
                 device=rng.device,
                 log_scale=True,
             )
-        else:
-            sigma = sigma_rng.log_uniform(q_shape, low=1e-4, high=10.0)
-    base_noise = sample_noise_from_spec(
-        leading,
-        generator=rng.keyed("noise").torch_generator,
+        return sigma_rng.log_uniform(shape, low=1e-4, high=10.0)
+
+    return sample_random_weight_tensor(
+        dim=int(dim),
         device=rng.device,
+        noise_generator=rng.keyed("noise").torch_generator,
+        perm_generator=rng.keyed("perm").torch_generator,
+        leading_shape=(rng.batch_size, *normalized_leading_shape),
+        parameter_shape=q_shape,
+        q=q,
+        sigma=sigma,
+        q_sampler=_sample_q,
+        sigma_sampler=_sample_sigma,
+        sigma_multiplier=float(sigma_multiplier),
         noise_spec=noise_spec,
-        scale_multiplier=float(sigma_multiplier),
     )
-    broadcast_tail = len(normalized_leading_shape) - len(normalized_parameter_shape) + 1
-    q_view = q.view(rng.batch_size, *normalized_parameter_shape, *([1] * broadcast_tail))
-    sigma_view = sigma.view(rng.batch_size, *normalized_parameter_shape, *([1] * broadcast_tail))
-    noise = base_noise * sigma_view
-    ranks = torch.arange(1, dim + 1, dtype=torch.float32, device=rng.device).view(
-        *([1] * (len(normalized_leading_shape) + 1)),
-        dim,
-    )
-    log_w = (-q_view * torch.log(ranks)) + noise
-    log_w = torch.nan_to_num(log_w, nan=0.0, posinf=60.0, neginf=-60.0)
-    log_w = torch.clamp(log_w, min=-60.0, max=60.0)
-    log_w = log_w - torch.max(log_w, dim=-1, keepdim=True).values
-    weights = torch.clamp(torch.exp(log_w), min=1e-12)
-    weights = weights / torch.clamp(weights.sum(dim=-1, keepdim=True), min=1e-12)
-    perm = torch.argsort(rng.keyed("perm").uniform(leading, low=0.0, high=1.0), dim=-1)
-    return torch.gather(weights, -1, perm)
 
 
 __all__ = [

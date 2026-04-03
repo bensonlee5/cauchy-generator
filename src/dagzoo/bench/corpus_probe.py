@@ -138,7 +138,7 @@ def run_corpus_probe(
 ) -> CorpusProbeResult:
     """Run one benchmark-style corpus probe for diversity/comparison workflows."""
 
-    realized_config, run_seed, requested_device, resolved_device = (
+    realized_config, run_seed, requested_device, resolved_device, _carried_stress_profile = (
         realize_generation_config_for_run(
             config,
             seed=int(config.seed if probe_seed is None else probe_seed),

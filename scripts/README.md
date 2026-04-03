@@ -32,7 +32,7 @@ docs helpers, and maintenance utilities rather than convenience wrappers.
 - `scripts/cleanup_local_artifacts.py [--group runtime|docs|all] [--apply]`
   - Dry-run or remove ignored local runtime/docs outputs (`data/`, `benchmarks/results/`, and the built docs output under `site/`) without touching tracked files.
 - `scripts/evaluate_handoff_pareto.py --baseline-config <path> --out-root <dir> [--stress-profile <name> ...] [--variant-config <path> ...]`
-  - Runs matched `dagzoo generate --handoff-root` baseline/variant comparisons and writes downstream-score, diversity-shift, and throughput summaries for RD-005-style evaluation.
+  - Runs matched `dagzoo generate --handoff-root` baseline/variant comparisons and writes RD-005 maintainer summaries for structural diversity, throughput, and the anti-triviality downstream ceiling.
 - `scripts/docs/sync_hugo_content.py [--check]`
   - Sync canonical docs from `docs/` into the generated Hugo input area described in `site/README.md` (single-source docs model).
 - `scripts/docs/check_links.py [roots...]`

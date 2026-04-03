@@ -36,6 +36,7 @@ from dagzoo.core.fixed_layout.plan_types import (
     FixedLayoutNodePlan,
     GaussianMatrixPlan,
     GpFunctionPlan,
+    KernelMatrixPlan,
     LinearFunctionPlan,
     NeuralNetFunctionPlan,
     NumericConverterPlan,
@@ -442,7 +443,7 @@ def test_sample_function_plan_for_gp_can_emit_variants(
     assert plan.variant == expected_variant
 
 
-def test_fixed_layout_signature_payloads_include_gp_variant_and_activation_temperature() -> None:
+def test_fixed_layout_signature_payloads_include_kernel_hyperparameters_and_base_kinds() -> None:
     execution_plan = FixedLayoutExecutionPlan(
         node_plans=(
             FixedLayoutNodePlan(
@@ -462,7 +463,7 @@ def test_fixed_layout_signature_payloads_include_gp_variant_and_activation_tempe
                             temperature=0.75,
                         ),
                         output_activation=None,
-                        layer_matrices=(GaussianMatrixPlan(),),
+                        layer_matrices=(KernelMatrixPlan(gamma=0.5, signed=False),),
                         hidden_activations=(),
                     ),
                 ),
@@ -475,7 +476,7 @@ def test_fixed_layout_signature_payloads_include_gp_variant_and_activation_tempe
                 converter_groups=(),
                 latent=FixedLayoutLatentPlan(required_dim=2, extra_dim=0, total_dim=2),
                 source=RandomPointsNodeSource(
-                    base_kind="normal",
+                    base_kind="uniform",
                     function=GpFunctionPlan(branch_kind="projected", variant="multiscale"),
                 ),
             ),
@@ -485,7 +486,64 @@ def test_fixed_layout_signature_payloads_include_gp_variant_and_activation_tempe
     payloads = fixed_layout_signature_payloads(execution_plan)
 
     assert payloads[0]["function"]["input_activation"]["temperature"] == pytest.approx(0.75)
+    assert payloads[0]["function"]["layer_matrices"][0]["gamma"] == pytest.approx(0.5)
+    assert payloads[0]["function"]["layer_matrices"][0]["signed"] is False
     assert payloads[1]["function"]["variant"] == "multiscale"
+    assert payloads[1]["base_kind"] == "uniform"
+
+
+def test_compositional_stress_profile_uses_correlated_matrix_and_root_sampling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    compositional_profile = "anti_memorization_piecewise_classification_compositional_slice_v1"
+    observed_names: list[str] = []
+
+    def fake_sample_correlated_choice(*_args, **kwargs):
+        name = str(kwargs["name"])
+        observed_names.append(name)
+        if name == "matrix_family":
+            return "kernel"
+        if name == "kernel_signed":
+            return False
+        if name == "root_base_kind":
+            return "unit_ball"
+        raise AssertionError(f"Unexpected correlated choice name: {name}")
+
+    monkeypatch.setattr(
+        execution_semantics_mod,
+        "sample_correlated_choice",
+        fake_sample_correlated_choice,
+    )
+    monkeypatch.setattr(
+        execution_semantics_mod,
+        "sample_correlated_num",
+        lambda *_args, **_kwargs: 0.25,
+    )
+    monkeypatch.setattr(
+        execution_semantics_mod,
+        "sample_function_plan",
+        lambda *_args, **_kwargs: LinearFunctionPlan(matrix=GaussianMatrixPlan()),
+    )
+
+    matrix_plan = execution_semantics_mod.sample_matrix_plan(
+        keyed_rng=KeyedRng(901),
+        device="cpu",
+        stress_profile_name=compositional_profile,
+    )
+    root_source = execution_semantics_mod.sample_root_source_plan(
+        keyed_rng=KeyedRng(902),
+        out_dim=4,
+        mechanism_logit_tilt=0.0,
+        function_family_mix=None,
+        device="cpu",
+        stress_profile_name=compositional_profile,
+    )
+
+    assert isinstance(matrix_plan, KernelMatrixPlan)
+    assert matrix_plan.gamma == pytest.approx(0.25)
+    assert matrix_plan.signed is False
+    assert root_source.base_kind == "unit_ball"
+    assert observed_names == ["matrix_family", "kernel_signed", "root_base_kind"]
 
 
 def test_keyed_product_rhs_sampling_is_independent_of_lhs_draw_count(
@@ -500,8 +558,10 @@ def test_keyed_product_rhs_sampling_is_independent_of_lhs_draw_count(
             *,
             keyed_rng: KeyedRng | None = None,
             device: str | None = None,
+            stress_profile_name: str | None = None,
         ) -> GaussianMatrixPlan:
             nonlocal matrix_call_index
+            del stress_profile_name
             rng, _ = execution_semantics_mod._resolve_sampling_generator(
                 generator=generator,
                 keyed_rng=keyed_rng,
@@ -617,8 +677,10 @@ def test_keyed_sample_function_plan_preserves_product_subroots(
             *,
             keyed_rng: KeyedRng | None = None,
             device: str | None = None,
+            stress_profile_name: str | None = None,
         ) -> GaussianMatrixPlan:
             nonlocal matrix_call_index
+            del stress_profile_name
             rng, _ = execution_semantics_mod._resolve_sampling_generator(
                 generator=generator,
                 keyed_rng=keyed_rng,
@@ -686,9 +748,10 @@ def test_keyed_multi_parent_sampling_is_independent_across_parent_plans(
             mechanism_logit_tilt: float,
             function_family_mix: dict[MechanismFamily, float] | None,
             device: str | None = None,
+            stress_profile_name: str | None = None,
         ) -> LinearFunctionPlan:
             nonlocal parent_call_index
-            del input_dim
+            del input_dim, stress_profile_name
             rng, _ = execution_semantics_mod._resolve_sampling_generator(
                 generator=generator,
                 keyed_rng=keyed_rng,
@@ -775,8 +838,15 @@ def test_keyed_node_plan_sampling_keeps_later_converters_and_source_stable(
             function_family_mix: dict[MechanismFamily, float] | None,
             method_override: str | None = None,
             device: str | None = None,
+            stress_profile_name: str | None = None,
         ) -> FixedLayoutConverterPlan:
-            del spec, mechanism_logit_tilt, function_family_mix, method_override
+            del (
+                spec,
+                mechanism_logit_tilt,
+                function_family_mix,
+                method_override,
+                stress_profile_name,
+            )
             nonlocal converter_call_index
             rng, _ = execution_semantics_mod._resolve_sampling_generator(
                 generator=generator,
@@ -815,8 +885,9 @@ def test_keyed_node_plan_sampling_keeps_later_converters_and_source_stable(
             mechanism_logit_tilt: float,
             function_family_mix: dict[MechanismFamily, float] | None,
             device: str | None = None,
+            stress_profile_name: str | None = None,
         ) -> RandomPointsNodeSource:
-            del out_dim, mechanism_logit_tilt, function_family_mix
+            del out_dim, mechanism_logit_tilt, function_family_mix, stress_profile_name
             rng, _ = execution_semantics_mod._resolve_sampling_generator(
                 generator=generator,
                 keyed_rng=keyed_rng,

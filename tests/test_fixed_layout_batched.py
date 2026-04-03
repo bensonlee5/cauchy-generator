@@ -7,15 +7,24 @@ import pytest
 import torch
 from conftest import load_repo_config
 
+import dagzoo.core.fixed_layout.batched as fixed_layout_batched
 from dagzoo.core.execution_semantics import typed_converter_specs
+from dagzoo.core.fixed_layout.batch_functions import (
+    _apply_leaf_pair_batch as _real_apply_leaf_pair_batch,
+)
 from dagzoo.core.fixed_layout.batched import (
     FixedLayoutBatchRng,
     _apply_activation_plan,
     _apply_node_plan_batch,
+    _compile_function_execution_context,
+    _generate_fixed_layout_graph_batch_prepared,
     _generate_fixed_layout_raw_batch,
+    _generate_fixed_layout_validation_label_batch,
     _lp_distances_to_centers,
     _nearest_lp_center_indices,
+    _prepare_fixed_layout_execution_context,
     _sample_random_matrix_from_plan_batch,
+    apply_compiled_function_plan_batch,
     apply_function_plan_batch,
     build_fixed_layout_execution_plan,
     generate_fixed_layout_graph_batch,
@@ -25,6 +34,7 @@ from dagzoo.core.fixed_layout.plan_types import (
     ActivationMatrixPlan,
     CategoricalConverterGroup,
     CategoricalConverterPlan,
+    ConcatNodeSource,
     FixedActivationPlan,
     FixedLayoutExecutionPlan,
     FixedLayoutLatentPlan,
@@ -37,6 +47,8 @@ from dagzoo.core.fixed_layout.plan_types import (
     NumericConverterPlan,
     ParametricActivationPlan,
     PiecewiseFunctionPlan,
+    ProductFunctionPlan,
+    QuadraticFunctionPlan,
     RandomPointsNodeSource,
     SingularValuesMatrixPlan,
     WeightsMatrixPlan,
@@ -213,6 +225,110 @@ def test_apply_function_plan_batch_supports_gp_variants_deterministically(
     torch.testing.assert_close(out_a, out_b)
 
 
+def test_apply_compiled_function_plan_batch_matches_recursive_higher_order_execution() -> None:
+    x = torch.randn(2, 12, 4, generator=torch.Generator(device="cpu").manual_seed(31))
+    plan = PiecewiseFunctionPlan(
+        gate_matrix=GaussianMatrixPlan(),
+        gate_bias=0.15,
+        gate_temperature=1.2,
+        lhs=ProductFunctionPlan(
+            lhs=LinearFunctionPlan(matrix=GaussianMatrixPlan()),
+            rhs=QuadraticFunctionPlan(matrix=GaussianMatrixPlan()),
+        ),
+        rhs=ProductFunctionPlan(
+            lhs=GpFunctionPlan(branch_kind="projected", variant="periodic"),
+            rhs=LinearFunctionPlan(matrix=SingularValuesMatrixPlan()),
+        ),
+    )
+    compiled = _compile_function_execution_context(plan, root_rng_path=("function",))
+
+    out_recursive = apply_function_plan_batch(
+        x,
+        FixedLayoutBatchRng(seed=43, batch_size=2, device="cpu").keyed("function"),
+        plan,
+        out_dim=3,
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+    out_compiled = apply_compiled_function_plan_batch(
+        x,
+        FixedLayoutBatchRng(seed=43, batch_size=2, device="cpu"),
+        compiled,
+        out_dim=3,
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+
+    torch.testing.assert_close(out_recursive, out_compiled)
+
+
+@pytest.mark.parametrize(
+    ("plan", "out_dim"),
+    [
+        (
+            ProductFunctionPlan(
+                lhs=LinearFunctionPlan(matrix=GaussianMatrixPlan()),
+                rhs=LinearFunctionPlan(matrix=SingularValuesMatrixPlan()),
+            ),
+            3,
+        ),
+        (
+            PiecewiseFunctionPlan(
+                gate_matrix=GaussianMatrixPlan(),
+                gate_bias=-0.2,
+                gate_temperature=1.4,
+                lhs=GpFunctionPlan(branch_kind="projected", variant="periodic"),
+                rhs=GpFunctionPlan(branch_kind="projected", variant="periodic"),
+            ),
+            2,
+        ),
+    ],
+)
+def test_apply_compiled_function_plan_batch_uses_fused_leaf_pairs_without_output_drift(
+    monkeypatch: pytest.MonkeyPatch,
+    plan,
+    out_dim: int,
+) -> None:
+    x = torch.randn(2, 10, 4, generator=torch.Generator(device="cpu").manual_seed(37))
+    compiled = _compile_function_execution_context(plan, root_rng_path=("function",))
+    fused_family_calls: list[tuple[str, str]] = []
+
+    def _tracking_apply_leaf_pair_batch(*args, **kwargs):
+        fused_family_calls.append(
+            (
+                type(kwargs["plans"][0]).__name__,
+                type(kwargs["plans"][1]).__name__,
+            )
+        )
+        return _real_apply_leaf_pair_batch(*args, **kwargs)
+
+    monkeypatch.setattr(
+        fixed_layout_batched,
+        "_apply_leaf_pair_batch",
+        _tracking_apply_leaf_pair_batch,
+    )
+
+    out_recursive = apply_function_plan_batch(
+        x,
+        FixedLayoutBatchRng(seed=41, batch_size=2, device="cpu").keyed("function"),
+        plan,
+        out_dim=out_dim,
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+    out_compiled = apply_compiled_function_plan_batch(
+        x,
+        FixedLayoutBatchRng(seed=41, batch_size=2, device="cpu"),
+        compiled,
+        out_dim=out_dim,
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+
+    assert fused_family_calls
+    torch.testing.assert_close(out_recursive, out_compiled)
+
+
 @pytest.mark.parametrize(
     "plan",
     [
@@ -258,6 +374,46 @@ def test_sample_random_matrix_from_plan_batch_supports_parametric_activation_wit
     )
     assert matrices.shape == (2, 5, 4, 3)
     assert torch.all(torch.isfinite(matrices))
+
+
+def test_sample_random_matrix_from_plan_batch_kernel_plan_uses_gamma_and_signed() -> None:
+    unsigned_a = _sample_random_matrix_from_plan_batch(
+        KernelMatrixPlan(gamma=0.25, signed=False),
+        out_dim=4,
+        in_dim=3,
+        rng=FixedLayoutBatchRng(seed=23, batch_size=2, device="cpu"),
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+    unsigned_b = _sample_random_matrix_from_plan_batch(
+        KernelMatrixPlan(gamma=0.25, signed=False),
+        out_dim=4,
+        in_dim=3,
+        rng=FixedLayoutBatchRng(seed=23, batch_size=2, device="cpu"),
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+    higher_gamma = _sample_random_matrix_from_plan_batch(
+        KernelMatrixPlan(gamma=4.0, signed=False),
+        out_dim=4,
+        in_dim=3,
+        rng=FixedLayoutBatchRng(seed=23, batch_size=2, device="cpu"),
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+    signed = _sample_random_matrix_from_plan_batch(
+        KernelMatrixPlan(gamma=0.25, signed=True),
+        out_dim=4,
+        in_dim=3,
+        rng=FixedLayoutBatchRng(seed=23, batch_size=2, device="cpu"),
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+
+    torch.testing.assert_close(unsigned_a, unsigned_b)
+    assert torch.all(torch.isfinite(unsigned_a))
+    assert not torch.allclose(unsigned_a, higher_gamma)
+    assert not torch.allclose(unsigned_a, signed)
 
 
 def test_sample_random_matrix_from_plan_batch_kernel_single_column_rows_are_unit_normalized() -> (
@@ -329,6 +485,17 @@ def test_fixed_layout_batch_rng_keyed_is_stable_and_flat_equivalent() -> None:
     )
 
 
+def test_fixed_layout_batch_rng_keyed_reuses_templates_without_advancing_repeat_calls() -> None:
+    root = FixedLayoutBatchRng(seed=23, batch_size=2, device="cpu")
+    first = root.keyed("parent", 1)
+    _ = first.uniform((2, 4), low=0.0, high=1.0)
+
+    draws_a = root.keyed("parent", 1).uniform((2, 4), low=0.0, high=1.0)
+    draws_b = root.keyed("parent", 1).uniform((2, 4), low=0.0, high=1.0)
+
+    torch.testing.assert_close(draws_a, draws_b)
+
+
 def test_fixed_layout_batch_rng_seed_matches_manual_seed_root_stream() -> None:
     seeded = FixedLayoutBatchRng(seed=29, batch_size=2, device="cpu")
     manual_generator = torch.Generator(device="cpu")
@@ -388,8 +555,15 @@ def test_build_fixed_layout_execution_plan_uses_keyed_node_roots(
         device: str,
         mechanism_logit_tilt: float,
         function_family_mix: dict[str, float] | None,
+        stress_profile_name: str | None = None,
     ) -> FixedLayoutNodePlan:
-        del parent_output_dims, device, mechanism_logit_tilt, function_family_mix
+        del (
+            parent_output_dims,
+            device,
+            mechanism_logit_tilt,
+            function_family_mix,
+            stress_profile_name,
+        )
         assert generator is None
         assert keyed_rng is not None
         observed_plan_roots.append((node_index, keyed_rng.child_seed("probe")))
@@ -1070,3 +1244,200 @@ def test_generate_fixed_layout_label_batch_matches_graph_batch_targets() -> None
 
     assert x_batch.shape[0] == label_batch.shape[0] == len(dataset_seeds)
     torch.testing.assert_close(label_batch, y_batch)
+
+
+def test_generate_fixed_layout_graph_batch_prepared_matches_public_graph_batch() -> None:
+    cfg = load_repo_config()
+    cfg.dataset.task = "regression"
+    cfg.filter.enabled = False
+    cfg.dataset.n_train = 12
+    cfg.dataset.n_test = 4
+    cfg.dataset.n_features_min = 5
+    cfg.dataset.n_features_max = 5
+    cfg.graph.n_nodes_min = 3
+    cfg.graph.n_nodes_max = 5
+    plan = _sample_fixed_layout(cfg, seed=211, device="cpu")
+    assert plan.prepared_execution_context is not None
+    dataset_seeds = [1001, 1002]
+
+    expected_x, expected_y, _ = generate_fixed_layout_graph_batch(
+        cfg,
+        plan.layout,
+        execution_plan=plan.execution_plan,
+        dataset_seeds=dataset_seeds,
+        device="cpu",
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+    observed_x, observed_y, _ = _generate_fixed_layout_graph_batch_prepared(
+        cfg,
+        plan.layout,
+        execution_plan=plan.execution_plan,
+        prepared_execution_context=plan.prepared_execution_context,
+        dataset_seeds=dataset_seeds,
+        device="cpu",
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+
+    torch.testing.assert_close(observed_x, expected_x)
+    torch.testing.assert_close(observed_y, expected_y)
+
+
+def test_generate_fixed_layout_validation_label_batch_matches_public_label_batch() -> None:
+    cfg = load_repo_config()
+    cfg.dataset.task = "classification"
+    cfg.filter.enabled = False
+    cfg.dataset.n_train = 12
+    cfg.dataset.n_test = 4
+    cfg.dataset.n_features_min = 5
+    cfg.dataset.n_features_max = 5
+    cfg.dataset.n_classes_min = 4
+    cfg.dataset.n_classes_max = 4
+    cfg.graph.n_nodes_min = 3
+    cfg.graph.n_nodes_max = 6
+    plan = _sample_fixed_layout(cfg, seed=311, device="cpu")
+    assert plan.prepared_execution_context is not None
+    dataset_seeds = [1101, 1102, 1103]
+
+    expected_y, _ = generate_fixed_layout_label_batch(
+        cfg,
+        plan.layout,
+        execution_plan=plan.execution_plan,
+        dataset_seeds=dataset_seeds,
+        device="cpu",
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+    observed_y, _ = _generate_fixed_layout_validation_label_batch(
+        cfg,
+        plan.layout,
+        execution_plan=plan.execution_plan,
+        prepared_execution_context=plan.prepared_execution_context,
+        dataset_seeds=dataset_seeds,
+        device="cpu",
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+
+    torch.testing.assert_close(observed_y, expected_y)
+
+
+def test_generate_fixed_layout_validation_label_batch_skips_non_ancestor_nodes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = load_repo_config()
+    cfg.dataset.task = "classification"
+    cfg.dataset.n_train = 4
+    cfg.dataset.n_test = 2
+    layout = LayoutPlan(
+        n_features=1,
+        n_cat=0,
+        cat_idx=[],
+        cardinalities=[],
+        card_by_feature={},
+        n_classes=3,
+        feature_types=["num"],
+        graph_nodes=3,
+        graph_edges=1,
+        graph_depth_nodes=2,
+        graph_edge_density=1.0 / 3.0,
+        adjacency=torch.tensor(
+            [
+                [False, False, True],
+                [False, False, False],
+                [False, False, False],
+            ],
+            dtype=torch.bool,
+        ),
+        feature_node_assignment=[0],
+        target_to_node=2,
+    )
+    feature_specs = typed_converter_specs([ConverterSpec(key="feature_0", kind="num", dim=1)])
+    target_specs = typed_converter_specs([ConverterSpec(key="target", kind="target_cls", dim=1)])
+    root_plan = FixedLayoutNodePlan(
+        node_index=0,
+        parent_indices=(),
+        converter_specs=feature_specs,
+        converter_plans=(NumericConverterPlan(kind="num", warp_enabled=False),),
+        converter_groups=fixed_layout_converter_groups(
+            feature_specs,
+            (NumericConverterPlan(kind="num", warp_enabled=False),),
+        ),
+        latent=FixedLayoutLatentPlan(required_dim=1, extra_dim=0, total_dim=1),
+        source=RandomPointsNodeSource(
+            base_kind="normal",
+            function=LinearFunctionPlan(matrix=GaussianMatrixPlan()),
+        ),
+    )
+    skipped_plan = FixedLayoutNodePlan(
+        node_index=1,
+        parent_indices=(),
+        converter_specs=(),
+        converter_plans=(),
+        converter_groups=(),
+        latent=FixedLayoutLatentPlan(required_dim=0, extra_dim=1, total_dim=1),
+        source=RandomPointsNodeSource(
+            base_kind="normal",
+            function=LinearFunctionPlan(matrix=GaussianMatrixPlan()),
+        ),
+    )
+    target_plan = FixedLayoutNodePlan(
+        node_index=2,
+        parent_indices=(0,),
+        converter_specs=target_specs,
+        converter_plans=(NumericConverterPlan(kind="target_reg", warp_enabled=False),),
+        converter_groups=fixed_layout_converter_groups(
+            target_specs,
+            (NumericConverterPlan(kind="target_reg", warp_enabled=False),),
+        ),
+        latent=FixedLayoutLatentPlan(required_dim=1, extra_dim=0, total_dim=1),
+        source=ConcatNodeSource(
+            function=LinearFunctionPlan(matrix=GaussianMatrixPlan()),
+        ),
+    )
+    execution_plan = FixedLayoutExecutionPlan(node_plans=(root_plan, skipped_plan, target_plan))
+    prepared = _prepare_fixed_layout_execution_context(layout, execution_plan)
+    observed_node_indices: list[int] = []
+
+    def _stub_apply_node_plan_batch_prepared(
+        _config,
+        node_context,
+        _parent_data,
+        *,
+        n_rows: int,
+        batch_node_context,
+        device: str,
+        noise_sigma_multiplier: float,
+        noise_spec,
+        runtime_metrics_out=None,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        _ = (device, noise_sigma_multiplier, noise_spec, runtime_metrics_out)
+        observed_node_indices.append(int(node_context.node_plan.node_index))
+        node_rng = batch_node_context.node_rng
+        latent = torch.full(
+            (node_rng.batch_size, n_rows, 1), float(node_context.node_plan.node_index)
+        )
+        extracted: dict[str, torch.Tensor] = {}
+        if int(node_context.node_plan.node_index) == 2:
+            extracted["target"] = torch.ones((node_rng.batch_size, n_rows), dtype=torch.float32)
+        return latent, extracted
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.batched._apply_node_plan_batch_prepared",
+        _stub_apply_node_plan_batch_prepared,
+    )
+
+    y_batch, _ = _generate_fixed_layout_validation_label_batch(
+        cfg,
+        layout,
+        execution_plan=execution_plan,
+        prepared_execution_context=prepared,
+        dataset_seeds=[1201, 1202],
+        device="cpu",
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+
+    assert observed_node_indices == [0, 2]
+    assert y_batch.shape == (2, 6)

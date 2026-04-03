@@ -60,7 +60,7 @@ from dagzoo.core.validation import (
 from dagzoo.functions.activations import fixed_activation_names
 from dagzoo.math import log_uniform as _log_uniform
 from dagzoo.rng import KeyedRng
-from dagzoo.sampling.correlated import sample_correlated_choice
+from dagzoo.sampling.correlated import sample_correlated_choice, sample_correlated_num
 
 _generator_device = _sampling_common._generator_device
 _rand_scalar = _sampling_common._rand_scalar
@@ -121,6 +121,11 @@ _JOINT_VARIANTS: tuple[tuple[FixedLayoutConverterMethod, FixedLayoutConverterVar
     ("softmax", "index_repeat"),
     ("softmax", "softmax_points"),
 )
+_COMPOSITIONAL_STRESS_PROFILE = "anti_memorization_piecewise_classification_compositional_slice_v1"
+
+
+def _matrix_kernel_correlation_enabled(stress_profile_name: str | None) -> bool:
+    return str(stress_profile_name) == _COMPOSITIONAL_STRESS_PROFILE
 
 
 class ConverterSpecLike(Protocol):
@@ -386,6 +391,7 @@ def sample_matrix_plan(
     *,
     keyed_rng: KeyedRng | None = None,
     device: str | None = None,
+    stress_profile_name: str | None = None,
 ) -> FixedLayoutMatrixPlan:
     """Sample one matrix-family plan."""
 
@@ -395,8 +401,20 @@ def sample_matrix_plan(
         device=device,
         namespace="sample_matrix_plan",
     )
-    generator = keyed_rng.keyed("kind").torch_rng(device=resolved_device)
-    kind = _MATRIX_KIND_CHOICES[int(_randint_scalar(0, len(_MATRIX_KIND_CHOICES), generator))]
+    correlated = _matrix_kernel_correlation_enabled(stress_profile_name)
+    if correlated:
+        kind = cast(
+            str,
+            sample_correlated_choice(
+                keyed_rng.keyed("kind"),
+                name="matrix_family",
+                values=_MATRIX_KIND_CHOICES,
+                device=resolved_device,
+            ),
+        )
+    else:
+        generator = keyed_rng.keyed("kind").torch_rng(device=resolved_device)
+        kind = _MATRIX_KIND_CHOICES[int(_randint_scalar(0, len(_MATRIX_KIND_CHOICES), generator))]
     if kind == "gaussian":
         return GaussianMatrixPlan()
     if kind == "weights":
@@ -404,11 +422,55 @@ def sample_matrix_plan(
     if kind == "singular_values":
         return SingularValuesMatrixPlan()
     if kind == "kernel":
-        return KernelMatrixPlan()
-    base_generator = keyed_rng.keyed("base_kind").torch_rng(device=resolved_device)
-    base_kind = _MATRIX_BASE_KIND_CHOICES[
-        int(_randint_scalar(0, len(_MATRIX_BASE_KIND_CHOICES), base_generator))
-    ]
+        gamma = (
+            float(
+                sample_correlated_num(
+                    keyed_rng.keyed("gamma"),
+                    name="kernel_gamma",
+                    low=0.1,
+                    high=10.0,
+                    device=resolved_device,
+                    log_scale=True,
+                )
+            )
+            if correlated
+            else float(
+                _log_uniform(
+                    keyed_rng.keyed("gamma").torch_rng(device=resolved_device),
+                    0.1,
+                    10.0,
+                    resolved_device,
+                )
+            )
+        )
+        signed = (
+            bool(
+                sample_correlated_choice(
+                    keyed_rng.keyed("signed"),
+                    name="kernel_signed",
+                    values=(False, True),
+                    device=resolved_device,
+                )
+            )
+            if correlated
+            else bool(_sample_bool(keyed_rng.keyed("signed").torch_rng(device=resolved_device)))
+        )
+        return KernelMatrixPlan(gamma=gamma, signed=signed)
+    if correlated:
+        base_kind = cast(
+            FixedLayoutMatrixBaseKind,
+            sample_correlated_choice(
+                keyed_rng.keyed("base_kind"),
+                name="activation_matrix_base_kind",
+                values=_MATRIX_BASE_KIND_CHOICES,
+                device=resolved_device,
+            ),
+        )
+    else:
+        base_generator = keyed_rng.keyed("base_kind").torch_rng(device=resolved_device)
+        base_kind = _MATRIX_BASE_KIND_CHOICES[
+            int(_randint_scalar(0, len(_MATRIX_BASE_KIND_CHOICES), base_generator))
+        ]
     return ActivationMatrixPlan(
         base_kind=base_kind,
         activation=sample_activation_plan(
@@ -428,6 +490,7 @@ def sample_function_plan_for_family(
     mechanism_logit_tilt: float,
     function_family_mix: dict[MechanismFamily, float] | None,
     device: str | None = None,
+    stress_profile_name: str | None = None,
 ) -> FixedLayoutFunctionPlan:
     """Sample one typed function plan for an explicit family."""
 
@@ -449,6 +512,7 @@ def sample_function_plan_for_family(
                 mechanism_logit_tilt=mechanism_logit_tilt,
                 function_family_mix=function_family_mix,
                 device=resolved_device,
+                stress_profile_name=stress_profile_name,
             )
             validate_function_plan_nondegeneracy(plan)
             return plan
@@ -470,6 +534,7 @@ def _sample_function_plan_for_family_once(
     mechanism_logit_tilt: float,
     function_family_mix: dict[MechanismFamily, float] | None,
     device: str | None = None,
+    stress_profile_name: str | None = None,
 ) -> FixedLayoutFunctionPlan:
     """Sample one typed function plan for an explicit family without retries."""
 
@@ -484,6 +549,7 @@ def _sample_function_plan_for_family_once(
             matrix=sample_matrix_plan(
                 keyed_rng=keyed_rng.keyed("matrix"),
                 device=resolved_device,
+                stress_profile_name=stress_profile_name,
             )
         )
     if family == "quadratic":
@@ -491,6 +557,7 @@ def _sample_function_plan_for_family_once(
             matrix=sample_matrix_plan(
                 keyed_rng=keyed_rng.keyed("matrix"),
                 device=resolved_device,
+                stress_profile_name=stress_profile_name,
             )
         )
     if family == "nn":
@@ -541,6 +608,7 @@ def _sample_function_plan_for_family_once(
                 sample_matrix_plan(
                     keyed_rng=keyed_rng.keyed("layer_matrix", layer_index),
                     device=resolved_device,
+                    stress_profile_name=stress_profile_name,
                 )
                 for layer_index in range(layer_count)
             ),
@@ -596,6 +664,7 @@ def _sample_function_plan_for_family_once(
             linear_matrix=sample_matrix_plan(
                 keyed_rng=keyed_rng.keyed("linear_matrix"),
                 device=resolved_device,
+                stress_profile_name=stress_profile_name,
             ),
         )
     if family == "gp":
@@ -629,6 +698,7 @@ def _sample_function_plan_for_family_once(
             linear_matrix=sample_matrix_plan(
                 keyed_rng=keyed_rng.keyed("linear_matrix"),
                 device=resolved_device,
+                stress_profile_name=stress_profile_name,
             ),
         )
     if family == "product":
@@ -655,6 +725,7 @@ def _sample_function_plan_for_family_once(
                 mechanism_logit_tilt=mechanism_logit_tilt,
                 function_family_mix=function_family_mix,
                 device=resolved_device,
+                stress_profile_name=stress_profile_name,
             ),
             rhs=sample_function_plan_for_family(
                 keyed_rng=rhs_root.keyed("plan"),
@@ -664,6 +735,7 @@ def _sample_function_plan_for_family_once(
                 mechanism_logit_tilt=mechanism_logit_tilt,
                 function_family_mix=function_family_mix,
                 device=resolved_device,
+                stress_profile_name=stress_profile_name,
             ),
         )
     if family == "piecewise":
@@ -696,6 +768,7 @@ def _sample_function_plan_for_family_once(
             gate_matrix=sample_matrix_plan(
                 keyed_rng=keyed_rng.keyed("gate_matrix"),
                 device=resolved_device,
+                stress_profile_name=stress_profile_name,
             ),
             gate_bias=gate_bias,
             gate_temperature=gate_temperature,
@@ -707,6 +780,7 @@ def _sample_function_plan_for_family_once(
                 mechanism_logit_tilt=mechanism_logit_tilt,
                 function_family_mix=function_family_mix,
                 device=resolved_device,
+                stress_profile_name=stress_profile_name,
             ),
             rhs=sample_function_plan_for_family(
                 keyed_rng=rhs_root.keyed("plan"),
@@ -716,6 +790,7 @@ def _sample_function_plan_for_family_once(
                 mechanism_logit_tilt=mechanism_logit_tilt,
                 function_family_mix=function_family_mix,
                 device=resolved_device,
+                stress_profile_name=stress_profile_name,
             ),
         )
     raise ValueError(f"Unsupported mechanism family in fixed-layout plan sampling: {family!r}")
@@ -730,6 +805,7 @@ def sample_function_plan(
     mechanism_logit_tilt: float,
     function_family_mix: dict[MechanismFamily, float] | None,
     device: str | None = None,
+    stress_profile_name: str | None = None,
 ) -> FixedLayoutFunctionPlan:
     """Sample one typed function plan using the shared family sampler."""
 
@@ -753,6 +829,7 @@ def sample_function_plan(
         mechanism_logit_tilt=mechanism_logit_tilt,
         function_family_mix=function_family_mix,
         device=resolved_device,
+        stress_profile_name=stress_profile_name,
     )
 
 
@@ -765,6 +842,7 @@ def sample_converter_plan(
     function_family_mix: dict[MechanismFamily, float] | None,
     method_override: str | None = None,
     device: str | None = None,
+    stress_profile_name: str | None = None,
 ) -> FixedLayoutConverterPlan:
     """Sample one typed converter plan for a converter spec."""
 
@@ -807,6 +885,7 @@ def sample_converter_plan(
                 mechanism_logit_tilt=mechanism_logit_tilt,
                 function_family_mix=function_family_mix,
                 device=resolved_device,
+                stress_profile_name=stress_profile_name,
             ),
         )
         validate_converter_plan_nondegeneracy(plan)
@@ -885,6 +964,7 @@ def sample_root_source_plan(
     mechanism_logit_tilt: float,
     function_family_mix: dict[MechanismFamily, float] | None,
     device: str | None = None,
+    stress_profile_name: str | None = None,
 ) -> RandomPointsNodeSource:
     """Sample one root-source plan."""
 
@@ -894,10 +974,21 @@ def sample_root_source_plan(
         device=device,
         namespace="sample_root_source_plan",
     )
-    base_generator = keyed_rng.keyed("base_kind").torch_rng(device=resolved_device)
-    base_kind = _ROOT_BASE_KIND_CHOICES[
-        int(_randint_scalar(0, len(_ROOT_BASE_KIND_CHOICES), base_generator))
-    ]
+    if _matrix_kernel_correlation_enabled(stress_profile_name):
+        base_kind = cast(
+            FixedLayoutRootBaseKind,
+            sample_correlated_choice(
+                keyed_rng.keyed("base_kind"),
+                name="root_base_kind",
+                values=_ROOT_BASE_KIND_CHOICES,
+                device=resolved_device,
+            ),
+        )
+    else:
+        base_generator = keyed_rng.keyed("base_kind").torch_rng(device=resolved_device)
+        base_kind = _ROOT_BASE_KIND_CHOICES[
+            int(_randint_scalar(0, len(_ROOT_BASE_KIND_CHOICES), base_generator))
+        ]
     return RandomPointsNodeSource(
         base_kind=base_kind,
         function=sample_function_plan(
@@ -907,6 +998,7 @@ def sample_root_source_plan(
             mechanism_logit_tilt=mechanism_logit_tilt,
             function_family_mix=function_family_mix,
             device=resolved_device,
+            stress_profile_name=stress_profile_name,
         ),
     )
 
@@ -922,6 +1014,7 @@ def sample_multi_source_plan(
     function_family_mix: dict[MechanismFamily, float] | None,
     aggregation_kind: AggregationKind | None = None,
     device: str | None = None,
+    stress_profile_name: str | None = None,
 ) -> ConcatNodeSource | StackedNodeSource:
     """Sample one shared multi-parent source plan."""
 
@@ -957,6 +1050,7 @@ def sample_multi_source_plan(
                 mechanism_logit_tilt=mechanism_logit_tilt,
                 function_family_mix=function_family_mix,
                 device=resolved_device,
+                stress_profile_name=stress_profile_name,
             )
         )
     resolved_aggregation_kind = aggregation_kind
@@ -977,6 +1071,7 @@ def sample_multi_source_plan(
                 mechanism_logit_tilt=mechanism_logit_tilt,
                 function_family_mix=function_family_mix,
                 device=resolved_device,
+                stress_profile_name=stress_profile_name,
             )
             for parent_index in range(parent_count)
         ),
@@ -994,6 +1089,7 @@ def sample_node_plan(
     device: str,
     mechanism_logit_tilt: float,
     function_family_mix: dict[MechanismFamily, float] | None,
+    stress_profile_name: str | None = None,
 ) -> FixedLayoutNodePlan:
     """Sample one typed node execution plan."""
 
@@ -1016,6 +1112,7 @@ def sample_node_plan(
             mechanism_logit_tilt=mechanism_logit_tilt,
             function_family_mix=function_family_mix,
             device=resolved_device,
+            stress_profile_name=stress_profile_name,
         )
         for spec_index, spec in enumerate(typed_specs)
     )
@@ -1038,6 +1135,7 @@ def sample_node_plan(
             mechanism_logit_tilt=mechanism_logit_tilt,
             function_family_mix=function_family_mix,
             device=resolved_device,
+            stress_profile_name=stress_profile_name,
         )
     else:
         source = sample_root_source_plan(
@@ -1046,6 +1144,7 @@ def sample_node_plan(
             mechanism_logit_tilt=mechanism_logit_tilt,
             function_family_mix=function_family_mix,
             device=resolved_device,
+            stress_profile_name=stress_profile_name,
         )
     node_plan = FixedLayoutNodePlan(
         node_index=int(node_index),

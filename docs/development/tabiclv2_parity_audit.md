@@ -18,10 +18,10 @@ changes are justified.
 | Mechanism-family draws | `partial` | Family selection now uses correlated label weights layered on top of the configured family mix. |
 | Multi-parent aggregation choice | `partial` | `concat` vs `stack` and stack aggregation kind are now correlated, but the surrounding parent-arity policy still differs. |
 | Converter variants | `partial` | Joint categorical converter variants now use correlated choice, but the converter surface is broader than TabICLv2. |
-| GP variants | `partial` | GP branch/variant selection now uses correlated choice, but kernel hyperparameters are still sampled locally. |
-| Random-weight decay parameters (`q`, `sigma`) | `partial` | Fixed-layout random-weight draws now reuse correlated decay distributions across contexts, but standalone/random-matrix helpers are not fully aligned yet. |
-| Kernel-family hyperparameters | `missing` | Kernel gamma/sign and related matrix-family choices are still local draws rather than shared correlated decisions. |
-| Global relationship-policy reuse across all plan families | `missing` | Matrix-kind, root-base-kind, and other higher-level family switches are still mostly independent. |
+| GP variants | `partial` | GP branch/variant selection now uses correlated choice; the remaining gap is broader structural policy rather than GP-local variant sampling. |
+| Random-weight decay parameters (`q`, `sigma`) | `matched` | `sampling.random_weights`, `math.random_matrices`, and fixed-layout batch execution now share one canonical decay implementation. |
+| Kernel-family hyperparameters | `partial` | Fixed-layout kernel plans now carry plan-time `gamma`/`signed`, and the compositional stress slice correlates them, but the broader matrix surface still differs from TabICLv2. |
+| Global relationship-policy reuse across all plan families | `partial` | Matrix-family, activation-base-kind, and root-base-kind reuse now exist in the compositional slice, while parent-arity/source-shape policy remains deferred to `#293`. |
 
 ## RD-005 Read
 
@@ -29,7 +29,9 @@ changes are justified.
 - `dagzoo` is now materially closer on the requested relationship surfaces:
   cardinalities, mechanism-family draws, aggregation choice, converter/GP
   variants, and random-weight decay parameters.
-- Remaining `missing` items are good candidates only after the new diversity and
+- The next remaining high-value gap is graph/source-shape policy (`#293`), not a
+  second random-weight or kernel-local implementation split.
+- Remaining `partial` items should only expand further if the diversity and
   downstream handoff evaluations show that the current correlated reuse is still
   insufficient.
 - `RD-002` stays deferred. Hard interventions can be evaluated later without
