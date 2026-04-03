@@ -81,7 +81,7 @@ Lower rank means higher priority. Rank `0` is reserved for completed items retai
 | 0    | RD-008     | Meta-feature coverage steering                                         | implemented | Now       | `#246 -> #251 -> #256 -> #261 -> #266` (completed)                                                               |
 | 1    | RD-005     | Robustness stress profiles (hard-task/adversarial regimes)             | research    | Now       | `#247 -> #252 -> #257 -> #262 -> #267`                                                                           |
 | 2    | RD-013     | Time-series generation tracks for PFN pretraining                      | research    | Later     | `#248 -> #253 -> (#258 + #263) -> #268`                                                                          |
-| 3    | RD-002     | Observational and hard-interventional generation modes                 | research    | Later     | `#249 -> #255 -> (#259 + #265) -> #269`                                                                          |
+| 3    | RD-002     | Observational and hard-interventional generation modes                 | research    | Later     | `#249 -> #255` (completed schema/identity slice) -> `(#259 + #265) -> #269`                                     |
 | 4    | RD-010     | Hardware-adaptive autotuning beyond coarse FLOPs tiers                 | planned     | Later     | `#250 -> #254 -> #260 -> #264 -> (#270 + #271) -> #272`                                                          |
 
 ## Dependency Graph
@@ -249,16 +249,20 @@ Use the canonical docs instead:
 - Milestone: `Later`
 - Mission alignment: causal discovery
 - Pillar alignment: causal structural integrity
-- Goal: support observational and hard-interventional sampling tracks with explicit intervention specs on the canonical generation path.
-- GitHub tracking: `#249 -> #255 -> (#259 + #265) -> #269`
+- Goal: support observational and hard-interventional sampling tracks with explicit intervention specs and stable intervention identities on the canonical generation path.
+- GitHub tracking: `#249 -> #255` (completed schema/identity slice) -> `(#259 + #265) -> #269`
 - Repo touchpoints: `src/dagzoo/config/`, `src/dagzoo/core/dataset.py`, `src/dagzoo/core/fixed_layout/runtime.py`, `src/dagzoo/core/generation_runtime.py`, `src/dagzoo/io/parquet_writer.py`, `src/dagzoo/core/generate_handoff.py`
+- Delivered scope:
+  - `#255` completed the config schema and validation slice for observational and hard-interventional authoring.
+  - Resolved/effective config now canonicalizes `intervention.targets` and derives `intervention.signature` for stable downstream identity.
+  - Default observational config remains backward-compatible and omits empty intervention state from effective-config artifacts.
 - Exit criteria:
   - Config supports opt-in intervention mode with safe default observational generation.
   - Hard interventions execute with clear truncated-factorization semantics for fixed interventions.
   - Public and replay artifact contracts record stable intervention metadata needed by downstream consumers.
   - Counterfactual scope remains explicitly deferred until there is a separate paired-output contract and replay design.
 - Delivery issues:
-  - `#255` `spec(interventions): define observational and hard-interventional schema and validation`
+  - `#255` `spec(interventions): define observational and hard-interventional schema and validation` (completed schema/identity slice)
   - `#259` `feat(interventions): implement observational and hard-interventional sampling semantics`
   - `#265` `feat(interventions): emit intervention metadata across public, replay, and handoff contracts`
   - `#269` `docs(interventions): add presets, tests, and guardrails for observational and interventional workflows`
@@ -616,7 +620,7 @@ Use the canonical docs instead:
 - RD-013 fans out after `#253` into the temporal runtime lane `#258` and the metadata-contract lane `#263`, which rejoin at docs and guardrails `#268`.
 - RD-013 remains later because the near-term downstream contract is one-way tabular corpus handoff, not temporal generation.
 - RD-002 builds on completed RD-001 lineage artifacts for intervention metadata extensions.
-- RD-002 fans out after `#255` into hard-interventional sampling semantics `#259` and metadata contracts `#265`, which rejoin at docs and guardrails `#269`.
+- RD-002 now fans out after the completed schema/identity slice `#255` into hard-interventional sampling semantics `#259` and metadata contracts `#265`, which rejoin at docs and guardrails `#269`.
 - RD-010 moves linearly through spec, scoring, and orchestration (`#254 -> #260 -> #264`) before splitting into generate-path integration `#270` and telemetry/reporting `#271`, which rejoin at docs and guardrails `#272`.
 - RD-010 remains opt-in and benchmark-guarded, but is sequenced later because downstream handoff, curriculum-aware harder-front steering, and reproducible stress-profile composition are more urgent than adaptive tuning.
 

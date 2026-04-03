@@ -390,6 +390,7 @@ def test_generate_one_with_relationship_stress_profile_materializes_locked_field
     assert int(bundle.metadata["config"]["filter"]["min_target_indegree"]) == 2
     assert "stress" not in bundle.metadata["config"]
 
+
 def test_generate_one_rejects_hard_interventional_mode_until_sampling_ships() -> None:
     cfg = _tiny_regression_config()
     cfg.intervention.mode = INTERVENTION_MODE_HARD_INTERVENTIONAL

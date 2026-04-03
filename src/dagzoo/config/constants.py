@@ -31,9 +31,7 @@ _MISSINGNESS_MECHANISM_VALUE_MAP: dict[str, MissingnessMechanism] = {
 
 InterventionMode = Literal["observational", "hard_interventional"]
 INTERVENTION_MODE_OBSERVATIONAL: Literal["observational"] = "observational"
-INTERVENTION_MODE_HARD_INTERVENTIONAL: Literal["hard_interventional"] = (
-    "hard_interventional"
-)
+INTERVENTION_MODE_HARD_INTERVENTIONAL: Literal["hard_interventional"] = "hard_interventional"
 
 _INTERVENTION_MODE_VALUE_MAP: dict[str, InterventionMode] = {
     INTERVENTION_MODE_OBSERVATIONAL: INTERVENTION_MODE_OBSERVATIONAL,

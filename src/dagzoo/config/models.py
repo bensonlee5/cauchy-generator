@@ -15,13 +15,12 @@ from dagzoo.identity_hash import stable_blake2s_hex
 from dagzoo.rng import SEED32_MAX, SEED32_MIN
 
 from .constants import (
-    INTERVENTION_MODE_HARD_INTERVENTIONAL,
+    _NOISE_MIXTURE_COMPONENT_VALUE_MAP,
+    _PRODUCT_COMPONENT_FAMILIES,
     INTERVENTION_MODE_OBSERVATIONAL,
     INTERVENTION_TARGET_KIND_FEATURE_NODE,
     INTERVENTION_TARGET_KIND_LATENT_NODE,
     INTERVENTION_TARGET_KIND_TARGET,
-    _NOISE_MIXTURE_COMPONENT_VALUE_MAP,
-    _PRODUCT_COMPONENT_FAMILIES,
     MAX_SUPPORTED_CLASS_COUNT,
     MISSINGNESS_MECHANISM_NONE,
     NOISE_FAMILY_GAUSSIAN,
@@ -1278,28 +1277,23 @@ def _stage2_validate_intervention_constraints(config: "GeneratorConfig") -> None
 
         if target.target_kind == INTERVENTION_TARGET_KIND_TARGET:
             if target.index is not None:
-                raise ValueError(
-                    f"{path}.index must be unset when {path}.target_kind is 'target'."
-                )
+                raise ValueError(f"{path}.index must be unset when {path}.target_kind is 'target'.")
             continue
 
         if target.index is None:
             raise ValueError(
-                f"{path}.index is required when {path}.target_kind is "
-                f"{target.target_kind!r}."
+                f"{path}.index is required when {path}.target_kind is {target.target_kind!r}."
             )
 
-        if (
-            target.target_kind == INTERVENTION_TARGET_KIND_FEATURE_NODE
-            and int(target.index) >= int(config.dataset.n_features_min)
+        if target.target_kind == INTERVENTION_TARGET_KIND_FEATURE_NODE and int(target.index) >= int(
+            config.dataset.n_features_min
         ):
             raise ValueError(
                 f"{path}.index must be < dataset.n_features_min ({config.dataset.n_features_min}) "
                 "so the selected feature node exists for every generated dataset."
             )
-        if (
-            target.target_kind == INTERVENTION_TARGET_KIND_LATENT_NODE
-            and int(target.index) >= int(config.graph.n_nodes_min)
+        if target.target_kind == INTERVENTION_TARGET_KIND_LATENT_NODE and int(target.index) >= int(
+            config.graph.n_nodes_min
         ):
             raise ValueError(
                 f"{path}.index must be < graph.n_nodes_min ({config.graph.n_nodes_min}) "
@@ -1332,9 +1326,7 @@ def _finalize_intervention_identity(intervention: "InterventionConfig") -> None:
         intervention.signature = None
         return
 
-    expected_signature = stable_blake2s_hex(
-        _canonical_intervention_signature_payload(intervention)
-    )
+    expected_signature = stable_blake2s_hex(_canonical_intervention_signature_payload(intervention))
     if intervention.signature is not None and intervention.signature != expected_signature:
         raise ValueError(
             "intervention.signature does not match the canonical hard-intervention identity. "

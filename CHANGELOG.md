@@ -10,6 +10,22 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.19.4] - 2026-04-02
+
+### Added
+
+- Added canonical hard-intervention identity via derived
+  `intervention.signature` so resolved and effective configs expose stable
+  intervention tags without introducing a parallel config surface.
+
+### Changed
+
+- Canonicalized hard-intervention target ordering in config normalization and
+  kept effective-config output round-trippable for observational and
+  hard-interventional authoring while public generation remains
+  observational-only until the follow-on RD-002 runtime and contract issues
+  land.
+
 ## [0.19.3] - 2026-04-02
 
 ### Added

@@ -29,6 +29,8 @@ from .constants import (
     SHIFT_MODE_MIXED,
     SHIFT_MODE_NOISE_DRIFT,
     SHIFT_MODE_OFF,
+    InterventionMode,
+    InterventionTargetKind,
     LayoutMode,
     MechanismFamily,
     MissingnessMechanism,
@@ -36,8 +38,6 @@ from .constants import (
     NoiseMixtureComponent,
     RowsMode,
     ShiftMode,
-    InterventionMode,
-    InterventionTargetKind,
 )
 from .io import clone_generator_config, load_packaged_generator_config
 from .models import (

@@ -262,7 +262,9 @@ def test_intervention_observational_mode_rejects_targets() -> None:
         )
 
 
-def test_intervention_observational_mode_clears_authored_signature_and_is_omitted_from_payload() -> None:
+def test_intervention_observational_mode_clears_authored_signature_and_is_omitted_from_payload() -> (
+    None
+):
     cfg = GeneratorConfig.from_dict(
         {
             "intervention": {
