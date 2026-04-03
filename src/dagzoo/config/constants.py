@@ -29,6 +29,28 @@ _MISSINGNESS_MECHANISM_VALUE_MAP: dict[str, MissingnessMechanism] = {
     MISSINGNESS_MECHANISM_MNAR: MISSINGNESS_MECHANISM_MNAR,
 }
 
+InterventionMode = Literal["observational", "hard_interventional"]
+INTERVENTION_MODE_OBSERVATIONAL: Literal["observational"] = "observational"
+INTERVENTION_MODE_HARD_INTERVENTIONAL: Literal["hard_interventional"] = (
+    "hard_interventional"
+)
+
+_INTERVENTION_MODE_VALUE_MAP: dict[str, InterventionMode] = {
+    INTERVENTION_MODE_OBSERVATIONAL: INTERVENTION_MODE_OBSERVATIONAL,
+    INTERVENTION_MODE_HARD_INTERVENTIONAL: INTERVENTION_MODE_HARD_INTERVENTIONAL,
+}
+
+InterventionTargetKind = Literal["target", "feature_node", "latent_node"]
+INTERVENTION_TARGET_KIND_TARGET: Literal["target"] = "target"
+INTERVENTION_TARGET_KIND_FEATURE_NODE: Literal["feature_node"] = "feature_node"
+INTERVENTION_TARGET_KIND_LATENT_NODE: Literal["latent_node"] = "latent_node"
+
+_INTERVENTION_TARGET_KIND_VALUE_MAP: dict[str, InterventionTargetKind] = {
+    INTERVENTION_TARGET_KIND_TARGET: INTERVENTION_TARGET_KIND_TARGET,
+    INTERVENTION_TARGET_KIND_FEATURE_NODE: INTERVENTION_TARGET_KIND_FEATURE_NODE,
+    INTERVENTION_TARGET_KIND_LATENT_NODE: INTERVENTION_TARGET_KIND_LATENT_NODE,
+}
+
 ShiftMode = Literal[
     "off",
     "graph_drift",

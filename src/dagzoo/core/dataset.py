@@ -5,7 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
-from dagzoo.config import LAYOUT_MODE_FIXED, LAYOUT_MODE_STRATIFIED, GeneratorConfig
+from dagzoo.config import (
+    INTERVENTION_MODE_OBSERVATIONAL,
+    LAYOUT_MODE_FIXED,
+    LAYOUT_MODE_STRATIFIED,
+    GeneratorConfig,
+)
 from dagzoo.config.models import SteeringStageConfig, steering_stage_definitions
 from dagzoo.core.fixed_layout.prepare import (
     normalize_fixed_layout_target_cells,
@@ -51,6 +56,11 @@ def _validate_public_generation_config(config: GeneratorConfig) -> None:
         raise ValueError(
             "Public `runtime.layout_mode: fixed` has been removed. Use "
             "`runtime.layout_mode: stratified` for throughput-sensitive heterogeneous runs."
+        )
+    if str(config.intervention.mode) != INTERVENTION_MODE_OBSERVATIONAL:
+        raise ValueError(
+            "Interventional generation is not implemented yet. "
+            "Set intervention.mode=observational to use the current public generation path."
         )
 
 

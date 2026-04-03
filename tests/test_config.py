@@ -12,6 +12,7 @@ from dagzoo.config import (
     NOISE_MIXTURE_COMPONENT_LAPLACE,
     NOISE_MIXTURE_COMPONENT_STUDENT_T,
     GeneratorConfig,
+    effective_config_payload,
 )
 from dagzoo.config.models import (
     steering_preset_definition,
@@ -100,6 +101,8 @@ def test_load_default_config() -> None:
     assert cfg.steering.preset is None
     assert cfg.steering.stages == []
     assert cfg.stress.profile is None
+    assert cfg.intervention.mode == "observational"
+    assert cfg.intervention.targets == []
 
 
 def test_config_package_reexports_noise_mixture_component_constants() -> None:
@@ -115,6 +118,96 @@ def test_default_config_metadata_is_compatible_with_optional_lineage() -> None:
         "config": cfg.to_dict(),
     }
     validate_metadata_lineage(metadata, required=False)
+
+
+def test_effective_config_payload_omits_default_intervention_section() -> None:
+    payload = effective_config_payload(GeneratorConfig())
+
+    assert "intervention" not in payload
+
+
+def test_intervention_section_accepts_hard_interventional_authoring() -> None:
+    cfg = GeneratorConfig.from_dict(
+        {
+            "graph": {"n_nodes_min": 3, "n_nodes_max": 3},
+            "intervention": {
+                "mode": "HARD_INTERVENTIONAL",
+                "targets": [
+                    {
+                        "target_kind": "LATENT_NODE",
+                        "index": 1,
+                        "value": 2.5,
+                    }
+                ],
+            },
+        }
+    )
+
+    assert cfg.intervention.mode == "hard_interventional"
+    assert len(cfg.intervention.targets) == 1
+    assert cfg.intervention.targets[0].target_kind == "latent_node"
+    assert int(cfg.intervention.targets[0].index) == 1
+    assert float(cfg.intervention.targets[0].value) == pytest.approx(2.5)
+
+
+def test_intervention_section_rejects_non_mapping_payload() -> None:
+    with pytest.raises(TypeError, match=r"intervention must be a mapping"):
+        GeneratorConfig.from_dict({"intervention": []})  # type: ignore[arg-type]
+
+
+def test_intervention_observational_mode_rejects_targets() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"intervention\.targets must be empty when intervention\.mode is observational",
+    ):
+        GeneratorConfig.from_dict(
+            {
+                "intervention": {
+                    "mode": "observational",
+                    "targets": [{"target_kind": "target", "value": 1.0}],
+                }
+            }
+        )
+
+
+def test_intervention_hard_mode_requires_targets() -> None:
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"intervention\.targets must include at least one target when "
+            r"intervention\.mode is hard_interventional"
+        ),
+    ):
+        GeneratorConfig.from_dict({"intervention": {"mode": "hard_interventional"}})
+
+
+def test_intervention_target_selector_constraints_validate_against_minimum_envelopes() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"intervention\.targets\[0\]\.index must be < dataset\.n_features_min \(2\)",
+    ):
+        GeneratorConfig.from_dict(
+            {
+                "dataset": {"n_features_min": 2, "n_features_max": 6},
+                "intervention": {
+                    "mode": "hard_interventional",
+                    "targets": [{"target_kind": "feature_node", "index": 2, "value": 1.0}],
+                },
+            }
+        )
+
+    with pytest.raises(
+        ValueError,
+        match=r"intervention\.targets\[0\]\.index must be unset when intervention\.targets\[0\]\.target_kind is 'target'",
+    ):
+        GeneratorConfig.from_dict(
+            {
+                "intervention": {
+                    "mode": "hard_interventional",
+                    "targets": [{"target_kind": "target", "index": 0, "value": 1.0}],
+                }
+            }
+        )
 
 
 @pytest.mark.parametrize(

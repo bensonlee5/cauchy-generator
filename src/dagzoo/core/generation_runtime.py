@@ -77,6 +77,7 @@ def _config_payload_for_metadata(
     if isinstance(dataset_payload, dict):
         dataset_payload["n_train"] = int(n_train)
         dataset_payload["n_test"] = int(n_test)
+    config_payload.pop("intervention", None)
     config_payload.pop("steering", None)
     config_payload.pop("stress", None)
 

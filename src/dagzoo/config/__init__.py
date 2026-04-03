@@ -3,6 +3,11 @@
 from .constants import (
     DATASET_ROWS_MAX_TOTAL,
     DATASET_ROWS_MIN_TOTAL,
+    INTERVENTION_MODE_HARD_INTERVENTIONAL,
+    INTERVENTION_MODE_OBSERVATIONAL,
+    INTERVENTION_TARGET_KIND_FEATURE_NODE,
+    INTERVENTION_TARGET_KIND_LATENT_NODE,
+    INTERVENTION_TARGET_KIND_TARGET,
     LAYOUT_MODE_FIXED,
     LAYOUT_MODE_HETEROGENEOUS,
     LAYOUT_MODE_STRATIFIED,
@@ -31,6 +36,8 @@ from .constants import (
     NoiseMixtureComponent,
     RowsMode,
     ShiftMode,
+    InterventionMode,
+    InterventionTargetKind,
 )
 from .io import clone_generator_config, load_packaged_generator_config
 from .models import (
@@ -40,6 +47,8 @@ from .models import (
     FilterConfig,
     GeneratorConfig,
     GraphConfig,
+    InterventionConfig,
+    InterventionTargetConfig,
     MechanismConfig,
     NoiseConfig,
     OutputConfig,
@@ -54,6 +63,8 @@ from .models import (
     stress_profile_definition,
 )
 from .normalization import (
+    normalize_intervention_mode,
+    normalize_intervention_target_kind,
     normalize_layout_mode,
     normalize_missing_mechanism,
     normalize_noise_family,
@@ -71,6 +82,11 @@ from .rows import (
 __all__ = [
     "DATASET_ROWS_MAX_TOTAL",
     "DATASET_ROWS_MIN_TOTAL",
+    "INTERVENTION_MODE_HARD_INTERVENTIONAL",
+    "INTERVENTION_MODE_OBSERVATIONAL",
+    "INTERVENTION_TARGET_KIND_FEATURE_NODE",
+    "INTERVENTION_TARGET_KIND_LATENT_NODE",
+    "INTERVENTION_TARGET_KIND_TARGET",
     "LAYOUT_MODE_FIXED",
     "LAYOUT_MODE_HETEROGENEOUS",
     "LAYOUT_MODE_STRATIFIED",
@@ -99,6 +115,10 @@ __all__ = [
     "FilterConfig",
     "GeneratorConfig",
     "GraphConfig",
+    "InterventionConfig",
+    "InterventionMode",
+    "InterventionTargetConfig",
+    "InterventionTargetKind",
     "LayoutMode",
     "MechanismConfig",
     "MechanismFamily",
@@ -122,6 +142,8 @@ __all__ = [
     "materialize_stress_profile",
     "normalize_dataset_rows",
     "normalize_filter_config",
+    "normalize_intervention_mode",
+    "normalize_intervention_target_kind",
     "normalize_layout_mode",
     "normalize_missing_mechanism",
     "normalize_noise_family",
