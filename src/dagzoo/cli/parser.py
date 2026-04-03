@@ -16,14 +16,14 @@ from .commands.hardware import run_hardware_command
 from .commands.recipe import run_recipe_list_command
 from .parsing import (
     DEVICE_CHOICES,
-    FAIL_THRESHOLD_PCT,
     NON_NEGATIVE_INT,
     POSITIVE_INT,
     SEED32_INT,
-    SET_OVERRIDE,
-    WARN_THRESHOLD_PCT,
     device_choice,
+    fail_threshold_pct_callback,
     hardware_policy_choice,
+    set_overrides_callback,
+    warn_threshold_pct_callback,
 )
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
@@ -37,7 +37,7 @@ def cli() -> None:
     """dagzoo command-line interface."""
 
 
-@cli.command("generate", context_settings=CONTEXT_SETTINGS, help="Generate synthetic datasets.")
+@click.command("generate", context_settings=CONTEXT_SETTINGS, help="Generate synthetic datasets.")
 @click.option(
     "--config",
     required=True,
@@ -111,8 +111,9 @@ def cli() -> None:
 @click.option(
     "--set",
     "set_overrides",
-    type=SET_OVERRIDE,
+    type=str,
     multiple=True,
+    callback=set_overrides_callback,
     help="Repeatable advanced override in dotted.path=value form.",
 )
 @click.option(
@@ -162,7 +163,7 @@ def generate_command(
     )
 
 
-@cli.command(
+@click.command(
     "filter",
     context_settings=CONTEXT_SETTINGS,
     help="Replay deferred filtering over generated shard outputs.",
@@ -189,8 +190,9 @@ def generate_command(
 @click.option(
     "--set",
     "set_overrides",
-    type=SET_OVERRIDE,
+    type=str,
     multiple=True,
+    callback=set_overrides_callback,
     help="Repeatable advanced override in filter.<field>=value form.",
 )
 def filter_command(
@@ -210,7 +212,7 @@ def filter_command(
     )
 
 
-@cli.command(
+@click.command(
     "benchmark",
     context_settings=CONTEXT_SETTINGS,
     help="Run benchmark suite across one or more presets.",
@@ -282,14 +284,16 @@ def filter_command(
 )
 @click.option(
     "--warn-threshold-pct",
-    type=WARN_THRESHOLD_PCT,
+    type=float,
     default=None,
+    callback=warn_threshold_pct_callback,
     help="Warning degradation threshold percentage.",
 )
 @click.option(
     "--fail-threshold-pct",
-    type=FAIL_THRESHOLD_PCT,
+    type=float,
     default=None,
+    callback=fail_threshold_pct_callback,
     help="Failure degradation threshold percentage.",
 )
 @click.option(
@@ -378,7 +382,7 @@ def benchmark_command(
     )
 
 
-@cli.command(
+@click.command(
     "diversity-audit",
     context_settings=CONTEXT_SETTINGS,
     help="Compare accepted-corpus diversity for a baseline config and one or more variants.",
@@ -396,16 +400,18 @@ def benchmark_command(
 )
 @click.option(
     "--warn-threshold-pct",
-    type=WARN_THRESHOLD_PCT,
+    type=float,
     default=2.5,
     show_default=True,
+    callback=warn_threshold_pct_callback,
     help="Warn threshold for composite diversity shift vs baseline.",
 )
 @click.option(
     "--fail-threshold-pct",
-    type=FAIL_THRESHOLD_PCT,
+    type=float,
     default=5.0,
     show_default=True,
+    callback=fail_threshold_pct_callback,
     help="Fail threshold for composite diversity shift vs baseline.",
 )
 @click.option(
@@ -474,7 +480,7 @@ def diversity_audit_command(
     )
 
 
-@cli.command(
+@click.command(
     "hardware",
     context_settings=CONTEXT_SETTINGS,
     help="Inspect detected hardware and tier mapping.",
@@ -491,7 +497,7 @@ def hardware_command(*, device: str | None) -> int:
     return run_hardware_command(device=device)
 
 
-@cli.group(
+@click.group(
     "recipe",
     context_settings=CONTEXT_SETTINGS,
     help="Inspect the curated public recipe catalog.",
@@ -500,7 +506,7 @@ def recipe_group() -> None:
     """Recipe subcommands."""
 
 
-@recipe_group.command(
+@click.command(
     "list",
     context_settings=CONTEXT_SETTINGS,
     help="List curated recipe references.",
@@ -509,6 +515,15 @@ def recipe_list_command() -> int:
     """Execute the recipe list command."""
 
     return run_recipe_list_command()
+
+
+cli.add_command(generate_command)
+cli.add_command(filter_command)
+cli.add_command(benchmark_command)
+cli.add_command(diversity_audit_command)
+cli.add_command(hardware_command)
+recipe_group.add_command(recipe_list_command)
+cli.add_command(recipe_group)
 
 
 def build_cli() -> click.Group:

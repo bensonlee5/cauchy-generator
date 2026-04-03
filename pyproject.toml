@@ -37,6 +37,7 @@ classifiers = [
   "Topic :: Software Development :: Testing",
 ]
 dependencies = [
+  # Click powers the public dagzoo CLI and repo-local Python script entrypoints.
   "click>=8.1",
   "numpy>=2.1",
   "torch>=2.8",

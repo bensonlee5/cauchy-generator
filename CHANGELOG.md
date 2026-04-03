@@ -25,6 +25,8 @@ records the later `dagsynth -> dagzoo` rename on the current release line.
 - Migrated the repo-local Python tooling under `scripts/` from `argparse` to
   Click, including `./scripts/dev`, docs helpers, CI/release utilities, and the
   RD-005 handoff Pareto evaluation runner.
+- Registered the migrated Click CLI commands and callbacks explicitly so
+  dead-code analysis recognizes the command tree without changing CLI behavior.
 - Updated affected verification so full-suite fallback runs no longer combine
   `--testmon` with parallel xdist execution, avoiding collection drift in the
   dynamically loaded script tests.

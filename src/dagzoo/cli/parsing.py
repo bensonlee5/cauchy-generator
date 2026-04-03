@@ -1,4 +1,4 @@
-"""Shared Click parameter types and CLI choices."""
+"""Shared Click parsing helpers and CLI choices."""
 
 from __future__ import annotations
 
@@ -31,20 +31,21 @@ def hardware_policy_choice() -> click.Choice[str]:
     return click.Choice(HARDWARE_POLICY_CHOICES)
 
 
-def parse_finite_float(raw: str, *, flag: str) -> float:
+def parse_finite_float(value: str | float, *, flag: str) -> float:
     """Parse one finite float for a Click option."""
 
+    raw = str(value)
     try:
-        value = float(raw)
+        parsed = float(value)
     except ValueError as exc:
         raise click.BadParameter(f"Invalid {flag} value '{raw}'. Expected a number.") from exc
-    if not math.isfinite(value):
+    if not math.isfinite(parsed):
         raise click.BadParameter(f"Invalid {flag} value '{raw}'. Expected a finite number.")
-    return value
+    return parsed
 
 
 def parse_bounded_float(
-    raw: str,
+    value: str | float,
     *,
     flag: str,
     lo: float,
@@ -55,21 +56,22 @@ def parse_bounded_float(
 ) -> float:
     """Parse a finite float and enforce explicit numeric bounds."""
 
-    value = parse_finite_float(raw, flag=flag)
-    lo_ok = value >= lo if lo_inclusive else value > lo
+    parsed = parse_finite_float(value, flag=flag)
+    raw = str(value)
+    lo_ok = parsed >= lo if lo_inclusive else parsed > lo
     hi_ok = True
     if hi is not None:
-        hi_ok = value <= hi if hi_inclusive else value < hi
+        hi_ok = parsed <= hi if hi_inclusive else parsed < hi
     if lo_ok and hi_ok:
-        return value
+        return parsed
     raise click.BadParameter(f"Invalid {flag} value '{raw}'. Expected {expectation}.")
 
 
-def parse_warn_threshold_pct(raw: str) -> float:
+def parse_warn_threshold_pct(value: str | float) -> float:
     """Parse non-negative finite warn threshold percentages."""
 
     return parse_bounded_float(
-        raw,
+        value,
         flag="--warn-threshold-pct",
         lo=0.0,
         hi=None,
@@ -79,11 +81,11 @@ def parse_warn_threshold_pct(raw: str) -> float:
     )
 
 
-def parse_fail_threshold_pct(raw: str) -> float:
+def parse_fail_threshold_pct(value: str | float) -> float:
     """Parse non-negative finite fail threshold percentages."""
 
     return parse_bounded_float(
-        raw,
+        value,
         flag="--fail-threshold-pct",
         lo=0.0,
         hi=None,
@@ -116,50 +118,35 @@ def parse_set_override(raw: str) -> tuple[str, Any]:
     return path, value
 
 
-class _NonNegativeFiniteFloatType(click.ParamType):
-    """Click parameter type for non-negative finite floats."""
+def warn_threshold_pct_callback(
+    _ctx: click.Context,
+    _param: click.Parameter,
+    value: float | None,
+) -> float | None:
+    """Validate and normalize ``--warn-threshold-pct`` values."""
 
-    name = "float"
-
-    def __init__(self, *, flag: str) -> None:
-        self._flag = flag
-
-    def convert(
-        self,
-        value: Any,
-        param: click.Parameter | None,
-        ctx: click.Context | None,
-    ) -> float:
-        raw = str(value)
-        try:
-            parser = (
-                parse_warn_threshold_pct
-                if self._flag == "--warn-threshold-pct"
-                else parse_fail_threshold_pct
-            )
-            return parser(raw)
-        except click.BadParameter as exc:
-            self.fail(exc.message, param, ctx)
+    if value is None:
+        return None
+    return parse_warn_threshold_pct(value)
 
 
-class _SetOverrideType(click.ParamType):
-    """Click parameter type for ``--set dotted.path=value`` overrides."""
+def fail_threshold_pct_callback(
+    _ctx: click.Context,
+    _param: click.Parameter,
+    value: float | None,
+) -> float | None:
+    """Validate and normalize ``--fail-threshold-pct`` values."""
 
-    name = "dotted.path=value"
-
-    def convert(
-        self,
-        value: Any,
-        param: click.Parameter | None,
-        ctx: click.Context | None,
-    ) -> tuple[str, Any]:
-        raw = str(value)
-        try:
-            return parse_set_override(raw)
-        except click.BadParameter as exc:
-            self.fail(exc.message, param, ctx)
+    if value is None:
+        return None
+    return parse_fail_threshold_pct(value)
 
 
-WARN_THRESHOLD_PCT = _NonNegativeFiniteFloatType(flag="--warn-threshold-pct")
-FAIL_THRESHOLD_PCT = _NonNegativeFiniteFloatType(flag="--fail-threshold-pct")
-SET_OVERRIDE = _SetOverrideType()
+def set_overrides_callback(
+    _ctx: click.Context,
+    _param: click.Parameter,
+    value: tuple[str, ...],
+) -> tuple[tuple[str, Any], ...]:
+    """Parse repeated ``--set`` arguments into typed override tuples."""
+
+    return tuple(parse_set_override(raw) for raw in value)
