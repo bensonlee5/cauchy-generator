@@ -37,12 +37,6 @@ class BenchmarkSmokeCaps:
     n_nodes: int
 
 
-def _clone_config(config: GeneratorConfig) -> GeneratorConfig:
-    """Clone nested config state so resolution does not mutate caller-owned objects."""
-
-    return clone_generator_config(config, revalidate=True)
-
-
 def _append_event(
     *,
     events: list[ResolutionEvent],
@@ -124,18 +118,6 @@ def _append_diff_events(
     )
 
 
-def _normalize_requested_device(device: str | None, fallback: str | None) -> str:
-    """Normalize device text into the same lower-cased runtime shape used by CLI paths."""
-
-    if device is not None:
-        candidate = str(device).strip().lower()
-        return candidate or "auto"
-    if fallback is None:
-        return "auto"
-    candidate = str(fallback).strip().lower()
-    return candidate or "auto"
-
-
 def _apply_default_cuda_fixed_layout_target_floor(
     config: GeneratorConfig,
     *,
@@ -154,41 +136,6 @@ def _apply_default_cuda_fixed_layout_target_floor(
         source=_DEFAULT_CUDA_FIXED_LAYOUT_TARGET_SOURCE,
         events=events,
     )
-
-
-def _apply_rows_override(
-    config: GeneratorConfig,
-    *,
-    rows: object | None,
-    source: str,
-    events: list[ResolutionEvent],
-) -> None:
-    if rows is None:
-        return
-    _set_config_path(
-        config,
-        path="dataset.rows",
-        value=rows,
-        source=source,
-        events=events,
-    )
-
-
-def _apply_path_overrides(
-    config: GeneratorConfig,
-    *,
-    overrides: Sequence[tuple[str, Any]],
-    source: str,
-    events: list[ResolutionEvent],
-) -> None:
-    for path, value in overrides:
-        _set_config_path(
-            config,
-            path=path,
-            value=value,
-            source=source,
-            events=events,
-        )
 
 
 def _apply_smoke_caps(
@@ -266,10 +213,15 @@ def _resolve_config_with_policy(
 ) -> ResolvedConfigBundle:
     """Resolve shared device/materialization/policy flow for command paths."""
 
-    resolved = _clone_config(config)
+    resolved = clone_generator_config(config, revalidate=True)
     trace_events: list[ResolutionEvent] = []
 
-    requested_device = _normalize_requested_device(device_override, resolved.runtime.device)
+    if device_override is not None:
+        requested_device = str(device_override).strip().lower() or "auto"
+    elif resolved.runtime.device is None:
+        requested_device = "auto"
+    else:
+        requested_device = str(resolved.runtime.device).strip().lower() or "auto"
     _set_config_path(
         resolved,
         path="runtime.device",
@@ -342,14 +294,23 @@ def resolve_generate_config(
         resolved: GeneratorConfig,
         trace_events: list[ResolutionEvent],
     ) -> None:
-        _apply_rows_override(resolved, rows=rows, source=rows_source, events=trace_events)
-        if path_overrides:
-            _apply_path_overrides(
+        if rows is not None:
+            _set_config_path(
                 resolved,
-                overrides=path_overrides,
-                source="cli.set",
+                path="dataset.rows",
+                value=rows,
+                source=rows_source,
                 events=trace_events,
             )
+        if path_overrides:
+            for path, value in path_overrides:
+                _set_config_path(
+                    resolved,
+                    path=path,
+                    value=value,
+                    source="cli.set",
+                    events=trace_events,
+                )
         if diagnostics_enabled:
             _set_config_path(
                 resolved,
