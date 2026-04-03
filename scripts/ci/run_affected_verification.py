@@ -3,9 +3,10 @@
 
 from __future__ import annotations
 
-import argparse
 import sys
 from pathlib import Path
+
+import click
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPT_DIR) not in sys.path:
@@ -20,6 +21,8 @@ from devlib.common import (  # noqa: E402
 )
 from devlib.impact import ImpactReport, build_impact_report, detect_changed_files  # noqa: E402
 from devlib.test_selection import PytestSelection, is_docs_only_change_set  # noqa: E402
+
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
 def _code_quick_commands(report: ImpactReport) -> tuple[CommandSpec, ...]:
@@ -116,7 +119,8 @@ def _affected_pytest_commands(
     return (
         _build_pytest_command(
             targets=(),
-            incremental=incremental,
+            # Full-suite runs are stable without testmon and avoid xdist collection drift.
+            incremental=False,
             parallel=parallel,
         ),
     )
@@ -167,19 +171,19 @@ def run_affected_verification(
     return "\n".join(lines) + "\n"
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", default="origin/main")
-    parser.add_argument("--incremental", action="store_true")
-    parser.add_argument("--parallel", action="store_true")
-    args = parser.parse_args(argv)
+@click.command(context_settings=CONTEXT_SETTINGS)
+@click.option("--base", default="origin/main", show_default=True)
+@click.option("--incremental", is_flag=True)
+@click.option("--parallel", is_flag=True)
+def cli(*, base: str, incremental: bool, parallel: bool) -> int:
+    """Run the CI-only affected verification flow for pull requests."""
 
     try:
         print(
             run_affected_verification(
-                base=args.base,
-                incremental=args.incremental,
-                parallel=args.parallel,
+                base=base,
+                incremental=incremental,
+                parallel=parallel,
             ),
             end="",
         )
@@ -190,6 +194,23 @@ def main(argv: list[str] | None = None) -> int:
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        result = cli.main(
+            args=argv,
+            prog_name="run_affected_verification.py",
+            standalone_mode=False,
+        )
+    except click.ClickException as exc:
+        exc.show(file=sys.stderr)
+        return int(exc.exit_code)
+    except click.exceptions.Exit as exc:
+        return int(exc.exit_code)
+    except click.Abort:
+        return 1
+    return 0 if result is None else int(result)
 
 
 if __name__ == "__main__":

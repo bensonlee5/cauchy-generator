@@ -7,13 +7,15 @@ Use ``--apply`` to actually delete them.
 
 from __future__ import annotations
 
-import argparse
 import shutil
 import sys
 from collections.abc import Iterable
 from pathlib import Path
 
+import click
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 TARGET_GROUPS: dict[str, tuple[Path, ...]] = {
     "runtime": (
@@ -51,25 +53,24 @@ def _remove_path(path: Path) -> None:
         path.unlink()
 
 
-def parse_args(argv: Iterable[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--group",
-        choices=("runtime", "docs", "all"),
-        default="all",
-        help="Artifact group to inspect or remove.",
-    )
-    parser.add_argument(
-        "--apply",
-        action="store_true",
-        help="Actually delete the listed paths. Default is dry-run only.",
-    )
-    return parser.parse_args(list(argv))
+@click.command(context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "--group",
+    "group_name",
+    type=click.Choice(("runtime", "docs", "all")),
+    default="all",
+    show_default=True,
+    help="Artifact group to inspect or remove.",
+)
+@click.option(
+    "--apply",
+    is_flag=True,
+    help="Actually delete the listed paths. Default is dry-run only.",
+)
+def cli(*, group_name: str, apply: bool) -> int:
+    """Dry-run or remove ignored local artifact trees."""
 
-
-def main(argv: Iterable[str] | None = None) -> int:
-    args = parse_args(sys.argv[1:] if argv is None else argv)
-    targets = _iter_targets(str(args.group))
+    targets = _iter_targets(str(group_name))
 
     found = 0
     for path in targets:
@@ -78,17 +79,34 @@ def main(argv: Iterable[str] | None = None) -> int:
             print(f"Skip missing: {rel}")
             continue
         found += 1
-        if args.apply:
+        if apply:
             _remove_path(path)
             print(f"Removed: {rel}")
         else:
             print(f"Would remove: {rel}")
 
-    if not args.apply:
+    if not apply:
         print("Dry run only. Re-run with --apply to remove the listed paths.")
     elif found == 0:
         print("Nothing to remove.")
     return 0
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    try:
+        result = cli.main(
+            args=list(argv) if argv is not None else None,
+            prog_name="cleanup_local_artifacts.py",
+            standalone_mode=False,
+        )
+    except click.ClickException as exc:
+        exc.show(file=sys.stderr)
+        return int(exc.exit_code)
+    except click.exceptions.Exit as exc:
+        return int(exc.exit_code)
+    except click.Abort:
+        return 1
+    return 0 if result is None else int(result)
 
 
 if __name__ == "__main__":

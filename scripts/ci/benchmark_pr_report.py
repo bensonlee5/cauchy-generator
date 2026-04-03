@@ -4,12 +4,13 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import math
 import sys
 from pathlib import Path
 from typing import Any
+
+import click
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
@@ -23,6 +24,7 @@ from dagzoo.math import sanitize_json  # noqa: E402
 
 DEFAULT_WARN_THRESHOLD_PCT = 10.0
 DEFAULT_FAIL_THRESHOLD_PCT = 20.0
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
 def _load_summary(path: str | Path) -> dict[str, Any]:
@@ -350,53 +352,78 @@ def write_report_artifacts(
     return comment_path, step_summary_path, delta_path
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="benchmark_pr_report")
-    parser.add_argument("--summary-json", required=True)
-    parser.add_argument("--baseline-json", required=True)
-    parser.add_argument("--comment-out", required=True)
-    parser.add_argument("--step-summary-out", required=True)
-    parser.add_argument("--delta-out", required=True)
-    parser.add_argument("--title", required=True)
-    parser.add_argument(
-        "--warn-threshold-pct",
-        type=float,
-        default=DEFAULT_WARN_THRESHOLD_PCT,
-    )
-    parser.add_argument(
-        "--fail-threshold-pct",
-        type=float,
-        default=DEFAULT_FAIL_THRESHOLD_PCT,
-    )
-    return parser
+@click.command(context_settings=CONTEXT_SETTINGS)
+@click.option("--summary-json", required=True, type=click.Path(path_type=Path))
+@click.option("--baseline-json", required=True, type=click.Path(path_type=Path))
+@click.option("--comment-out", required=True, type=click.Path(path_type=Path))
+@click.option("--step-summary-out", required=True, type=click.Path(path_type=Path))
+@click.option("--delta-out", required=True, type=click.Path(path_type=Path))
+@click.option("--title", required=True)
+@click.option(
+    "--warn-threshold-pct",
+    type=float,
+    default=DEFAULT_WARN_THRESHOLD_PCT,
+    show_default=True,
+)
+@click.option(
+    "--fail-threshold-pct",
+    type=float,
+    default=DEFAULT_FAIL_THRESHOLD_PCT,
+    show_default=True,
+)
+def cli(
+    *,
+    summary_json: Path,
+    baseline_json: Path,
+    comment_out: Path,
+    step_summary_out: Path,
+    delta_out: Path,
+    title: str,
+    warn_threshold_pct: float,
+    fail_threshold_pct: float,
+) -> int:
+    """Render benchmark PR artifacts from a suite summary and checked-in baseline."""
 
-
-def main(argv: list[str] | None = None) -> int:
-    args = sys.argv[1:] if argv is None else argv
-    parser = build_parser()
-    parsed = parser.parse_args(args)
-
-    summary_path = Path(parsed.summary_json)
-    baseline_path = Path(parsed.baseline_json)
+    summary_path = Path(summary_json)
+    baseline_path = Path(baseline_json)
     summary = _load_summary(summary_path)
     baseline = load_baseline(baseline_path)
     report = build_benchmark_pr_report(
         summary,
         baseline,
-        title=str(parsed.title),
+        title=str(title),
         summary_path=summary_path,
         baseline_path=baseline_path,
-        warn_threshold_pct=float(parsed.warn_threshold_pct),
-        fail_threshold_pct=float(parsed.fail_threshold_pct),
+        warn_threshold_pct=float(warn_threshold_pct),
+        fail_threshold_pct=float(fail_threshold_pct),
         summary_available=summary_path.exists(),
     )
     write_report_artifacts(
         report,
-        comment_out=parsed.comment_out,
-        step_summary_out=parsed.step_summary_out,
-        delta_out=parsed.delta_out,
+        comment_out=comment_out,
+        step_summary_out=step_summary_out,
+        delta_out=delta_out,
     )
     return 0
+
+
+def build_cli() -> click.Command:
+    """Return the Click command for this script."""
+
+    return cli
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        result = cli.main(args=argv, prog_name="benchmark_pr_report", standalone_mode=False)
+    except click.ClickException as exc:
+        exc.show(file=sys.stderr)
+        return int(exc.exit_code)
+    except click.exceptions.Exit as exc:
+        return int(exc.exit_code)
+    except click.Abort:
+        return 1
+    return 0 if result is None else int(result)
 
 
 if __name__ == "__main__":

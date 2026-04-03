@@ -10,6 +10,27 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.19.5] - 2026-04-03
+
+### Added
+
+- Added Click as the runtime CLI dependency for the packaged `dagzoo` command
+  and the repo-local Python script entrypoints.
+
+### Changed
+
+- Migrated the public `dagzoo` CLI from `argparse` to Click while preserving the
+  existing command tree, flag names, and `dagzoo.cli.entrypoint.main(argv)`
+  compatibility contract.
+- Migrated the repo-local Python tooling under `scripts/` from `argparse` to
+  Click, including `./scripts/dev`, docs helpers, CI/release utilities, and the
+  RD-005 handoff Pareto evaluation runner.
+- Registered the migrated Click CLI commands and callbacks explicitly so
+  dead-code analysis recognizes the command tree without changing CLI behavior.
+- Updated affected verification so full-suite fallback runs no longer combine
+  `--testmon` with parallel xdist execution, avoiding collection drift in the
+  dynamically loaded script tests.
+
 ## [0.19.4] - 2026-04-02
 
 ### Added

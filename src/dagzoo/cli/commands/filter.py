@@ -2,22 +2,29 @@
 
 from __future__ import annotations
 
-import argparse
+from collections.abc import Sequence
+from typing import Any
 
 from dagzoo.filtering import run_deferred_filter
 
 from ..common import raise_usage_error
 
 
-def run_filter_command(args: argparse.Namespace) -> int:
+def run_filter_command(
+    *,
+    in_dir: str,
+    out: str,
+    curated_out: str | None = None,
+    set_overrides: Sequence[tuple[str, Any]] | None = None,
+) -> int:
     """Execute the ``filter`` command."""
 
     try:
         result = run_deferred_filter(
-            in_dir=args.in_dir,
-            out_dir=args.out,
-            curated_out_dir=args.curated_out,
-            path_overrides=tuple(args.set_overrides or ()),
+            in_dir=in_dir,
+            out_dir=out,
+            curated_out_dir=curated_out,
+            path_overrides=tuple(set_overrides or ()),
         )
     except NotImplementedError as exc:
         raise_usage_error(str(exc))

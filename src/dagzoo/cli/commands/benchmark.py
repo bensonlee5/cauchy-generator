@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import argparse
 import datetime as dt
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -19,18 +19,22 @@ from dagzoo.config import GeneratorConfig
 
 from ..common import load_config_or_usage_error, raise_usage_error
 from ..effective_config import (
-    print_effective_config_payload,
-    print_resolution_trace,
+    print_effective_config_payload as emit_effective_config_payload,
+)
+from ..effective_config import (
+    print_resolution_trace as emit_resolution_trace,
+)
+from ..effective_config import (
     write_effective_config_payload,
     write_effective_config_trace,
 )
 
 
-def _default_benchmark_config(args: argparse.Namespace) -> GeneratorConfig:
+def _default_benchmark_config(config: str | None) -> GeneratorConfig:
     """Load benchmark defaults from custom config, falling back to dataclass defaults."""
 
-    if args.config:
-        return load_config_or_usage_error(args.config)
+    if config:
+        return load_config_or_usage_error(config)
     return GeneratorConfig()
 
 
@@ -41,27 +45,32 @@ def _default_benchmark_artifact_dir() -> Path:
     return Path("benchmarks") / "results" / timestamp
 
 
-def _benchmark_artifact_dir(args: argparse.Namespace) -> Path | None:
+def _benchmark_artifact_dir(
+    *,
+    out_dir: str | Path | None,
+    json_out: str | Path | None,
+) -> Path | None:
     """Resolve optional output directory for benchmark summary artifacts."""
 
-    if args.out_dir:
-        return Path(args.out_dir)
-    if args.json_out:
+    if out_dir:
+        return Path(out_dir)
+    if json_out:
         return None
     return _default_benchmark_artifact_dir()
 
 
 def _benchmark_diagnostics_root_dir(
-    args: argparse.Namespace,
     *,
+    diagnostics: bool,
+    diagnostics_out_dir: str | Path | None,
     artifact_dir: Path | None,
 ) -> Path | None:
     """Resolve diagnostics artifact root for benchmark preset coverage summaries."""
 
-    if not bool(args.diagnostics):
+    if not bool(diagnostics):
         return None
-    if args.diagnostics_out_dir:
-        return Path(args.diagnostics_out_dir)
+    if diagnostics_out_dir:
+        return Path(diagnostics_out_dir)
     if artifact_dir is not None:
         return artifact_dir
     return _default_benchmark_artifact_dir()
@@ -198,35 +207,61 @@ def _print_preset_result_line(result: dict[str, Any]) -> None:
     )
 
 
-def run_benchmark_command(args: argparse.Namespace) -> int:
+def run_benchmark_command(
+    *,
+    config: str | None = None,
+    device: str | None = None,
+    num_datasets: int | None = None,
+    warmup: int | None = None,
+    hardware_policy: str = "none",
+    json_out: str | Path | None = None,
+    suite: str | None = None,
+    preset: Sequence[str] | None = None,
+    baseline: str | Path | None = None,
+    out_dir: str | Path | None = None,
+    fail_on_regression: bool = False,
+    warn_threshold_pct: float | None = None,
+    fail_threshold_pct: float | None = None,
+    no_memory: bool = False,
+    collect_reproducibility: bool = False,
+    save_baseline: str | Path | None = None,
+    diagnostics: bool = False,
+    diagnostics_out_dir: str | Path | None = None,
+    print_effective_config: bool = False,
+    print_resolution_trace: bool = False,
+) -> int:
     """Execute the ``benchmark`` command."""
 
-    artifact_dir = _benchmark_artifact_dir(args)
-    diagnostics_root_dir = _benchmark_diagnostics_root_dir(args, artifact_dir=artifact_dir)
+    artifact_dir = _benchmark_artifact_dir(out_dir=out_dir, json_out=json_out)
+    diagnostics_root_dir = _benchmark_diagnostics_root_dir(
+        diagnostics=diagnostics,
+        diagnostics_out_dir=diagnostics_out_dir,
+        artifact_dir=artifact_dir,
+    )
 
-    default_cfg = _default_benchmark_config(args)
-    suite = (args.suite or default_cfg.benchmark.suite).strip().lower()
+    default_cfg = _default_benchmark_config(config)
+    suite_name = (suite or default_cfg.benchmark.suite).strip().lower()
     warn_pct = (
-        float(args.warn_threshold_pct)
-        if args.warn_threshold_pct is not None
+        float(warn_threshold_pct)
+        if warn_threshold_pct is not None
         else float(default_cfg.benchmark.warn_threshold_pct)
     )
     fail_pct = (
-        float(args.fail_threshold_pct)
-        if args.fail_threshold_pct is not None
+        float(fail_threshold_pct)
+        if fail_threshold_pct is not None
         else float(default_cfg.benchmark.fail_threshold_pct)
     )
 
     preset_specs = resolve_preset_run_specs(
-        preset_keys=args.preset,
-        config_path=args.config,
+        preset_keys=list(preset) if preset else None,
+        config_path=config,
     )
-    if args.device and len(preset_specs) > 1:
+    if device and len(preset_specs) > 1:
         raise_usage_error(
             "benchmark --device cannot be combined with multiple --preset values; "
             "the override would be ambiguous."
         )
-    effective_device_override = args.device if args.device and len(preset_specs) == 1 else None
+    effective_device_override = device if device and len(preset_specs) == 1 else None
     for spec in preset_specs:
         normalized_requested_device = (
             effective_device_override or spec.device or spec.config.runtime.device or "auto"
@@ -234,30 +269,29 @@ def run_benchmark_command(args: argparse.Namespace) -> int:
         if effective_device_override is not None:
             spec.device = normalized_requested_device
 
-    baseline_payload = load_baseline(args.baseline) if args.baseline else None
+    baseline_payload = load_baseline(baseline) if baseline else None
 
     try:
         summary = run_benchmark_suite(
             preset_specs,
-            suite=suite,
+            suite=suite_name,
             warn_threshold_pct=warn_pct,
             fail_threshold_pct=fail_pct,
             baseline_payload=baseline_payload,
-            num_datasets_override=args.num_datasets,
-            warmup_override=args.warmup,
-            collect_memory=not bool(args.no_memory),
+            num_datasets_override=num_datasets,
+            warmup_override=warmup,
+            collect_memory=not bool(no_memory),
             collect_reproducibility=(
-                bool(args.collect_reproducibility)
-                or bool(default_cfg.benchmark.collect_reproducibility)
+                bool(collect_reproducibility) or bool(default_cfg.benchmark.collect_reproducibility)
             ),
-            collect_diagnostics=bool(args.diagnostics),
+            collect_diagnostics=bool(diagnostics),
             diagnostics_root_dir=diagnostics_root_dir,
-            fail_on_regression=bool(args.fail_on_regression),
-            hardware_policy=str(args.hardware_policy),
+            fail_on_regression=bool(fail_on_regression),
+            hardware_policy=str(hardware_policy),
         )
     except NotImplementedError as exc:
         raise_usage_error(str(exc))
-    if args.print_effective_config:
+    if print_effective_config:
         for result in summary.get("preset_results", []):
             if not isinstance(result, dict):
                 continue
@@ -265,8 +299,8 @@ def run_benchmark_command(args: argparse.Namespace) -> int:
             if not isinstance(payload, dict):
                 continue
             preset_key = str(result.get("preset_key", "unknown"))
-            print_effective_config_payload(payload, header=f"Effective config [{preset_key}]:")
-    if args.print_resolution_trace:
+            emit_effective_config_payload(payload, header=f"Effective config [{preset_key}]:")
+    if print_resolution_trace:
         for result in summary.get("preset_results", []):
             if not isinstance(result, dict):
                 continue
@@ -274,7 +308,7 @@ def run_benchmark_command(args: argparse.Namespace) -> int:
             if not isinstance(trace_payload, list):
                 continue
             preset_key = str(result.get("preset_key", "unknown"))
-            print_resolution_trace(trace_payload, header=f"Resolution trace [{preset_key}]:")
+            emit_resolution_trace(trace_payload, header=f"Resolution trace [{preset_key}]:")
 
     for result in summary.get("preset_results", []):
         _print_preset_result_line(result)
@@ -295,13 +329,13 @@ def run_benchmark_command(args: argparse.Namespace) -> int:
             )
         print(f"Wrote benchmark artifacts: {json_path} and {md_path}")
 
-    if args.json_out:
-        path = write_suite_json(summary, args.json_out)
+    if json_out:
+        path = write_suite_json(summary, json_out)
         print(f"Wrote benchmark JSON: {path}")
 
-    if args.save_baseline:
+    if save_baseline:
         payload = build_baseline_payload(summary)
-        baseline_path = write_baseline(payload, args.save_baseline)
+        baseline_path = write_baseline(payload, save_baseline)
         print(f"Wrote benchmark baseline: {baseline_path}")
 
     hard_fail = bool(regression.get("hard_fail"))

@@ -1,65 +1,51 @@
-"""Argument parser types and shared CLI choices."""
+"""Shared Click parsing helpers and CLI choices."""
 
 from __future__ import annotations
 
-import argparse
 import math
 from typing import Any
 
+import click
 import yaml
 
 from dagzoo.hardware_policy import list_hardware_policies
 from dagzoo.rng import SEED32_MAX, SEED32_MIN
 
 DEVICE_CHOICES = ("auto", "cpu", "cuda", "mps")
-HARDWARE_POLICY_CHOICES = list_hardware_policies()
+HARDWARE_POLICY_CHOICES = tuple(list_hardware_policies())
+
+POSITIVE_INT = click.IntRange(min=1)
+NON_NEGATIVE_INT = click.IntRange(min=0)
+SEED32_INT = click.IntRange(min=SEED32_MIN, max=SEED32_MAX)
 
 
-def positive_int(value: str) -> int:
-    """argparse type: parse an integer > 0."""
+def device_choice() -> click.Choice[str]:
+    """Return the shared device choice type."""
 
-    parsed = int(value)
-    if parsed <= 0:
-        raise argparse.ArgumentTypeError(f"Expected a positive integer, got {value}.")
-    return parsed
+    return click.Choice(DEVICE_CHOICES)
 
 
-def non_negative_int(value: str) -> int:
-    """argparse type: parse an integer >= 0."""
+def hardware_policy_choice() -> click.Choice[str]:
+    """Return the shared hardware-policy choice type."""
 
-    parsed = int(value)
-    if parsed < 0:
-        raise argparse.ArgumentTypeError(f"Expected a non-negative integer, got {value}.")
-    return parsed
+    return click.Choice(HARDWARE_POLICY_CHOICES)
 
 
-def seed_32bit_int(value: str) -> int:
-    """argparse type: parse an integer seed in the unsigned 32-bit range."""
+def parse_finite_float(value: str | float, *, flag: str) -> float:
+    """Parse one finite float for a Click option."""
 
-    parsed = int(value)
-    if parsed < SEED32_MIN or parsed > SEED32_MAX:
-        raise argparse.ArgumentTypeError(
-            f"Expected a seed in [{SEED32_MIN}, {SEED32_MAX}], got {value}."
-        )
-    return parsed
-
-
-def parse_finite_float(raw: str, *, flag: str) -> float:
-    """argparse helper: parse a finite float."""
-
+    raw = str(value)
     try:
-        value = float(raw)
+        parsed = float(value)
     except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            f"Invalid {flag} value '{raw}'. Expected a number."
-        ) from exc
-    if not math.isfinite(value):
-        raise argparse.ArgumentTypeError(f"Invalid {flag} value '{raw}'. Expected a finite number.")
-    return value
+        raise click.BadParameter(f"Invalid {flag} value '{raw}'. Expected a number.") from exc
+    if not math.isfinite(parsed):
+        raise click.BadParameter(f"Invalid {flag} value '{raw}'. Expected a finite number.")
+    return parsed
 
 
 def parse_bounded_float(
-    raw: str,
+    value: str | float,
     *,
     flag: str,
     lo: float,
@@ -68,23 +54,24 @@ def parse_bounded_float(
     hi_inclusive: bool,
     expectation: str,
 ) -> float:
-    """argparse helper: parse a finite float and enforce explicit numeric bounds."""
+    """Parse a finite float and enforce explicit numeric bounds."""
 
-    value = parse_finite_float(raw, flag=flag)
-    lo_ok = value >= lo if lo_inclusive else value > lo
+    parsed = parse_finite_float(value, flag=flag)
+    raw = str(value)
+    lo_ok = parsed >= lo if lo_inclusive else parsed > lo
     hi_ok = True
     if hi is not None:
-        hi_ok = value <= hi if hi_inclusive else value < hi
+        hi_ok = parsed <= hi if hi_inclusive else parsed < hi
     if lo_ok and hi_ok:
-        return value
-    raise argparse.ArgumentTypeError(f"Invalid {flag} value '{raw}'. Expected {expectation}.")
+        return parsed
+    raise click.BadParameter(f"Invalid {flag} value '{raw}'. Expected {expectation}.")
 
 
-def parse_warn_threshold_pct_arg(raw: str) -> float:
-    """argparse type: parse non-negative finite warn threshold percentages."""
+def parse_warn_threshold_pct(value: str | float) -> float:
+    """Parse non-negative finite warn threshold percentages."""
 
     return parse_bounded_float(
-        raw,
+        value,
         flag="--warn-threshold-pct",
         lo=0.0,
         hi=None,
@@ -94,11 +81,11 @@ def parse_warn_threshold_pct_arg(raw: str) -> float:
     )
 
 
-def parse_fail_threshold_pct_arg(raw: str) -> float:
-    """argparse type: parse non-negative finite fail threshold percentages."""
+def parse_fail_threshold_pct(value: str | float) -> float:
+    """Parse non-negative finite fail threshold percentages."""
 
     return parse_bounded_float(
-        raw,
+        value,
         flag="--fail-threshold-pct",
         lo=0.0,
         hi=None,
@@ -109,27 +96,57 @@ def parse_fail_threshold_pct_arg(raw: str) -> float:
 
 
 def parse_set_override(raw: str) -> tuple[str, Any]:
-    """argparse type: parse a dotted-path override in ``path=value`` form."""
+    """Parse a dotted-path override in ``path=value`` form."""
 
     path_raw, separator, value_raw = raw.partition("=")
     if not separator:
-        raise argparse.ArgumentTypeError(
-            f"Invalid --set value '{raw}'. Expected dotted.path=value."
-        )
+        raise click.BadParameter(f"Invalid --set value '{raw}'. Expected dotted.path=value.")
     path = path_raw.strip()
     if not path or path.startswith(".") or path.endswith(".") or ".." in path:
-        raise argparse.ArgumentTypeError(
-            f"Invalid --set path '{path_raw}'. Expected dotted.path segments."
-        )
+        raise click.BadParameter(f"Invalid --set path '{path_raw}'. Expected dotted.path segments.")
     for segment in path.split("."):
         if not segment:
-            raise argparse.ArgumentTypeError(
+            raise click.BadParameter(
                 f"Invalid --set path '{path_raw}'. Expected dotted.path segments."
             )
     try:
         value = yaml.safe_load(value_raw)
     except yaml.YAMLError as exc:
-        raise argparse.ArgumentTypeError(
+        raise click.BadParameter(
             f"Invalid --set value '{value_raw}'. Expected YAML-scalar compatible syntax."
         ) from exc
     return path, value
+
+
+def warn_threshold_pct_callback(
+    _ctx: click.Context,
+    _param: click.Parameter,
+    value: float | None,
+) -> float | None:
+    """Validate and normalize ``--warn-threshold-pct`` values."""
+
+    if value is None:
+        return None
+    return parse_warn_threshold_pct(value)
+
+
+def fail_threshold_pct_callback(
+    _ctx: click.Context,
+    _param: click.Parameter,
+    value: float | None,
+) -> float | None:
+    """Validate and normalize ``--fail-threshold-pct`` values."""
+
+    if value is None:
+        return None
+    return parse_fail_threshold_pct(value)
+
+
+def set_overrides_callback(
+    _ctx: click.Context,
+    _param: click.Parameter,
+    value: tuple[str, ...],
+) -> tuple[tuple[str, Any], ...]:
+    """Parse repeated ``--set`` arguments into typed override tuples."""
+
+    return tuple(parse_set_override(raw) for raw in value)

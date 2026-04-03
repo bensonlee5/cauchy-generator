@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import argparse
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import asdict
 from pathlib import Path
 from time import perf_counter
@@ -37,8 +36,12 @@ from dagzoo.io.shard_contract import RUN_CONTEXT_FILENAME
 
 from ..common import load_config_or_usage_error, raise_usage_error
 from ..effective_config import (
-    print_effective_config,
-    print_resolution_trace,
+    print_effective_config as emit_effective_config,
+)
+from ..effective_config import (
+    print_resolution_trace as emit_resolution_trace,
+)
+from ..effective_config import (
     write_effective_config,
     write_effective_config_trace,
 )
@@ -116,79 +119,103 @@ def _ensure_generate_handoff_output_safe(run_root: Path) -> Path:
 
 
 def _build_generate_invocation_overrides(
-    args: argparse.Namespace,
     *,
+    num_datasets: int,
+    seed: int | None,
+    rows: str | None,
+    device: str | None,
+    hardware_policy: str,
+    diagnostics: bool,
+    diagnostics_out_dir: Path | None,
+    set_overrides: Sequence[tuple[str, Any]] | None,
     handoff_root: Path,
 ) -> dict[str, Any]:
     """Serialize user-supplied CLI overrides for the handoff manifest."""
 
-    diagnostics_out_dir = (
-        str(Path(args.diagnostics_out_dir).resolve())
-        if args.diagnostics_out_dir is not None
-        else None
+    diagnostics_out_dir_str = (
+        str(diagnostics_out_dir.resolve()) if diagnostics_out_dir is not None else None
     )
     overrides: dict[str, Any] = {
-        "num_datasets": int(args.num_datasets),
-        "seed": int(args.seed) if args.seed is not None else None,
-        "rows": args.rows,
-        "device": args.device,
-        "hardware_policy": str(args.hardware_policy),
+        "num_datasets": int(num_datasets),
+        "seed": int(seed) if seed is not None else None,
+        "rows": rows,
+        "device": device,
+        "hardware_policy": str(hardware_policy),
         "missing_rate": None,
         "missing_mechanism": None,
         "missing_mar_observed_fraction": None,
         "missing_mar_logit_scale": None,
         "missing_mnar_logit_scale": None,
-        "diagnostics": bool(args.diagnostics),
-        "diagnostics_out_dir": diagnostics_out_dir,
+        "diagnostics": bool(diagnostics),
+        "diagnostics_out_dir": diagnostics_out_dir_str,
         "handoff_root": str(handoff_root.resolve()),
     }
-    if args.set_overrides:
-        overrides["set_overrides"] = list(args.set_overrides)
+    if set_overrides:
+        overrides["set_overrides"] = list(set_overrides)
     return overrides
 
 
-def run_generate_command(args: argparse.Namespace) -> int:
+def run_generate_command(
+    *,
+    config: str,
+    out: str | Path | None = None,
+    handoff_root: str | Path | None = None,
+    num_datasets: int = 10,
+    seed: int | None = None,
+    rows: str | None = None,
+    device: str | None = None,
+    hardware_policy: str = "none",
+    no_dataset_write: bool = False,
+    diagnostics: bool = False,
+    diagnostics_out_dir: str | Path | None = None,
+    set_overrides: Sequence[tuple[str, Any]] | None = None,
+    print_effective_config: bool = False,
+    print_resolution_trace: bool = False,
+) -> int:
     """Execute the ``generate`` command."""
 
-    handoff_root: Path | None = None
+    diagnostics_out_dir_path = (
+        Path(diagnostics_out_dir) if diagnostics_out_dir is not None else None
+    )
+    handoff_root_path: Path | None = None
     generated_dir: Path | None = None
-    if args.handoff_root is not None:
-        if args.out is not None:
+    if handoff_root is not None:
+        if out is not None:
             raise_usage_error("`--handoff-root` cannot be combined with `--out`.")
-        if args.no_dataset_write:
+        if no_dataset_write:
             raise_usage_error("`--handoff-root` cannot be combined with `--no-dataset-write`.")
-        handoff_root = Path(args.handoff_root).resolve()
+        handoff_root_path = Path(handoff_root).resolve()
         try:
-            generated_dir = _ensure_generate_handoff_output_safe(handoff_root)
+            generated_dir = _ensure_generate_handoff_output_safe(handoff_root_path)
         except RuntimeError as exc:
             raise_usage_error(str(exc))
 
-    config = load_config_or_usage_error(args.config)
+    loaded_config = load_config_or_usage_error(config)
     try:
         resolved = resolve_generate_config(
-            config,
-            device_override=args.device,
-            rows=args.rows,
-            hardware_policy=str(args.hardware_policy),
-            diagnostics_enabled=bool(args.diagnostics),
-            path_overrides=list(args.set_overrides or ()),
+            loaded_config,
+            device_override=device,
+            rows=rows,
+            hardware_policy=str(hardware_policy),
+            diagnostics_enabled=bool(diagnostics),
+            path_overrides=list(set_overrides or ()),
         )
     except ValueError as exc:
         raise_usage_error(str(exc))
 
     resolved_config = resolved["config"]
-    seed = args.seed if args.seed is not None else resolved_config.seed
+    effective_seed = seed if seed is not None else resolved_config.seed
     prefer_cpu_for_mps_auto = str(resolved_config.runtime.layout_mode) != "fixed"
-    config, run_seed, requested_device, resolved_device, _carried_stress_profile = (
+    run_config, run_seed, requested_device, resolved_device, _carried_stress_profile = (
         realize_generation_config_for_run(
             resolved_config,
-            seed=seed,
+            seed=effective_seed,
             device=str(resolved["requested_device"]),
             prefer_cpu_for_mps_auto=prefer_cpu_for_mps_auto,
             carried_stress_profile=resolved.get("carried_stress_profile"),
         )
     )
-    if bool(config.filter.enabled):
+    if bool(run_config.filter.enabled):
         raise_usage_error(
             "Inline filtering has been removed from generate. Set filter.enabled=false and run "
             "`dagzoo filter --in <shard_dir> --out <out_dir>` after generation. "
@@ -199,37 +226,39 @@ def run_generate_command(args: argparse.Namespace) -> int:
     trace_events = list(resolved["trace_events"])
     append_config_diff_events(
         resolved_config,
-        config,
+        run_config,
         source="generate.run_realization",
         events=trace_events,
     )
-    out_dir: str | Path | None = args.out or config.output.out_dir
+    out_dir: str | Path | None = out or run_config.output.out_dir
     effective_config_root: str | Path | None = out_dir
     internal_root: Path | None = None
-    if handoff_root is not None:
+    if handoff_root_path is not None:
         assert generated_dir is not None
-        pre_handoff_config = clone_generator_config(config, revalidate=False)
-        config.output.out_dir = str(generated_dir)
+        pre_handoff_config = clone_generator_config(run_config, revalidate=False)
+        run_config.output.out_dir = str(generated_dir)
         append_config_diff_events(
             pre_handoff_config,
-            config,
+            run_config,
             source="generate.handoff_root",
             events=trace_events,
         )
         out_dir = generated_dir
-        internal_root = handoff_root / "internal"
+        internal_root = handoff_root_path / "internal"
         effective_config_root = internal_root
     elif effective_config_root is None:
         effective_config_root = (
-            args.diagnostics_out_dir or config.diagnostics.out_dir or "effective_config_artifacts"
+            diagnostics_out_dir_path
+            or run_config.diagnostics.out_dir
+            or "effective_config_artifacts"
         )
 
     trace_payload = serialize_resolution_events(trace_events)
-    if args.print_effective_config:
-        print_effective_config(config, header="Effective config:")
+    if print_effective_config:
+        emit_effective_config(run_config, header="Effective config:")
 
     effective_config_path = write_effective_config(
-        config,
+        run_config,
         Path(effective_config_root) / "effective_config.yaml",
     )
     trace_path = write_effective_config_trace(
@@ -238,31 +267,33 @@ def run_generate_command(args: argparse.Namespace) -> int:
     )
     print(f"Wrote effective config: {effective_config_path}")
     print(f"Wrote effective config trace: {trace_path}")
-    if args.print_resolution_trace:
-        print_resolution_trace(trace_payload, header="Resolution trace:")
+    if print_resolution_trace:
+        emit_resolution_trace(trace_payload, header="Resolution trace:")
 
-    diagnostics_enabled = bool(config.diagnostics.enabled)
-    diagnostics_out_dir: Path | None = None
+    diagnostics_enabled = bool(run_config.diagnostics.enabled)
+    diagnostics_output_dir: Path | None = None
     diagnostics_aggregator: CoverageAggregator | None = None
     if diagnostics_enabled:
-        diagnostics_root = args.diagnostics_out_dir or config.diagnostics.out_dir
+        diagnostics_root = diagnostics_out_dir_path or run_config.diagnostics.out_dir
         if diagnostics_root is None:
             diagnostics_root = (
                 (internal_root / "diagnostics_artifacts") if internal_root is not None else out_dir
             )
         if diagnostics_root is None:
             diagnostics_root = "diagnostics_artifacts"
-        diagnostics_out_dir = Path(diagnostics_root)
-        diagnostics_aggregator = CoverageAggregator(build_diagnostics_aggregation_config(config))
+        diagnostics_output_dir = Path(diagnostics_root)
+        diagnostics_aggregator = CoverageAggregator(
+            build_diagnostics_aggregation_config(run_config)
+        )
     print(
         f"Hardware backend={hw.backend} device='{hw.device_name}' "
         f"memory_gb={hw.total_memory_gb} peak_flops={hw.peak_flops:.3e} tier={hw.tier} "
-        f"hardware_policy={args.hardware_policy}"
+        f"hardware_policy={hardware_policy}"
     )
 
     stream: Iterator[Any] = generate_batch_iter(
-        config,
-        num_datasets=args.num_datasets,
+        run_config,
+        num_datasets=num_datasets,
         seed=run_seed,
         device=requested_device,
     )
@@ -276,12 +307,12 @@ def run_generate_command(args: argparse.Namespace) -> int:
 
         stream = _stream_with_diagnostics()
 
-    if args.no_dataset_write:
+    if no_dataset_write:
         generated = sum(1 for _ in stream)
         if diagnostics_aggregator is not None:
-            assert diagnostics_out_dir is not None
+            assert diagnostics_output_dir is not None
             _write_generate_diagnostics_artifacts(
-                diagnostics_aggregator, diagnostics_out_dir=diagnostics_out_dir
+                diagnostics_aggregator, diagnostics_out_dir=diagnostics_output_dir
             )
         print(f"Generated {generated} datasets (no-dataset-write mode).")
         return 0
@@ -296,31 +327,38 @@ def run_generate_command(args: argparse.Namespace) -> int:
     written = write_packed_parquet_shards_stream(
         stream,
         out_dir=resolved_out_dir,
-        shard_size=config.output.shard_size,
-        compression=config.output.compression,
+        shard_size=run_config.output.shard_size,
+        compression=run_config.output.compression,
         internal_root=internal_root,
     )
     generation_elapsed_seconds = perf_counter() - generation_started_at
     if diagnostics_aggregator is not None:
-        assert diagnostics_out_dir is not None
+        assert diagnostics_output_dir is not None
         _write_generate_diagnostics_artifacts(
-            diagnostics_aggregator, diagnostics_out_dir=diagnostics_out_dir
+            diagnostics_aggregator, diagnostics_out_dir=diagnostics_output_dir
         )
-    if handoff_root is not None:
+    if handoff_root_path is not None:
         assert generated_dir is not None
         assert internal_root is not None
         internal_root.mkdir(parents=True, exist_ok=True)
         (internal_root / RUN_CONTEXT_FILENAME).write_text(
             json.dumps(
                 {
-                    "config_path": str(args.config),
+                    "config_path": str(config),
                     "resolved_config_path": str(effective_config_path.resolve()),
                     "resolved_config_trace_path": str(trace_path.resolve()),
                     "generate_invocation_overrides": _build_generate_invocation_overrides(
-                        args,
-                        handoff_root=handoff_root,
+                        num_datasets=num_datasets,
+                        seed=seed,
+                        rows=rows,
+                        device=device,
+                        hardware_policy=hardware_policy,
+                        diagnostics=diagnostics,
+                        diagnostics_out_dir=diagnostics_out_dir_path,
+                        set_overrides=set_overrides,
+                        handoff_root=handoff_root_path,
                     ),
-                    "effective_config": asdict(config),
+                    "effective_config": asdict(run_config),
                     "resolution_trace": trace_payload,
                     "hardware": {
                         "requested_device": str(requested_device),
@@ -328,7 +366,7 @@ def run_generate_command(args: argparse.Namespace) -> int:
                         "backend": str(hw.backend),
                         "device_name": str(hw.device_name),
                         "tier": str(hw.tier),
-                        "hardware_policy": str(args.hardware_policy),
+                        "hardware_policy": str(hardware_policy),
                     },
                 },
                 indent=2,
@@ -339,12 +377,19 @@ def run_generate_command(args: argparse.Namespace) -> int:
             encoding="utf-8",
         )
         handoff_manifest_path = write_generate_handoff_manifest(
-            config_path=args.config,
+            config_path=config,
             generate_invocation_overrides=_build_generate_invocation_overrides(
-                args,
-                handoff_root=handoff_root,
+                num_datasets=num_datasets,
+                seed=seed,
+                rows=rows,
+                device=device,
+                hardware_policy=hardware_policy,
+                diagnostics=diagnostics,
+                diagnostics_out_dir=diagnostics_out_dir_path,
+                set_overrides=set_overrides,
+                handoff_root=handoff_root_path,
             ),
-            run_root=handoff_root,
+            run_root=handoff_root_path,
             generated_dir=generated_dir,
             effective_config_path=effective_config_path,
             effective_config_trace_path=trace_path,
@@ -355,10 +400,10 @@ def run_generate_command(args: argparse.Namespace) -> int:
             hardware_backend=str(hw.backend),
             hardware_device_name=str(hw.device_name),
             hardware_tier=str(hw.tier),
-            hardware_policy=str(args.hardware_policy),
+            hardware_policy=str(hardware_policy),
             source_family=(
                 HANDOFF_SOURCE_FAMILY_FIXED
-                if str(config.runtime.layout_mode) == "fixed"
+                if str(run_config.runtime.layout_mode) == "fixed"
                 else HANDOFF_SOURCE_FAMILY_HETEROGENEOUS
             ),
         )

@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-import sys
 from typing import NoReturn
+
+import click
 
 from dagzoo.config import GeneratorConfig
 from dagzoo.recipes import load_config_reference
 
 
 def raise_usage_error(message: str) -> NoReturn:
-    """Exit with argparse-compatible usage error semantics."""
+    """Raise a Click usage error."""
 
-    print(f"error: {message}", file=sys.stderr)
-    raise SystemExit(2)
+    raise click.UsageError(message)
 
 
 def load_config_or_usage_error(config_ref: str) -> GeneratorConfig:

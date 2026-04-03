@@ -16,12 +16,13 @@ Validation includes:
 
 from __future__ import annotations
 
-import argparse
 import re
 import sys
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlparse
+
+import click
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SITE_ROOT = REPO_ROOT / "site"
@@ -80,6 +81,7 @@ def _read_base_url() -> str:
 BASE_PATH = _read_base_path()
 BASE_URL = _read_base_url()
 BASE_URL_PARSED = urlparse(BASE_URL) if BASE_URL else None
+CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 
 def _iter_doc_files(root: Path) -> Iterable[Path]:
@@ -258,22 +260,13 @@ def _scan_file(path: Path) -> list[tuple[int, str]]:
     return errors
 
 
-def parse_args(argv: Iterable[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "roots",
-        nargs="*",
-        default=DEFAULT_ROOTS,
-        help="Root directories to scan (relative to repo root).",
-    )
-    return parser.parse_args(list(argv))
-
-
-def main(argv: Iterable[str] | None = None) -> int:
-    args = parse_args(sys.argv[1:] if argv is None else argv)
+@click.command(context_settings=CONTEXT_SETTINGS)
+@click.argument("roots", nargs=-1)
+def cli(*, roots: tuple[str, ...]) -> int:
+    """Link checker for source docs and generated Hugo content."""
 
     all_errors: list[tuple[Path, int, str]] = []
-    for root_rel in args.roots:
+    for root_rel in roots or tuple(DEFAULT_ROOTS):
         root = REPO_ROOT / root_rel
         for path in _iter_doc_files(root):
             for lineno, target in _scan_file(path):
@@ -288,6 +281,23 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     print("Link check passed.")
     return 0
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    try:
+        result = cli.main(
+            args=list(argv) if argv is not None else None,
+            prog_name="check_links.py",
+            standalone_mode=False,
+        )
+    except click.ClickException as exc:
+        exc.show(file=sys.stderr)
+        return int(exc.exit_code)
+    except click.exceptions.Exit as exc:
+        return int(exc.exit_code)
+    except click.Abort:
+        return 1
+    return 0 if result is None else int(result)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import math
-from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -112,8 +111,8 @@ def _raise_removed_filter_fields(field_names: set[str]) -> None:
     )
 
 
-def _build_anti_memorization_piecewise_v1_definition() -> dict[str, Any]:
-    return {
+_STEERING_PRESET_DEFINITIONS: dict[str, dict[str, Any]] = {
+    _STEERING_PRESET_ANTI_MEMORIZATION_PIECEWISE_V1: {
         "stages": [
             {
                 "name": "missingness_ramp",
@@ -146,11 +145,10 @@ def _build_anti_memorization_piecewise_v1_definition() -> dict[str, Any]:
                 },
             },
         ],
-    }
-
-
-def _build_anti_memorization_piecewise_classification_slice_v1_definition() -> dict[str, Any]:
-    return {
+    },
+}
+_STRESS_PROFILE_DEFINITIONS: dict[str, dict[str, Any]] = {
+    _STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_SLICE_V1: {
         "dataset": {
             "task": "classification",
             "n_train": 768,
@@ -176,13 +174,8 @@ def _build_anti_memorization_piecewise_classification_slice_v1_definition() -> d
             "preset": _STEERING_PRESET_ANTI_MEMORIZATION_PIECEWISE_V1,
             "stages": [],
         },
-    }
-
-
-def _build_anti_memorization_piecewise_classification_graph_breadth_slice_v1_definition() -> dict[
-    str, Any
-]:
-    return {
+    },
+    _STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_GRAPH_BREADTH_SLICE_V1: {
         "dataset": {
             "task": "classification",
             "n_train": 768,
@@ -214,13 +207,8 @@ def _build_anti_memorization_piecewise_classification_graph_breadth_slice_v1_def
             "preset": _STEERING_PRESET_ANTI_MEMORIZATION_PIECEWISE_V1,
             "stages": [],
         },
-    }
-
-
-def _build_anti_memorization_piecewise_classification_compositional_slice_v1_definition() -> dict[
-    str, Any
-]:
-    return {
+    },
+    _STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_COMPOSITIONAL_SLICE_V1: {
         "dataset": {
             "task": "classification",
             "n_train": 768,
@@ -265,47 +253,36 @@ def _build_anti_memorization_piecewise_classification_compositional_slice_v1_def
             "preset": _STEERING_PRESET_ANTI_MEMORIZATION_PIECEWISE_V1,
             "stages": [],
         },
-    }
-
-
-_STEERING_PRESET_BUILDERS: dict[str, Callable[[], dict[str, Any]]] = {
-    _STEERING_PRESET_ANTI_MEMORIZATION_PIECEWISE_V1: _build_anti_memorization_piecewise_v1_definition,
+    },
 }
-_STRESS_PROFILE_BUILDERS: dict[str, Callable[[], dict[str, Any]]] = {
-    _STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_SLICE_V1: (
-        _build_anti_memorization_piecewise_classification_slice_v1_definition
-    ),
-    _STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_GRAPH_BREADTH_SLICE_V1: (
-        _build_anti_memorization_piecewise_classification_graph_breadth_slice_v1_definition
-    ),
-    _STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_COMPOSITIONAL_SLICE_V1: (
-        _build_anti_memorization_piecewise_classification_compositional_slice_v1_definition
-    ),
-}
+_STEERING_PRESET_BUILDERS = _STEERING_PRESET_DEFINITIONS
+_STRESS_PROFILE_BUILDERS = _STRESS_PROFILE_DEFINITIONS
 
 
 def steering_preset_definition(name: str) -> dict[str, Any]:
     """Return a deep copy of one built-in steering preset definition."""
 
     try:
-        return copy.deepcopy(_STEERING_PRESET_BUILDERS[str(name)]())
+        definition = _STEERING_PRESET_BUILDERS[str(name)]
     except KeyError as exc:
         supported = ", ".join(sorted(_STEERING_PRESET_BUILDERS))
         raise ValueError(
             f"Unsupported steering.preset {name!r}. Expected one of: {supported}."
         ) from exc
+    return copy.deepcopy(definition() if callable(definition) else definition)
 
 
 def stress_profile_definition(name: str) -> dict[str, Any]:
     """Return a deep copy of one built-in stress-profile definition."""
 
     try:
-        return copy.deepcopy(_STRESS_PROFILE_BUILDERS[str(name)]())
+        definition = _STRESS_PROFILE_BUILDERS[str(name)]
     except KeyError as exc:
         supported = ", ".join(sorted(_STRESS_PROFILE_BUILDERS))
         raise ValueError(
             f"Unsupported stress.profile {name!r}. Expected one of: {supported}."
         ) from exc
+    return copy.deepcopy(definition() if callable(definition) else definition)
 
 
 def _normalize_stress_profile(value: object) -> str | None:
@@ -327,7 +304,6 @@ def _normalize_stress_profile(value: object) -> str | None:
 
 def _normalize_stress_fields(stress: "StressConfig") -> None:
     """Stage 1: normalize the stress section."""
-
     stress.profile = _normalize_stress_profile(stress.profile)
 
 
@@ -794,10 +770,6 @@ def _normalize_runtime_fields(runtime: RuntimeConfig) -> None:
         )
 
 
-def _normalize_output_fields(_output: OutputConfig) -> None:
-    """Stage 1: output section has no additional field normalization."""
-
-
 def _normalize_diagnostics_fields(_diagnostics: DiagnosticsConfig) -> None:
     """Stage 1: normalize diagnostics section boolean toggles."""
 
@@ -808,10 +780,6 @@ def _normalize_diagnostics_fields(_diagnostics: DiagnosticsConfig) -> None:
             "diagnostics.include_spearman must be a boolean, "
             f"got {_diagnostics.include_spearman!r}."
         )
-
-
-def _normalize_benchmark_fields(_benchmark: BenchmarkConfig) -> None:
-    """Stage 1: benchmark section has no additional field normalization."""
 
 
 def _normalize_filter_fields(filter_cfg: FilterConfig) -> None:
@@ -1080,8 +1048,8 @@ def _coerce_section(
     )
 
 
-def _normalize_generation_sections(config: GeneratorConfig) -> None:
-    """Normalize and type all generation config sections in one pass."""
+def _coerce_generation_sections(config: GeneratorConfig) -> None:
+    """Coerce authored section payloads into their canonical dataclass types."""
 
     config.dataset = _coerce_section(
         section_name="dataset",
@@ -1149,6 +1117,10 @@ def _normalize_generation_sections(config: GeneratorConfig) -> None:
         section_type=FilterConfig,
     )
 
+
+def _normalize_generation_fields(config: GeneratorConfig) -> None:
+    """Normalize scalar and leaf-field config values after section coercion."""
+
     _normalize_dataset_fields(config.dataset)
     _normalize_graph_fields(config.graph)
     _normalize_mechanism_fields(config.mechanism)
@@ -1158,9 +1130,7 @@ def _normalize_generation_sections(config: GeneratorConfig) -> None:
     _normalize_steering_fields(config.steering)
     _normalize_stress_fields(config.stress)
     _normalize_runtime_fields(config.runtime)
-    _normalize_output_fields(config.output)
     _normalize_diagnostics_fields(config.diagnostics)
-    _normalize_benchmark_fields(config.benchmark)
     _normalize_filter_fields(config.filter)
 
 
@@ -1566,7 +1536,8 @@ def _validate_generation_config(config: GeneratorConfig) -> None:
 def _normalize_and_validate_generation_config(config: GeneratorConfig) -> None:
     """Canonical normalization boundary for generator config objects."""
 
-    _normalize_generation_sections(config)
+    _coerce_generation_sections(config)
+    _normalize_generation_fields(config)
     _validate_generation_config(config)
     _finalize_derived_generation_fields(config)
 

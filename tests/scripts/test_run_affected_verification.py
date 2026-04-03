@@ -108,7 +108,6 @@ def test_full_selection_runs_full_pytest() -> None:
     assert pytest_command.argv == (
         module.python_tool("pytest"),
         "-q",
-        "--testmon",
         "-n",
         "auto",
     )
