@@ -50,6 +50,52 @@ def test_select_asset_download_url_accepts_linux_64bit_fallback() -> None:
     assert download_url == "https://example.invalid/hugo.tar.gz"
 
 
+def test_direct_asset_download_url_uses_release_download_path() -> None:
+    module = _load_module()
+
+    url = module._direct_asset_download_url(
+        version="0.152.2",
+        asset_name="hugo_extended_0.152.2_linux-amd64.tar.gz",
+    )
+
+    assert url == (
+        "https://github.com/gohugoio/hugo/releases/download/"
+        "v0.152.2/hugo_extended_0.152.2_linux-amd64.tar.gz"
+    )
+
+
+def test_download_direct_release_asset_falls_back_across_candidates(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    requested_urls: list[str] = []
+
+    def _fake_download(url: str, destination: Path) -> None:
+        requested_urls.append(url)
+        if url.endswith("linux-amd64.tar.gz"):
+            raise module.urllib.error.HTTPError(url, 404, "missing", hdrs=None, fp=None)
+        destination.write_bytes(b"ok")
+
+    monkeypatch.setattr(module, "_download_file", _fake_download)
+
+    archive_path = module._download_direct_release_asset(
+        version="0.152.2",
+        destination_dir=tmp_path,
+        system="Linux",
+        machine="x86_64",
+        extended=True,
+    )
+
+    assert archive_path == tmp_path / "hugo_extended_0.152.2_Linux-64bit.tar.gz"
+    assert requested_urls == [
+        "https://github.com/gohugoio/hugo/releases/download/"
+        "v0.152.2/hugo_extended_0.152.2_linux-amd64.tar.gz",
+        "https://github.com/gohugoio/hugo/releases/download/"
+        "v0.152.2/hugo_extended_0.152.2_Linux-64bit.tar.gz",
+    ]
+
+
 def test_extract_hugo_binary_writes_executable(tmp_path: Path) -> None:
     module = _load_module()
     archive_path = tmp_path / "hugo_extended_0.152.2_linux-amd64.tar.gz"

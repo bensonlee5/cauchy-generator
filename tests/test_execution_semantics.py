@@ -266,6 +266,118 @@ def test_sample_activation_plan_can_emit_gumbel_softmax(
 
 
 @pytest.mark.parametrize(
+    (
+        "parent_count",
+        "expected_combine_name",
+        "expected_combine_probs",
+        "expected_aggregation_name",
+        "expected_aggregation_probs",
+    ),
+    [
+        (
+            2,
+            "multi_source_combine_kind_parent2",
+            (0.60, 0.40),
+            "multi_source_aggregation_kind_parent2",
+            (0.25, 0.25, 0.25, 0.25),
+        ),
+        (
+            3,
+            "multi_source_combine_kind_parent3plus",
+            (0.25, 0.75),
+            "multi_source_aggregation_kind_parent3plus",
+            (0.35, 0.15, 0.15, 0.35),
+        ),
+    ],
+)
+def test_sample_multi_source_plan_uses_parent_bucketed_semantic_names_for_graph_breadth(
+    parent_count: int,
+    expected_combine_name: str,
+    expected_combine_probs: tuple[float, float],
+    expected_aggregation_name: str,
+    expected_aggregation_probs: tuple[float, float, float, float],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_calls: list[tuple[str, tuple[float, ...] | None]] = []
+
+    def _fake_choice(*_args, **kwargs):
+        base_probs = kwargs.get("base_probs")
+        observed_calls.append(
+            (
+                str(kwargs["name"]),
+                None if base_probs is None else tuple(float(value) for value in base_probs),
+            )
+        )
+        if str(kwargs["name"]).startswith("multi_source_combine_kind"):
+            return "stack"
+        return kwargs["values"][0]
+
+    monkeypatch.setattr(execution_semantics_mod, "sample_correlated_choice", _fake_choice)
+    monkeypatch.setattr(
+        execution_semantics_mod,
+        "sample_function_plan",
+        lambda *_args, **_kwargs: LinearFunctionPlan(matrix=GaussianMatrixPlan()),
+    )
+
+    source = execution_semantics_mod.sample_multi_source_plan(
+        keyed_rng=KeyedRng(415),
+        parent_count=parent_count,
+        out_dim=4,
+        mechanism_logit_tilt=0.0,
+        function_family_mix=None,
+        device="cpu",
+        stress_profile_name="anti_memorization_piecewise_classification_graph_breadth_slice_v1",
+    )
+
+    assert isinstance(source, StackedNodeSource)
+    assert observed_calls == [
+        (expected_combine_name, expected_combine_probs),
+        (expected_aggregation_name, expected_aggregation_probs),
+    ]
+
+
+def test_sample_multi_source_plan_keeps_default_semantic_names_outside_graph_breadth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_calls: list[tuple[str, tuple[float, ...] | None]] = []
+
+    def _fake_choice(*_args, **kwargs):
+        base_probs = kwargs.get("base_probs")
+        observed_calls.append(
+            (
+                str(kwargs["name"]),
+                None if base_probs is None else tuple(float(value) for value in base_probs),
+            )
+        )
+        if str(kwargs["name"]).startswith("multi_source_combine_kind"):
+            return "stack"
+        return kwargs["values"][0]
+
+    monkeypatch.setattr(execution_semantics_mod, "sample_correlated_choice", _fake_choice)
+    monkeypatch.setattr(
+        execution_semantics_mod,
+        "sample_function_plan",
+        lambda *_args, **_kwargs: LinearFunctionPlan(matrix=GaussianMatrixPlan()),
+    )
+
+    source = execution_semantics_mod.sample_multi_source_plan(
+        keyed_rng=KeyedRng(416),
+        parent_count=3,
+        out_dim=4,
+        mechanism_logit_tilt=0.0,
+        function_family_mix=None,
+        device="cpu",
+        stress_profile_name="anti_memorization_piecewise_classification_compositional_slice_v1",
+    )
+
+    assert isinstance(source, StackedNodeSource)
+    assert observed_calls == [
+        ("multi_source_combine_kind", None),
+        ("multi_source_aggregation_kind", None),
+    ]
+
+
+@pytest.mark.parametrize(
     ("plan", "label"),
     [
         (FixedActivationPlan(name="softmax"), "softmax"),
@@ -800,6 +912,81 @@ def test_keyed_multi_parent_sampling_is_independent_across_parent_plans(
 
         assert isinstance(source, StackedNodeSource)
         return second_parent_tokens[0]
+
+    assert parent_probe(32) == parent_probe(1)
+
+
+def test_keyed_graph_breadth_multi_parent_sampling_keeps_later_parents_stable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def parent_probe(first_parent_extra_draws: int) -> tuple[int, ...]:
+        parent_call_index = 0
+        third_parent_tokens: list[tuple[int, ...]] = []
+
+        def fake_sample_function_plan(
+            generator: torch.Generator | None = None,
+            *,
+            keyed_rng: KeyedRng | None = None,
+            input_dim: int | None = None,
+            out_dim: int,
+            mechanism_logit_tilt: float,
+            function_family_mix: dict[MechanismFamily, float] | None,
+            device: str | None = None,
+            stress_profile_name: str | None = None,
+        ) -> LinearFunctionPlan:
+            nonlocal parent_call_index
+            del input_dim, out_dim, mechanism_logit_tilt, function_family_mix, stress_profile_name
+            rng, _ = execution_semantics_mod._resolve_sampling_generator(
+                generator=generator,
+                keyed_rng=keyed_rng,
+                device=device,
+            )
+            if parent_call_index == 0:
+                _ = torch.rand(first_parent_extra_draws, generator=rng, device=rng.device)
+            elif parent_call_index == 2:
+                third_parent_tokens.append(
+                    tuple(
+                        int(value)
+                        for value in torch.randint(
+                            0,
+                            2**31,
+                            (4,),
+                            generator=rng,
+                            device=rng.device,
+                        ).tolist()
+                    )
+                )
+            parent_call_index += 1
+            return LinearFunctionPlan(matrix=GaussianMatrixPlan())
+
+        monkeypatch.setattr(
+            execution_semantics_mod,
+            "sample_correlated_choice",
+            lambda *_args, **kwargs: (
+                "stack"
+                if str(kwargs["name"]).startswith("multi_source_combine_kind")
+                else kwargs["values"][0]
+            ),
+        )
+        monkeypatch.setattr(
+            execution_semantics_mod,
+            "sample_function_plan",
+            fake_sample_function_plan,
+        )
+
+        source = execution_semantics_mod.sample_multi_source_plan(
+            keyed_rng=KeyedRng(517),
+            parent_count=3,
+            out_dim=4,
+            aggregation_kind="sum",
+            mechanism_logit_tilt=0.0,
+            function_family_mix=None,
+            device="cpu",
+            stress_profile_name="anti_memorization_piecewise_classification_graph_breadth_slice_v1",
+        )
+
+        assert isinstance(source, StackedNodeSource)
+        return third_parent_tokens[0]
 
     assert parent_probe(32) == parent_probe(1)
 

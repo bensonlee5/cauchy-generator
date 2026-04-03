@@ -16,12 +16,12 @@ changes are justified.
 | Correlated categorical ratio | `matched` | The `categorical_ratio` draw was already using the correlated scalar primitive. |
 | Categorical cardinalities | `partial` | Cardinalities now use correlated discrete choice, but the exact envelope still differs from TabICLv2. |
 | Mechanism-family draws | `partial` | Family selection now uses correlated label weights layered on top of the configured family mix. |
-| Multi-parent aggregation choice | `partial` | `concat` vs `stack` and stack aggregation kind are now correlated, but the surrounding parent-arity policy still differs. |
+| Multi-parent aggregation choice | `partial` | `concat` vs `stack` and stack aggregation kind are correlated globally, and the graph-breadth slice now adds parent-arity-aware source-shape reuse; the remaining gap is that baseline and the compositional slice intentionally do not use that broader policy. |
 | Converter variants | `partial` | Joint categorical converter variants now use correlated choice, but the converter surface is broader than TabICLv2. |
 | GP variants | `partial` | GP branch/variant selection now uses correlated choice; the remaining gap is broader structural policy rather than GP-local variant sampling. |
 | Random-weight decay parameters (`q`, `sigma`) | `matched` | `sampling.random_weights`, `math.random_matrices`, and fixed-layout batch execution now share one canonical decay implementation. |
 | Kernel-family hyperparameters | `partial` | Fixed-layout kernel plans now carry plan-time `gamma`/`signed`, and the compositional stress slice correlates them, but the broader matrix surface still differs from TabICLv2. |
-| Global relationship-policy reuse across all plan families | `partial` | Matrix-family, activation-base-kind, and root-base-kind reuse now exist in the compositional slice, while parent-arity/source-shape policy remains deferred to `#293`. |
+| Global relationship-policy reuse across all plan families | `partial` | Matrix-family, activation-base-kind, and root-base-kind reuse exist in the compositional slice, and parent-arity/source-shape policy now exists in the graph-breadth slice; the remaining gap is that the full reuse surface is intentionally split across opt-in RD-005 lanes rather than applied globally. |
 
 ## RD-005 Read
 
@@ -29,8 +29,10 @@ changes are justified.
 - `dagzoo` is now materially closer on the requested relationship surfaces:
   cardinalities, mechanism-family draws, aggregation choice, converter/GP
   variants, and random-weight decay parameters.
-- The next remaining high-value gap is graph/source-shape policy (`#293`), not a
-  second random-weight or kernel-local implementation split.
+- The graph/source-shape policy lane (`#293`) is now implemented in the
+  graph-breadth slice, so the remaining work is no longer “add parent-arity
+  policy at all,” but to decide whether any of that opt-in structure should be
+  broadened beyond the graph-structure lane.
 - Remaining `partial` items should only expand further if the diversity and
   downstream handoff evaluations show that the current correlated reuse is still
   insufficient.

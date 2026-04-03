@@ -396,6 +396,17 @@ def test_generate_one_with_compositional_stress_profile_records_internal_layout_
     )
 
 
+def test_replay_emitted_fixed_layout_plan_replays_graph_breadth_stress_layout() -> None:
+    cfg = load_repo_config()
+    cfg.stress.profile = "anti_memorization_piecewise_classification_graph_breadth_slice_v1"
+
+    bundle = generate_one(cfg, seed=4321, device="cpu")
+    replayed_plan = _replay_emitted_fixed_layout_plan(cfg, bundle)
+
+    assert replayed_plan.layout_signature == str(bundle.metadata["layout_signature"])
+    assert replayed_plan.plan_signature == str(bundle.metadata["layout_plan_signature"])
+
+
 def test_generate_batch_dynamic_steering_changes_metadata_over_dataset_order() -> None:
     cfg = _tiny_regression_config()
     cfg.steering.enabled = True
@@ -6568,6 +6579,10 @@ def test_generate_one_keyed_replay_layout_root_path_replays_layout_signature() -
         (
             lambda bundle: bundle.metadata.__setitem__("resolved_device", ""),
             r"metadata\.resolved_device must be a non-empty string",
+        ),
+        (
+            lambda bundle: bundle.metadata.__setitem__("layout_stress_profile_name", ""),
+            r"metadata\.layout_stress_profile_name must be a non-empty string",
         ),
         (
             lambda bundle: bundle.metadata.pop("layout_plan_seed"),
