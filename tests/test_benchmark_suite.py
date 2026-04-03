@@ -121,7 +121,13 @@ def _install_common_benchmark_stubs(
     monkeypatch.setattr(
         suite_mod,
         "realize_generation_config_for_run",
-        lambda config, **_kwargs: (config, int(config.seed), str(config.runtime.device), "cpu"),
+        lambda config, **_kwargs: (
+            config,
+            int(config.seed),
+            str(config.runtime.device),
+            "cpu",
+            None,
+        ),
     )
     monkeypatch.setattr(
         suite_mod,

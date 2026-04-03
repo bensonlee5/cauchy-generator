@@ -733,19 +733,6 @@ def _resolve_compiled_program_rng(
     return node_rng.keyed(*path)
 
 
-def _is_supported_fused_leaf_plan(plan: FixedLayoutFunctionPlan) -> bool:
-    return isinstance(
-        plan,
-        (
-            LinearFunctionPlan,
-            QuadraticFunctionPlan,
-            DiscretizationFunctionPlan,
-            GpFunctionPlan,
-            EmFunctionPlan,
-        ),
-    )
-
-
 def _can_fuse_leaf_pair(
     lhs_step: _CompiledFunctionProgramStep,
     rhs_step: _CompiledFunctionProgramStep,

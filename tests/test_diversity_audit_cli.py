@@ -10,6 +10,7 @@ from dagzoo.config import GeneratorConfig
 
 def test_diversity_audit_cli_writes_summary_artifacts(tmp_path) -> None:
     baseline = GeneratorConfig.from_yaml("configs/default.yaml")
+    baseline.dataset.task = "regression"
     baseline.runtime.device = "cpu"
     baseline.filter.enabled = False
     baseline.dataset.n_train = 24
