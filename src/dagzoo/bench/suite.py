@@ -635,10 +635,13 @@ def run_preset_benchmark(
             source="benchmark.smoke_rows_cap",
             events=trace_events,
         )
-    config, _run_seed, requested_device, _resolved_device = realize_generation_config_for_run(
-        pre_realization_config,
-        seed=resolved_preset["config"].seed,
-        device=str(resolved_preset["requested_device"]),
+    config, _run_seed, requested_device, _resolved_device, _carried_stress_profile = (
+        realize_generation_config_for_run(
+            pre_realization_config,
+            seed=resolved_preset["config"].seed,
+            device=str(resolved_preset["requested_device"]),
+            carried_stress_profile=resolved_preset.get("carried_stress_profile"),
+        )
     )
     append_config_diff_events(
         pre_realization_config,

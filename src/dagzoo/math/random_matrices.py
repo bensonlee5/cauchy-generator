@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import math
-
 import torch
 
 from dagzoo.core.validation import validate_matrix_output
@@ -11,7 +9,11 @@ from dagzoo.functions._rng_helpers import randint_scalar
 from dagzoo.functions.activations import apply_random_activation
 from dagzoo.math import row_normalize as _row_normalize
 from dagzoo.sampling.noise import NoiseSamplingSpec, sample_noise_from_spec
-from dagzoo.sampling.random_weights import sample_random_weights
+from dagzoo.sampling.random_weights import (
+    resolve_random_weight_parameters,
+    sample_random_weight_tensor,
+    sample_random_weights,
+)
 
 from .utils import log_uniform as _log_uniform
 
@@ -49,23 +51,22 @@ def _sample_weights_matrix(
         device=device,
         noise_spec=noise_spec,
     )
-    q_low = 0.1 / math.log(k + 1.0)
-    shared_q = _log_uniform(generator, q_low, 6.0, device)
-    shared_sigma = _log_uniform(generator, 1e-4, 10.0, device)
-    rows = torch.stack(
-        [
-            sample_random_weights(
-                k,
-                generator,
-                device,
-                q=shared_q,
-                sigma=shared_sigma,
-                sigma_multiplier=noise_sigma_multiplier,
-                noise_spec=noise_spec,
-            )
-            for _ in range(m)
-        ],
-        dim=0,
+    shared_q, shared_sigma = resolve_random_weight_parameters(
+        k,
+        generator,
+        device,
+    )
+    rows = sample_random_weight_tensor(
+        dim=int(k),
+        device=device,
+        noise_generator=generator,
+        perm_generator=generator,
+        leading_shape=(int(m),),
+        parameter_shape=(),
+        q=shared_q,
+        sigma=shared_sigma,
+        sigma_multiplier=float(noise_sigma_multiplier),
+        noise_spec=noise_spec,
     )
     return _row_normalize(g * rows)
 

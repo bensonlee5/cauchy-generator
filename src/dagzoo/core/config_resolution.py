@@ -281,6 +281,9 @@ def _resolve_config_with_policy(
         before_materialization_hook(resolved, trace_events)
 
     resolved.validate_generation_constraints()
+    carried_stress_profile = (
+        None if resolved.stress.profile is None else str(resolved.stress.profile)
+    )
     materialized = materialize_stress_profile(
         resolved,
         revalidate=False,
@@ -317,6 +320,7 @@ def _resolve_config_with_policy(
         "config": resolved,
         "hardware": hw,
         "requested_device": requested_device,
+        "carried_stress_profile": carried_stress_profile,
         "trace_events": trace_events,
     }
 

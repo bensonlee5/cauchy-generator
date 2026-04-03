@@ -18,7 +18,7 @@ from .plan_types import (
     execution_plan_variant_counts,
 )
 
-_FIXED_LAYOUT_METADATA_SCHEMA_VERSION = 10
+_FIXED_LAYOUT_METADATA_SCHEMA_VERSION = 11
 
 
 @dataclass(slots=True)
@@ -39,6 +39,8 @@ class _FixedLayoutPlan:
     execution_plan_root_path: list[object] | None = None
     steering_layout_root_path: list[object] | None = None
     steering_execution_plan_root_path: list[object] | None = None
+    stress_profile_name: str | None = None
+    prepared_execution_context: Any | None = field(default=None, repr=False)
 
 
 def _layout_to_dict(layout: LayoutPlan) -> dict[str, Any]:
@@ -87,6 +89,10 @@ def _annotate_fixed_layout_metadata(
     bundle.metadata["layout_signature"] = str(plan.layout_signature)
     bundle.metadata["layout_plan_schema_version"] = int(_FIXED_LAYOUT_METADATA_SCHEMA_VERSION)
     bundle.metadata["layout_execution_contract"] = str(plan.execution_plan.execution_contract)
+    if plan.stress_profile_name is not None:
+        bundle.metadata["layout_stress_profile_name"] = str(plan.stress_profile_name)
+    else:
+        bundle.metadata.pop("layout_stress_profile_name", None)
     keyed_replay = bundle.metadata.get("keyed_replay")
     if not isinstance(keyed_replay, dict):
         keyed_replay = {}
