@@ -2897,6 +2897,106 @@ def test_finalize_generated_tensors_skips_missingness_when_disabled(
     assert "missingness" not in bundle.metadata
 
 
+def test_finalize_generated_tensors_postprocess_is_train_fit_for_features_and_targets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_regression_config()
+    cfg.dataset.n_train = 4
+    cfg.dataset.n_test = 2
+    layout = _layout_stub(
+        feature_types=["num", "num"],
+        graph_nodes=2,
+        adjacency=torch.zeros((2, 2), dtype=torch.bool),
+        feature_node_assignment=[0, 1],
+        target_node_assignment=1,
+    )
+    train_idx = torch.tensor([0, 1, 2, 3], dtype=torch.int64)
+    test_idx = torch.tensor([4, 5], dtype=torch.int64)
+    shift_params = resolve_shift_runtime_params(cfg)
+    selection = NoiseRuntimeSelection(
+        family_requested="gaussian",
+        family_sampled="gaussian",
+        sampling_strategy="global",
+        base_scale=1.0,
+        student_t_df=5.0,
+        mixture_weights=None,
+    )
+
+    monkeypatch.setattr(
+        "dagzoo.core.generation_runtime._resolve_split_indices",
+        lambda *_args, **_kwargs: (train_idx, test_idx),
+    )
+
+    base_x = torch.tensor(
+        [
+            [0.0, 10.0],
+            [1.0, 11.0],
+            [2.0, 12.0],
+            [3.0, 13.0],
+            [4.0, 14.0],
+            [5.0, 15.0],
+        ],
+        dtype=torch.float32,
+    )
+    shifted_x = torch.tensor(
+        [
+            [0.0, 10.0],
+            [1.0, 11.0],
+            [2.0, 12.0],
+            [3.0, 13.0],
+            [4000.0, 4014.0],
+            [5000.0, 5015.0],
+        ],
+        dtype=torch.float32,
+    )
+    base_y = torch.tensor([0.0, 0.5, 1.0, 1.5, 2.0, 2.5], dtype=torch.float32)
+    shifted_y = torch.tensor([0.0, 0.5, 1.0, 1.5, 2000.0, 2500.0], dtype=torch.float32)
+
+    bundle_a = _finalize_generated_tensors(
+        cfg,
+        layout,
+        dataset_seed=335,
+        attempt=0,
+        attempts_used=1,
+        dataset_root=KeyedRng(335),
+        device="cpu",
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        requested_device="cpu",
+        resolved_device="cpu",
+        device_fallback_reason=None,
+        x=base_x,
+        y=base_y,
+        aux_meta={"filter": {"enabled": False}},
+        shift_params=shift_params,
+        noise_runtime_selection=selection,
+        dtype=torch.float32,
+    )
+    bundle_b = _finalize_generated_tensors(
+        cfg,
+        layout,
+        dataset_seed=335,
+        attempt=0,
+        attempts_used=1,
+        dataset_root=KeyedRng(335),
+        device="cpu",
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        requested_device="cpu",
+        resolved_device="cpu",
+        device_fallback_reason=None,
+        x=shifted_x,
+        y=shifted_y,
+        aux_meta={"filter": {"enabled": False}},
+        shift_params=shift_params,
+        noise_runtime_selection=selection,
+        dtype=torch.float32,
+    )
+
+    torch.testing.assert_close(bundle_a.X_train, bundle_b.X_train)
+    torch.testing.assert_close(bundle_a.y_train, bundle_b.y_train)
+
+
 @pytest.mark.parametrize("task", ["regression", "classification"])
 def test_finalize_generated_chunk_preserve_schema_matches_scalar_helper(task: str) -> None:
     cfg = _tiny_regression_config() if task == "regression" else _tiny_config()
@@ -6775,3 +6875,15 @@ def test_generate_one_missingness_does_not_change_targets_for_same_seed() -> Non
     torch.testing.assert_close(base.y_train, masked.y_train)
     torch.testing.assert_close(base.y_test, masked.y_test)
     assert torch.isnan(masked.X_train).any() or torch.isnan(masked.X_test).any()
+
+
+def test_generate_one_preserves_float64_runtime_dtype_for_regression() -> None:
+    cfg = _tiny_regression_config()
+    cfg.runtime.torch_dtype = "float64"
+
+    bundle = generate_one(cfg, seed=13579, device="cpu")
+
+    assert bundle.X_train.dtype == torch.float64
+    assert bundle.X_test.dtype == torch.float64
+    assert bundle.y_train.dtype == torch.float64
+    assert bundle.y_test.dtype == torch.float64

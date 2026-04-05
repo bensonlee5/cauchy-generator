@@ -10,9 +10,8 @@ The package graph below collapses strongly connected components so the result st
 
 - `dagzoo` depends on `dagzoo.hardware`, `dagzoo.pytorch`, `dagzoo.types`, `dagzoo.config`, `dagzoo.core`, `dagzoo.filtering`, `dagzoo.functions`, `dagzoo.hardware_policy`, `dagzoo.io`, `dagzoo.math`, `dagzoo.postprocess`, `dagzoo.recipes`, `dagzoo.sampling`
 - `dagzoo.__main__` depends on `dagzoo.cli`
-- `dagzoo.cli` depends on `dagzoo.filter_thresholds`, `dagzoo.hardware`, `dagzoo.rng`, `dagzoo.bench`, `dagzoo.diagnostics`, `dagzoo.diagnostics_targets`, `dagzoo.config`, `dagzoo.core`, `dagzoo.filtering`, `dagzoo.functions`, `dagzoo.hardware_policy`, `dagzoo.io`, `dagzoo.math`, `dagzoo.postprocess`, `dagzoo.recipes`, `dagzoo.sampling`
+- `dagzoo.cli` depends on `dagzoo.hardware`, `dagzoo.rng`, `dagzoo.bench`, `dagzoo.diagnostics`, `dagzoo.diagnostics_targets`, `dagzoo.config`, `dagzoo.core`, `dagzoo.filtering`, `dagzoo.functions`, `dagzoo.hardware_policy`, `dagzoo.io`, `dagzoo.math`, `dagzoo.postprocess`, `dagzoo.recipes`, `dagzoo.sampling`
 - `dagzoo.converters` depends on `dagzoo.rng`, `dagzoo.config`, `dagzoo.core`, `dagzoo.filtering`, `dagzoo.functions`, `dagzoo.hardware_policy`, `dagzoo.io`, `dagzoo.math`, `dagzoo.postprocess`, `dagzoo.recipes`, `dagzoo.sampling`
-- `dagzoo.filter_thresholds` has no internal package dependencies
 - `dagzoo.pytorch` depends on `dagzoo.types`, `dagzoo.config`, `dagzoo.core`, `dagzoo.filtering`, `dagzoo.functions`, `dagzoo.hardware_policy`, `dagzoo.io`, `dagzoo.math`, `dagzoo.postprocess`, `dagzoo.recipes`, `dagzoo.sampling`
 - `dagzoo.bench`, `dagzoo.diagnostics`, `dagzoo.diagnostics_targets` depends on `dagzoo.hardware`, `dagzoo.rng`, `dagzoo.types`, `dagzoo.config`, `dagzoo.core`, `dagzoo.filtering`, `dagzoo.functions`, `dagzoo.hardware_policy`, `dagzoo.io`, `dagzoo.math`, `dagzoo.postprocess`, `dagzoo.recipes`, `dagzoo.sampling`
 - `dagzoo.config`, `dagzoo.core`, `dagzoo.filtering`, `dagzoo.functions`, `dagzoo.hardware_policy`, `dagzoo.io`, `dagzoo.math`, `dagzoo.postprocess`, `dagzoo.recipes`, `dagzoo.sampling` depends on `dagzoo.graph`, `dagzoo.hardware`, `dagzoo.rng`, `dagzoo.types`

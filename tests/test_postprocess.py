@@ -87,11 +87,51 @@ def test_standardizes_numeric() -> None:
     g = _make_generator(1)
     xt, yt, xte, yte, ft, task = _make_data(g)
     xtp, _, xtep, _, _ = postprocess_dataset(xt, yt, xte, yte, ft, task, KeyedRng(1), "cpu")
-    combined = torch.cat([xtp, xtep], dim=0)
-    for i in range(combined.shape[1]):
-        col = combined[:, i]
-        assert abs(float(torch.mean(col))) < 0.15
-        assert float(torch.std(col)) < 1.5
+    assert xtep.shape[1] == xtp.shape[1]
+    for i in range(xtp.shape[1]):
+        col = xtp[:, i]
+        assert abs(float(torch.mean(col))) < 1e-5
+        assert abs(float(torch.std(col, correction=0)) - 1.0) < 1e-5
+
+
+def test_feature_postprocess_is_invariant_to_test_rows() -> None:
+    x_train = torch.tensor(
+        [
+            [0.0, 10.0],
+            [1.0, 11.0],
+            [2.0, 12.0],
+            [3.0, 13.0],
+        ],
+        dtype=torch.float32,
+    )
+    x_test_a = torch.tensor([[4.0, 14.0], [5.0, 15.0]], dtype=torch.float32)
+    x_test_b = torch.tensor([[4000.0, 4014.0], [5000.0, 5015.0]], dtype=torch.float32)
+    y_train = torch.tensor([0, 1, 0, 1], dtype=torch.int64)
+    y_test = torch.tensor([0, 1], dtype=torch.int64)
+    feature_types = ["num", "num"]
+
+    out_a = postprocess_dataset(
+        x_train,
+        y_train,
+        x_test_a,
+        y_test,
+        list(feature_types),
+        "classification",
+        KeyedRng(123),
+        "cpu",
+    )
+    out_b = postprocess_dataset(
+        x_train,
+        y_train,
+        x_test_b,
+        y_test,
+        list(feature_types),
+        "classification",
+        KeyedRng(123),
+        "cpu",
+    )
+
+    torch.testing.assert_close(out_a[0], out_b[0])
 
 
 def test_clip_and_standardize_all_categorical_is_noop() -> None:
@@ -201,6 +241,114 @@ def test_regression_clips_targets() -> None:
     assert torch.all(torch.isfinite(y_all))
 
 
+def test_regression_target_postprocess_is_invariant_to_test_targets() -> None:
+    x_train = torch.tensor(
+        [
+            [0.0, 10.0],
+            [1.0, 11.0],
+            [2.0, 12.0],
+            [3.0, 13.0],
+        ],
+        dtype=torch.float32,
+    )
+    x_test = torch.tensor([[4.0, 14.0], [5.0, 15.0]], dtype=torch.float32)
+    y_train = torch.tensor([0.0, 0.5, 1.0, 1.5], dtype=torch.float32)
+    y_test_a = torch.tensor([2.0, 2.5], dtype=torch.float32)
+    y_test_b = torch.tensor([2000.0, 2500.0], dtype=torch.float32)
+    feature_types = ["num", "num"]
+
+    out_a = postprocess_dataset(
+        x_train,
+        y_train,
+        x_test,
+        y_test_a,
+        list(feature_types),
+        "regression",
+        KeyedRng(456),
+        "cpu",
+    )
+    out_b = postprocess_dataset(
+        x_train,
+        y_train,
+        x_test,
+        y_test_b,
+        list(feature_types),
+        "regression",
+        KeyedRng(456),
+        "cpu",
+    )
+
+    torch.testing.assert_close(out_a[1], out_b[1])
+
+
+def test_postprocess_preserves_float64_feature_precision() -> None:
+    x_train = torch.tensor(
+        [
+            [1.0, 0.0],
+            [1.0 + 1e-12, 1.0],
+            [1.0 + 2e-12, 2.0],
+            [1.0 + 3e-12, 3.0],
+        ],
+        dtype=torch.float64,
+    )
+    x_test = torch.tensor(
+        [
+            [1.0 + 4e-12, 4.0],
+            [1.0 + 5e-12, 5.0],
+        ],
+        dtype=torch.float64,
+    )
+    y_train = torch.tensor([0, 1, 0, 1], dtype=torch.int64)
+    y_test = torch.tensor([0, 1], dtype=torch.int64)
+
+    x_train_p, _, x_test_p, _, _, feature_index_map = postprocess_dataset(
+        x_train,
+        y_train,
+        x_test,
+        y_test,
+        ["num", "num"],
+        "classification",
+        KeyedRng(910),
+        "cpu",
+        return_feature_index_map=True,
+    )
+
+    assert x_train_p.dtype == torch.float64
+    assert x_test_p.dtype == torch.float64
+    assert set(feature_index_map) == {0, 1}
+
+
+def test_postprocess_preserves_float64_regression_target_precision() -> None:
+    x_train = torch.tensor(
+        [
+            [0.0, 10.0],
+            [1.0, 11.0],
+            [2.0, 12.0],
+            [3.0, 13.0],
+        ],
+        dtype=torch.float64,
+    )
+    x_test = torch.tensor([[4.0, 14.0], [5.0, 15.0]], dtype=torch.float64)
+    y_train = torch.tensor([1.0, 1.0 + 1e-12, 1.0 + 2e-12, 1.0 + 3e-12], dtype=torch.float64)
+    y_test = torch.tensor([1.0 + 4e-12, 1.0 + 5e-12], dtype=torch.float64)
+
+    _, y_train_p, _, y_test_p, _ = postprocess_dataset(
+        x_train,
+        y_train,
+        x_test,
+        y_test,
+        ["num", "num"],
+        "regression",
+        KeyedRng(911),
+        "cpu",
+    )
+
+    y_all = torch.cat([y_train_p, y_test_p])
+    assert y_train_p.dtype == torch.float64
+    assert y_test_p.dtype == torch.float64
+    assert torch.unique(y_all).numel() > 1
+
+
 def test_deterministic() -> None:
     g_data = _make_generator(99)
     xt, yt, xte, yte, ft, task = _make_data(g_data)
@@ -237,6 +385,68 @@ def test_feature_index_map_tracks_dropped_and_permuted_columns() -> None:
     assert all(0 <= int(i) < len(feature_types) for i in feature_index_map)
     assert 4 not in feature_index_map
     assert [feature_types[i] for i in feature_index_map] == ft_out
+
+
+def test_postprocess_drops_columns_constant_in_train_even_if_test_varies() -> None:
+    x_train = torch.tensor(
+        [
+            [0.0, 1.0],
+            [1.0, 1.0],
+            [2.0, 1.0],
+            [3.0, 1.0],
+        ],
+        dtype=torch.float32,
+    )
+    x_test = torch.tensor([[4.0, 7.0], [5.0, 8.0]], dtype=torch.float32)
+    y_train = torch.tensor([0, 1, 0, 1], dtype=torch.int64)
+    y_test = torch.tensor([0, 1], dtype=torch.int64)
+
+    x_train_p, _, x_test_p, _, _, feature_index_map = postprocess_dataset(
+        x_train,
+        y_train,
+        x_test,
+        y_test,
+        ["num", "num"],
+        "classification",
+        KeyedRng(789),
+        "cpu",
+        return_feature_index_map=True,
+    )
+
+    assert x_train_p.shape[1] == 1
+    assert x_test_p.shape[1] == 1
+    assert feature_index_map == [0]
+
+
+def test_postprocess_keeps_columns_variable_in_train_even_if_test_is_constant() -> None:
+    x_train = torch.tensor(
+        [
+            [0.0, 10.0],
+            [1.0, 11.0],
+            [2.0, 12.0],
+            [3.0, 13.0],
+        ],
+        dtype=torch.float32,
+    )
+    x_test = torch.tensor([[4.0, 99.0], [5.0, 99.0]], dtype=torch.float32)
+    y_train = torch.tensor([0, 1, 0, 1], dtype=torch.int64)
+    y_test = torch.tensor([0, 1], dtype=torch.int64)
+
+    x_train_p, _, x_test_p, _, _, feature_index_map = postprocess_dataset(
+        x_train,
+        y_train,
+        x_test,
+        y_test,
+        ["num", "num"],
+        "classification",
+        KeyedRng(790),
+        "cpu",
+        return_feature_index_map=True,
+    )
+
+    assert x_train_p.shape[1] == 2
+    assert x_test_p.shape[1] == 2
+    assert set(feature_index_map) == {0, 1}
 
 
 @pytest.mark.parametrize("task", ["classification", "regression"])

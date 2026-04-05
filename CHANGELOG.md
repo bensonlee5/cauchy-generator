@@ -10,6 +10,21 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.19.6] - 2026-04-05
+
+### Changed
+
+- Changed feature postprocessing for public train/test splits so numeric
+  clipping, standardization, and constant-column removal are fit on `X_train`
+  and then applied unchanged to `X_test`, eliminating held-out feature
+  distribution leakage into the emitted training data.
+- Changed regression target postprocessing so clipping and standardization are
+  fit on `y_train` and then applied unchanged to `y_test`, eliminating
+  held-out target distribution leakage into the emitted training labels.
+- Preserved configured `float64` feature and regression-target precision
+  through split postprocessing so near-equal values are no longer collapsed by
+  unconditional `float32` casts before the emitted bundle dtype is restored.
+
 ## [0.19.5] - 2026-04-03
 
 ### Added

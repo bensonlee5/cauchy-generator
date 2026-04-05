@@ -134,7 +134,8 @@ Default mode:
 - `runtime.layout_mode: heterogeneous`
 - samples a layout and execution plan per dataset
 - preserves one stable `request_run` id across the run
-- emits `group_ids.cohort` instead of `group_ids.layout_plan`
+- emits in-memory `metadata.split_groups.cohort` instead of
+  `metadata.split_groups.layout_plan`
 - on Apple hardware, `device=auto` prefers CPU over MPS for this mode
 
 Opt-in stratified mode:
@@ -142,7 +143,10 @@ Opt-in stratified mode:
 - `runtime.layout_mode: stratified`
 - keeps per-dataset layout and execution-plan sampling
 - batches compatible exact `(n_rows, n_features)` strata within a rolling window
-- still emits `group_ids.cohort`
+- still emits in-memory `metadata.split_groups.cohort`
+
+When you persist shards, the public dataset catalog projects those in-memory
+`split_groups` values into on-disk `group_ids.*` fields.
 
 ### PyTorch bridge
 

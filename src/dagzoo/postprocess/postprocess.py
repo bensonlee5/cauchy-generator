@@ -16,6 +16,14 @@ from dagzoo.rng import KeyedRng
 from dagzoo.sampling import sample_missingness_mask
 
 
+def _standardization_dtype(tensor: torch.Tensor) -> torch.dtype:
+    """Return the working dtype for numeric postprocess statistics."""
+
+    if tensor.dtype == torch.float64:
+        return torch.float64
+    return torch.float32
+
+
 def _remove_constant_columns(
     x: torch.Tensor, feature_types: list[str]
 ) -> tuple[torch.Tensor, list[str], list[int]]:
@@ -29,30 +37,99 @@ def _remove_constant_columns(
     return x[:, keep], kept_types, keep_indices
 
 
-def _clip_and_standardize_rows(x: torch.Tensor, feature_types: list[str]) -> torch.Tensor:
-    """Clip numeric outliers and standardize numeric columns along the row axis."""
+def _fit_numeric_standardization(
+    x: torch.Tensor, feature_types: list[str]
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None:
+    """Fit numeric clipping and standardization parameters from one feature matrix."""
 
-    out = x.clone()
     numeric_indices = [i for i, t in enumerate(feature_types) if t != "cat"]
     if not numeric_indices:
-        return out
+        return None
 
-    numeric_index = torch.tensor(numeric_indices, device=out.device, dtype=torch.long)
-    feature_dim = out.ndim - 1
-    row_dim = out.ndim - 2
-    numeric = out.index_select(dim=feature_dim, index=numeric_index)
+    numeric_index = torch.tensor(numeric_indices, device=x.device, dtype=torch.long)
+    feature_dim = x.ndim - 1
+    row_dim = x.ndim - 2
+    numeric = x.index_select(dim=feature_dim, index=numeric_index)
+    stats_dtype = _standardization_dtype(numeric)
+    numeric_stats = numeric.to(dtype=stats_dtype)
     quantiles = torch.quantile(
-        numeric.float(),
-        torch.tensor([0.01, 0.99], device=numeric.device),
+        numeric_stats,
+        torch.tensor([0.01, 0.99], device=numeric.device, dtype=stats_dtype),
         dim=row_dim,
     )
     lo = quantiles[0].unsqueeze(row_dim)
     hi = quantiles[1].unsqueeze(row_dim)
+    numeric_stats = torch.clamp(numeric_stats, lo, hi)
+    mu = torch.mean(numeric_stats, dim=row_dim, keepdim=True)
+    sd = torch.std(numeric_stats, dim=row_dim, correction=0, keepdim=True).clamp_min(1e-6)
+    return numeric_index, lo, hi, mu, sd
+
+
+def _apply_numeric_standardization(
+    x: torch.Tensor,
+    params: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None,
+) -> torch.Tensor:
+    """Apply fitted numeric clipping and standardization parameters to one feature matrix."""
+
+    out = x.clone()
+    if params is None:
+        return out
+
+    numeric_index, lo, hi, mu, sd = params
+    if numeric_index.device != out.device:
+        numeric_index = numeric_index.to(device=out.device)
+    if lo.device != out.device:
+        lo = lo.to(device=out.device)
+        hi = hi.to(device=out.device)
+        mu = mu.to(device=out.device)
+        sd = sd.to(device=out.device)
+    feature_dim = out.ndim - 1
+    numeric = out.index_select(dim=feature_dim, index=numeric_index)
     numeric = torch.clamp(numeric, lo, hi)
-    mu = torch.mean(numeric, dim=row_dim, keepdim=True)
-    sd = torch.std(numeric, dim=row_dim, correction=0, keepdim=True).clamp_min(1e-6)
     out.index_copy_(feature_dim, numeric_index, (numeric - mu) / sd)
     return out
+
+
+def _clip_and_standardize_rows(x: torch.Tensor, feature_types: list[str]) -> torch.Tensor:
+    """Clip numeric outliers and standardize numeric columns along the row axis."""
+
+    return _apply_numeric_standardization(x, _fit_numeric_standardization(x, feature_types))
+
+
+def _fit_target_standardization(
+    y: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Fit clipping and standardization parameters from one target tensor."""
+
+    row_dim = y.ndim - 1
+    stats_dtype = _standardization_dtype(y)
+    y_stats = y.to(dtype=stats_dtype)
+    quantiles = torch.quantile(
+        y_stats,
+        torch.tensor([0.01, 0.99], device=y.device, dtype=stats_dtype),
+        dim=row_dim,
+    )
+    lo = quantiles[0].unsqueeze(row_dim)
+    hi = quantiles[1].unsqueeze(row_dim)
+    y_stats = torch.clamp(y_stats, lo, hi)
+    mu = torch.mean(y_stats, dim=row_dim, keepdim=True)
+    sd = torch.std(y_stats, dim=row_dim, correction=0, keepdim=True).clamp_min(1e-6)
+    return lo, hi, mu, sd
+
+
+def _apply_target_standardization(
+    y: torch.Tensor,
+    params: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+) -> torch.Tensor:
+    """Apply fitted clipping and standardization parameters to one target tensor."""
+
+    lo, hi, mu, sd = params
+    if lo.device != y.device:
+        lo = lo.to(device=y.device)
+        hi = hi.to(device=y.device)
+        mu = mu.to(device=y.device)
+        sd = sd.to(device=y.device)
+    return (torch.clamp(y, lo, hi) - mu) / sd
 
 
 def _postprocess_feature_splits(
@@ -65,19 +142,39 @@ def _postprocess_feature_splits(
 ) -> tuple[torch.Tensor, torch.Tensor, list[str], list[int]]:
     """Postprocess feature tensors for both scalar and fixed-schema batched flows."""
 
-    row_dim = x_train.ndim - 2
-    x_all = torch.cat([x_train, x_test], dim=row_dim).to(torch.float32)
-    x_all, feature_types_out, feature_index_map = postprocess_feature_matrix(
-        x_all,
-        feature_types,
-        keyed_rng=keyed_rng,
-        preserve_feature_schema=preserve_feature_schema,
-    )
+    x_train_p = x_train
+    x_test_p = x_test
+    if preserve_feature_schema:
+        feature_types_out = list(feature_types)
+        feature_index_map = [int(i) for i in range(int(x_train_p.shape[-1]))]
+    else:
+        if x_train_p.ndim != 2 or x_test_p.ndim != 2:
+            raise ValueError("Constant-column removal is only supported for unbatched features.")
+        x_train_p, feature_types_out, feature_index_map = _remove_constant_columns(
+            x_train_p, feature_types
+        )
+        keep_index = torch.tensor(feature_index_map, device=x_test_p.device, dtype=torch.long)
+        x_test_p = x_test_p.index_select(dim=x_test_p.ndim - 1, index=keep_index)
 
-    n_train = int(x_train.shape[row_dim])
-    n_test = int(x_test.shape[row_dim])
-    x_train_p = x_all.narrow(row_dim, 0, n_train)
-    x_test_p = x_all.narrow(row_dim, n_train, n_test)
+    params = _fit_numeric_standardization(x_train_p, feature_types_out)
+    x_train_p = _apply_numeric_standardization(x_train_p, params)
+    x_test_p = _apply_numeric_standardization(x_test_p, params)
+
+    if not preserve_feature_schema:
+        if keyed_rng is None:
+            raise ValueError("keyed_rng is required when preserve_feature_schema is False.")
+        perm_cpu = torch.randperm(
+            x_train_p.shape[-1],
+            generator=keyed_rng.keyed("feature_permutation").torch_rng(device="cpu"),
+            device="cpu",
+        )
+        perm_list = [int(i) for i in perm_cpu.tolist()]
+        x_train_p = x_train_p.index_select(
+            dim=x_train_p.ndim - 1, index=perm_cpu.to(x_train_p.device)
+        )
+        x_test_p = x_test_p.index_select(dim=x_test_p.ndim - 1, index=perm_cpu.to(x_test_p.device))
+        feature_types_out = [feature_types_out[i] for i in perm_list]
+        feature_index_map = [feature_index_map[i] for i in perm_list]
     return x_train_p, x_test_p, feature_types_out, feature_index_map
 
 
@@ -122,24 +219,12 @@ def _postprocess_regression_targets(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Clip and standardize regression targets for scalar or batched inputs."""
 
-    row_dim = y_train.ndim - 1
-    y_all = torch.cat([y_train, y_test], dim=row_dim).to(torch.float32)
-    quantiles = torch.quantile(
-        y_all.float(),
-        torch.tensor([0.01, 0.99], device=y_all.device),
-        dim=row_dim,
+    y_train_p = y_train
+    y_test_p = y_test
+    params = _fit_target_standardization(y_train_p)
+    return _apply_target_standardization(y_train_p, params), _apply_target_standardization(
+        y_test_p, params
     )
-    lo = quantiles[0].unsqueeze(row_dim)
-    hi = quantiles[1].unsqueeze(row_dim)
-    y_all = torch.clamp(y_all, lo, hi)
-    mu = torch.mean(y_all, dim=row_dim, keepdim=True)
-    sd = torch.std(y_all, dim=row_dim, correction=0, keepdim=True).clamp_min(1e-6)
-    y_all = (y_all - mu) / sd
-    n_train = int(y_train.shape[row_dim])
-    n_test = int(y_test.shape[row_dim])
-    y_train_p = y_all.narrow(row_dim, 0, n_train)
-    y_test_p = y_all.narrow(row_dim, n_train, n_test)
-    return y_train_p, y_test_p
 
 
 def _has_at_least_two_classes(y: torch.Tensor) -> bool:
@@ -329,9 +414,10 @@ def postprocess_dataset(
     """
     Apply postprocessing to train/test splits.
 
-    - Remove constant columns
-    - Standardize non-categorical columns
+    - Remove train-constant columns
+    - Standardize non-categorical columns using train-fit statistics
     - Permute column order
+    - Standardize regression targets using train-fit statistics
     - Permute class labels for classification
     """
     _ = device

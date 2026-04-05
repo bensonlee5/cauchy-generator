@@ -120,12 +120,13 @@ derived `intervention.signature` field in `effective_config.yaml`.
 Each request run writes:
 
 - `<output_root>/handoff_manifest.json`
-- `<output_root>/generated/effective_config.yaml`
-- `<output_root>/generated/effective_config_trace.yaml`
+- `<output_root>/internal/effective_config.yaml`
+- `<output_root>/internal/effective_config_trace.yaml`
 
 The same request root also reserves:
 
 - `<output_root>/generated/` for raw generated shard outputs
+- `<output_root>/internal/` for effective-config and replay-sidecar artifacts
 - `<output_root>/filter/` for deferred-filter artifacts
 - `<output_root>/curated/` for accepted-only curated shards
 
