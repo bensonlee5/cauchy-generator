@@ -335,6 +335,9 @@ Current public postprocess behavior:
   schema may vary within one run.
 - Stratified mode batches compatible heterogeneous strata without forcing one
   emitted schema across the run.
+- Numeric feature clipping and standardization are fit on the emitted training
+  split, then applied unchanged to the emitted test split; regression targets
+  follow the same train-fit postprocess rule.
 - Classification runs emit bundles as they are finalized; a later dataset can
   still exhaust the retry budget after earlier bundles have already been
   emitted.

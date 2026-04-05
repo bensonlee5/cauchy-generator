@@ -79,8 +79,9 @@ ______________________________________________________________________
 
 Each entry in `feature_types` is one of:
 
-- `"num"`: continuous feature. After postprocessing, values are clipped and
-  standardized to approximately zero mean and unit variance.
+- `"num"`: continuous feature. After postprocessing, `X_train` values are
+  clipped and standardized to approximately zero mean and unit variance, and
+  the same train-fit transform is applied to `X_test`.
 - `"cat"`: categorical feature. Observed values are integer indices in the
   range `0 .. cardinality - 1`. When missingness is enabled, missing values are
   encoded as `NaN`.
@@ -360,7 +361,9 @@ a SHA-256 checksum recorded in the compact lineage payload.
 - Stratified mode (`runtime.layout_mode: stratified`) still preserves
   heterogeneous semantics; constant-column removal and feature-column
   permutation remain dataset-local even when compatible strata are batched.
-- Numeric features are clipped and standardized to approximately zero mean and
-  unit variance.
+- Numeric features are clipped and standardized using statistics fit on the
+  emitted training split, then applied unchanged to the test split.
+- Regression targets are clipped and standardized using statistics fit on the
+  emitted training split, then applied unchanged to the test split.
 - Classification target classes are randomly permuted; label indices carry no
   ordinal meaning.
