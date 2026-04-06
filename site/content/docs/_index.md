@@ -15,7 +15,7 @@ weight: 1
 - [Advanced Controls]({{< relref "/docs/usage-guide.md" >}}): custom YAML workflows and deeper command controls.
 - [How It Works]({{< relref "/docs/how-it-works.md" >}}): runtime model and terminology.
 - [Transforms (Math Reference)]({{< relref "/docs/transforms.md" >}}): formal transform math, notation, and operator definitions.
-- [Feature Guides]({{< relref "/docs/features/_index.md" >}}): diagnostics, missingness, many-class, shift, steering, noise, and benchmark guardrails.
+- [Feature Guides]({{< relref "/docs/features/_index.md" >}}): diagnostics, interventions, missingness, many-class, shift, steering, noise, and benchmark guardrails.
 
 ## Artifacts & API
 
