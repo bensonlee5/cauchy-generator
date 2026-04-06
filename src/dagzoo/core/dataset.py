@@ -57,11 +57,6 @@ def _validate_public_generation_config(config: GeneratorConfig) -> None:
             "Public `runtime.layout_mode: fixed` has been removed. Use "
             "`runtime.layout_mode: stratified` for throughput-sensitive heterogeneous runs."
         )
-    if str(config.intervention.mode) != INTERVENTION_MODE_OBSERVATIONAL:
-        raise ValueError(
-            "Interventional generation is not implemented yet. "
-            "Set intervention.mode=observational to use the current public generation path."
-        )
 
 
 def _require_metadata_string(metadata: Mapping[str, Any], *, key: str) -> str:
@@ -77,39 +72,48 @@ def _request_run_provenance_for_config(
     resolved_device: str,
 ) -> dict[str, Any]:
     noise_distribution = _noise_distribution_provenance_for_config(config)
-    return canonical_request_run_provenance(
-        {
-            "config": {
-                "dataset": {
-                    "task": str(config.dataset.task),
-                    "n_train": int(config.dataset.n_train),
-                    "n_test": int(config.dataset.n_test),
-                    "missing_rate": float(config.dataset.missing_rate),
-                    "missing_mechanism": str(config.dataset.missing_mechanism),
-                    "missing_mar_observed_fraction": float(
-                        config.dataset.missing_mar_observed_fraction
-                    ),
-                    "missing_mar_logit_scale": float(config.dataset.missing_mar_logit_scale),
-                    "missing_mnar_logit_scale": float(config.dataset.missing_mnar_logit_scale),
-                },
-                "runtime": {
-                    "fixed_layout_target_cells": config.runtime.fixed_layout_target_cells,
-                    "torch_dtype": str(config.runtime.torch_dtype),
-                },
+    provenance_payload: dict[str, Any] = {
+        "config": {
+            "dataset": {
+                "task": str(config.dataset.task),
+                "n_train": int(config.dataset.n_train),
+                "n_test": int(config.dataset.n_test),
+                "missing_rate": float(config.dataset.missing_rate),
+                "missing_mechanism": str(config.dataset.missing_mechanism),
+                "missing_mar_observed_fraction": float(
+                    config.dataset.missing_mar_observed_fraction
+                ),
+                "missing_mar_logit_scale": float(config.dataset.missing_mar_logit_scale),
+                "missing_mnar_logit_scale": float(config.dataset.missing_mnar_logit_scale),
             },
-            "noise_distribution": noise_distribution,
-            "shift": {
-                "variance_sigma_multiplier": float(
-                    resolve_shift_runtime_params(config).variance_sigma_multiplier
-                )
+            "runtime": {
+                "fixed_layout_target_cells": config.runtime.fixed_layout_target_cells,
+                "torch_dtype": str(config.runtime.torch_dtype),
             },
-            "prior": {
-                "target_derivation": "tabiclv2_latent_node",
-            },
-            "resolved_device": str(resolved_device),
-            "compute_backend": "torch_appendix_full",
+        },
+        "noise_distribution": noise_distribution,
+        "shift": {
+            "variance_sigma_multiplier": float(
+                resolve_shift_runtime_params(config).variance_sigma_multiplier
+            )
+        },
+        "prior": {
+            "target_derivation": "tabiclv2_latent_node",
+        },
+        "resolved_device": str(resolved_device),
+        "compute_backend": "torch_appendix_full",
+    }
+    if str(config.intervention.mode) != INTERVENTION_MODE_OBSERVATIONAL:
+        signature = config.intervention.signature
+        if not isinstance(signature, str) or not signature:
+            raise ValueError(
+                "Hard-interventional request-run provenance requires intervention.signature."
+            )
+        provenance_payload["intervention"] = {
+            "mode": str(config.intervention.mode),
+            "signature": str(signature),
         }
-    )
+    return canonical_request_run_provenance(provenance_payload)
 
 
 def _noise_distribution_provenance_for_config(config: GeneratorConfig) -> dict[str, Any]:

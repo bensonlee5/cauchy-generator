@@ -10,6 +10,20 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.19.7] - 2026-04-06
+
+### Changed
+
+- Enabled public `hard_interventional` generation for direct target overrides
+  and resolved fixed-layout node selectors so observational and
+  hard-interventional runs now execute through the same public generate path.
+- Preserved hard-intervention provenance in canonical request-run hashing so
+  interventional `request_run` and `dataset_id` values no longer alias
+  observational outputs.
+- Allowed classification target overrides to bypass fixed-layout replay
+  split-validation gating, so constant hard-interventional class targets now
+  generate successfully instead of failing plan preparation.
+
 ## [0.19.6] - 2026-04-05
 
 ### Changed
