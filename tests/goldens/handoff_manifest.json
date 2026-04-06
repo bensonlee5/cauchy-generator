@@ -8,6 +8,10 @@
     "source_family": "dagzoo.fixed_layout_scm"
   },
   "provenance": {
+    "intervention": {
+      "mode": "hard_interventional",
+      "signature": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
     "target_derivation": "tabiclv2_latent_node",
     "target_relevant_feature_count_range": {
       "max": 6,
@@ -19,7 +23,7 @@
     }
   },
   "schema_name": "dagzoo_generate_handoff_manifest",
-  "schema_version": 4,
+  "schema_version": 5,
   "summary": {
     "generated_datasets": 2
   }

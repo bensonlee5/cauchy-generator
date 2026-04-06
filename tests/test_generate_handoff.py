@@ -21,6 +21,10 @@ from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME, REPLAY_CATALOG_FI
 _UNIT_REQUEST_RUN_ID = "1" * 32
 _UNIT_LAYOUT_PLAN_ID = "4" * 32
 _UNIT_DATASET_IDS = ("2" * 32, "3" * 32)
+_UNIT_INTERVENTION = {
+    "mode": "hard_interventional",
+    "signature": "a" * 32,
+}
 
 
 def _generate_overrides(handoff_root: str) -> dict[str, object]:
@@ -49,6 +53,7 @@ def _catalog_record(
     layout_plan: str = _UNIT_LAYOUT_PLAN_ID,
     target_relevant_feature_count: int = 5,
     target_relevant_feature_fraction: float = 0.625,
+    intervention: dict[str, str] | None = None,
 ) -> dict[str, object]:
     record: dict[str, object] = {
         "dataset_index": dataset_index,
@@ -69,6 +74,8 @@ def _catalog_record(
             "feature_fraction": target_relevant_feature_fraction,
         },
     }
+    if intervention is not None:
+        record["intervention"] = dict(intervention)
     return record
 
 
@@ -90,6 +97,7 @@ def _write_generate_run_artifacts(
     run_root: Path,
     *,
     include_curated: bool = False,
+    intervention: dict[str, str] | None = None,
 ) -> None:
     generated_dir = run_root / "generated"
     generated_dir.mkdir(parents=True, exist_ok=True)
@@ -100,6 +108,7 @@ def _write_generate_run_artifacts(
             dataset_id=dataset_id,
             target_relevant_feature_count=5 + index,
             target_relevant_feature_fraction=0.625 + (0.125 * index),
+            intervention=intervention,
         )
         for index, dataset_id in enumerate(_UNIT_DATASET_IDS)
     ]
@@ -191,6 +200,78 @@ def test_build_generate_handoff_manifest_includes_curated_dir_and_provenance(
         "target_relevant_feature_count_range": {"min": 5, "max": 6},
         "target_relevant_feature_fraction_range": {"min": 0.625, "max": 0.75},
     }
+
+
+def test_build_generate_handoff_manifest_includes_intervention_provenance(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    _write_generate_run_artifacts(run_root, intervention=_UNIT_INTERVENTION)
+
+    payload = build_generate_handoff_manifest(
+        config_path="configs/default.yaml",
+        generate_invocation_overrides=_generate_overrides(str(run_root)),
+        run_root=run_root,
+        generated_dir=run_root / "generated",
+        effective_config_path=run_root / "internal" / "effective_config.yaml",
+        effective_config_trace_path=run_root / "internal" / "effective_config_trace.yaml",
+        generated_datasets=2,
+        generation_elapsed_seconds=12.0,
+        requested_device="cpu",
+        resolved_device="cpu",
+        hardware_backend="cpu",
+        hardware_device_name="CPU",
+        hardware_tier="cpu",
+        hardware_policy="none",
+    )
+
+    validate_generate_handoff_manifest(payload)
+    assert payload["provenance"] == {
+        "intervention": _UNIT_INTERVENTION,
+        "target_derivation": "tabiclv2_latent_node",
+        "target_relevant_feature_count_range": {"min": 5, "max": 6},
+        "target_relevant_feature_fraction_range": {"min": 0.625, "max": 0.75},
+    }
+
+
+def test_build_generate_handoff_manifest_rejects_mixed_intervention_provenance(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "run"
+    generated_dir = run_root / "generated"
+    shard_dir = generated_dir / "shard_00000"
+    _write_ndjson(
+        shard_dir / DATASET_CATALOG_FILENAME,
+        [
+            _catalog_record(
+                dataset_index=0, dataset_id=_UNIT_DATASET_IDS[0], intervention=_UNIT_INTERVENTION
+            ),
+            _catalog_record(
+                dataset_index=1,
+                dataset_id=_UNIT_DATASET_IDS[1],
+                intervention={
+                    "mode": "hard_interventional",
+                    "signature": "b" * 32,
+                },
+            ),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="contains mixed intervention summaries; expected one"):
+        build_generate_handoff_manifest(
+            config_path="configs/default.yaml",
+            generate_invocation_overrides=_generate_overrides(str(run_root)),
+            run_root=run_root,
+            generated_dir=generated_dir,
+            effective_config_path=run_root / "internal" / "effective_config.yaml",
+            effective_config_trace_path=run_root / "internal" / "effective_config_trace.yaml",
+            generated_datasets=2,
+            generation_elapsed_seconds=12.0,
+            requested_device="cpu",
+            resolved_device="cpu",
+            hardware_backend="cpu",
+            hardware_device_name="CPU",
+            hardware_tier="cpu",
+            hardware_policy="none",
+        )
 
 
 def test_write_generate_handoff_manifest_writes_json_and_validates_payload(tmp_path: Path) -> None:

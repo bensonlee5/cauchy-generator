@@ -172,6 +172,10 @@ def _write_generated_metadata(run_root: Path) -> None:
                             "request_run": "1" * 32,
                             "layout_plan": "4" * 32,
                         },
+                        "intervention": {
+                            "mode": "hard_interventional",
+                            "signature": "a" * 32,
+                        },
                         "target_derivation": "tabiclv2_latent_node",
                         "target_relevance": {
                             "feature_count": 5,
@@ -193,6 +197,10 @@ def _write_generated_metadata(run_root: Path) -> None:
                         "group_ids": {
                             "request_run": "1" * 32,
                             "layout_plan": "4" * 32,
+                        },
+                        "intervention": {
+                            "mode": "hard_interventional",
+                            "signature": "a" * 32,
                         },
                         "target_derivation": "tabiclv2_latent_node",
                         "target_relevance": {
@@ -359,10 +367,15 @@ def test_generated_metadata_record_paths_contract_golden(tmp_path: Path) -> None
     cfg.dataset.n_test = 8
     cfg.dataset.n_features_min = 8
     cfg.dataset.n_features_max = 8
+    cfg.dataset.n_classes_min = 4
+    cfg.dataset.n_classes_max = 4
     cfg.graph.n_nodes_min = 2
     cfg.graph.n_nodes_max = 6
     cfg.dataset.missing_rate = 0.1
     cfg.dataset.missing_mechanism = "mcar"
+    cfg.intervention.mode = "hard_interventional"
+    cfg.intervention.targets = [{"target_kind": "target", "value": 1.0}]  # type: ignore[list-item]
+    cfg.validate_generation_constraints()
 
     batch = generate_batch(cfg, num_datasets=1, seed=123, device="cpu")
     write_packed_parquet_shards_stream(batch, tmp_path, shard_size=8, compression="zstd")

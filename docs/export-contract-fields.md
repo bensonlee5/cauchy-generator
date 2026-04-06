@@ -19,6 +19,9 @@ One minimal per-dataset record written under each generated shard.
 | `group_ids.cohort` | `string` | when heterogeneous cohort grouping ids are available | `stable` | `dagzoo.io.shard_contract.build_dataset_catalog_record` | `keep` | shared heterogeneous raw-generation cohort key |
 | `group_ids.layout_plan` | `string` | when fixed-layout grouping ids are available | `stable` | `dagzoo.io.shard_contract.build_dataset_catalog_record` | `keep` | shared layout-plan grouping key |
 | `group_ids.request_run` | `string` | when group_ids present | `stable` | `dagzoo.io.shard_contract.build_dataset_catalog_record` | `keep` | request-run grouping key |
+| `intervention` | `object` | when hard-intervention metadata is available | `stable` | `dagzoo.io.shard_contract.build_dataset_catalog_record` | `keep` | summary-only intervention contract for downstream consumers |
+| `intervention.mode` | `string` | when intervention present | `stable` | `dagzoo.io.shard_contract.build_dataset_catalog_record` | `keep` | emitted intervention regime |
+| `intervention.signature` | `string` | when intervention present | `stable` | `dagzoo.io.shard_contract.build_dataset_catalog_record` | `keep` | stable intervention identity summary |
 | `n_classes` | `int|null` | always | `stable` | `dagzoo.io.shard_contract.build_dataset_catalog_record` | `keep` | emitted class count for classification tasks |
 | `n_features` | `int` | always | `stable` | `dagzoo.io.shard_contract.build_dataset_catalog_record` | `keep` | persisted feature count |
 | `n_test` | `int` | always | `stable` | `dagzoo.io.shard_contract.build_dataset_catalog_record` | `keep` | persisted test row count |
@@ -55,6 +58,9 @@ Minimal downstream handoff manifest written by dagzoo generate --handoff-root.
 | `identity.generated_corpus_id` | `string` | always | `stable` | `dagzoo.core.generate_handoff.write_generate_handoff_manifest` | `keep` | stable generated corpus id |
 | `identity.source_family` | `string` | always | `stable` | `dagzoo.core.generate_handoff.write_generate_handoff_manifest` | `keep` | handoff source family tag |
 | `provenance` | `object` | when generated catalogs expose corpus-level provenance | `stable` | `dagzoo.core.generate_handoff.write_generate_handoff_manifest` | `keep` | summarized latent-target provenance for downstream corpus consumers |
+| `provenance.intervention` | `object` | when hard-intervention provenance is present | `stable` | `dagzoo.core.generate_handoff.write_generate_handoff_manifest` | `keep` | summary-only intervention provenance for downstream corpora |
+| `provenance.intervention.mode` | `string` | when provenance.intervention present | `stable` | `dagzoo.core.generate_handoff.write_generate_handoff_manifest` | `keep` | generated corpus intervention regime |
+| `provenance.intervention.signature` | `string` | when provenance.intervention present | `stable` | `dagzoo.core.generate_handoff.write_generate_handoff_manifest` | `keep` | stable intervention identity summary for the generated corpus |
 | `provenance.target_derivation` | `string` | when provenance present | `stable` | `dagzoo.core.generate_handoff.write_generate_handoff_manifest` | `keep` | current target-derivation contract marker |
 | `provenance.target_relevant_feature_count_range` | `object` | when provenance present | `stable` | `dagzoo.core.generate_handoff.write_generate_handoff_manifest` | `keep` | min/max relevant feature counts across the generated corpus |
 | `provenance.target_relevant_feature_count_range.max` | `int` | when provenance.target_relevant_feature_count_range present | `stable` | `dagzoo.core.generate_handoff.write_generate_handoff_manifest` | `keep` | upper bound of observed relevant feature counts |

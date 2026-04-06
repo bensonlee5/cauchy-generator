@@ -10,6 +10,18 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.19.8] - 2026-04-06
+
+### Changed
+
+- Added summary-only `intervention` metadata to hard-interventional bundle
+  outputs, public dataset catalog records, replay sidecars, and handoff
+  provenance so downstream consumers can distinguish observational and
+  hard-interventional corpora without exposing authored selector payloads.
+- Bumped the generate handoff manifest schema version to `5` to cover the new
+  optional `provenance.intervention` contract while keeping observational runs
+  backward-compatible when intervention mode is off.
+
 ## [0.19.7] - 2026-04-06
 
 ### Changed

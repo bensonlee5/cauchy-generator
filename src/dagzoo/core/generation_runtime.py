@@ -49,6 +49,7 @@ class _FixedSchemaFinalizationContext:
     """Cached metadata used by fixed-schema chunk finalization."""
 
     config_payload: dict[str, Any]
+    intervention_metadata: dict[str, Any] | None
     shift_metadata: dict[str, Any]
     feature_types: list[str]
     feature_index_map: list[int]
@@ -97,6 +98,20 @@ def _config_payload_for_metadata(
     ):
         runtime_payload.pop("fixed_layout_batch_size_cap", None)
     return config_payload
+
+
+def _intervention_summary_metadata(config: GeneratorConfig) -> dict[str, Any] | None:
+    """Return summary-only intervention metadata for emitted bundle contracts."""
+
+    if str(config.intervention.mode) != INTERVENTION_MODE_HARD_INTERVENTIONAL:
+        return None
+    signature = config.intervention.signature
+    if not isinstance(signature, str) or not signature:
+        raise ValueError("Hard-interventional metadata emission requires intervention.signature.")
+    return {
+        "mode": str(config.intervention.mode),
+        "signature": str(signature),
+    }
 
 
 def _classification_class_structure(
@@ -263,6 +278,7 @@ def _build_fixed_schema_finalization_context(
     )
     return _FixedSchemaFinalizationContext(
         config_payload=config_payload,
+        intervention_metadata=_intervention_summary_metadata(config),
         shift_metadata=_build_shift_metadata(
             shift_params=shift_params,
             function_family_mix=config.mechanism.function_family_mix,
@@ -328,6 +344,8 @@ def _build_bundle_metadata(
             "config": copy.deepcopy(context.config_payload),
         }
     )
+    if context.intervention_metadata is not None:
+        metadata["intervention"] = copy.deepcopy(context.intervention_metadata)
     if missingness_summary is not None:
         metadata["missingness"] = missingness_summary
     if class_structure is not None:
