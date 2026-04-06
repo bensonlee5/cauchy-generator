@@ -1498,10 +1498,11 @@ def _apply_node_plan_batch(
     latent = latent * weights.unsqueeze(1)
     mean_l2 = torch.mean(torch.norm(latent, dim=2), dim=1)
     latent = latent / torch.clamp(mean_l2.view(-1, 1, 1), min=1e-6)
+    latent_for_descendants = latent
+    latent_for_extraction = latent
     if intervention_value is not None:
-        latent = torch.full_like(latent, float(intervention_value))
-    if intervention_value is not None:
-        latent = torch.full_like(latent, float(intervention_value))
+        latent_for_descendants = torch.full_like(latent, float(intervention_value))
+        latent_for_extraction = latent_for_descendants.clone()
 
     extracted: dict[str, torch.Tensor] = {}
     converter_start = time.perf_counter()
@@ -1511,7 +1512,7 @@ def _apply_node_plan_batch(
             if group.all_unit_width:
                 grouped_input = torch.cat(
                     [
-                        latent[:, :, int(spec.column_start) : int(spec.column_end)]
+                        latent_for_extraction[:, :, int(spec.column_start) : int(spec.column_end)]
                         for spec in group.slices
                     ],
                     dim=2,
@@ -1530,14 +1531,16 @@ def _apply_node_plan_batch(
                 for local_index, spec in enumerate(group.slices):
                     start = int(spec.column_start)
                     end = int(spec.column_end)
-                    latent[:, :, start:end] = x_prime[:, :, local_index : local_index + 1]
+                    latent_for_extraction[:, :, start:end] = x_prime[
+                        :, :, local_index : local_index + 1
+                    ]
                     extracted[str(spec.key)] = values[:, :, local_index]
                 continue
             for spec, plan in zip(group.slices, group.plans, strict=True):
                 start = int(spec.column_start)
                 end = int(spec.column_end)
                 spec_out, values = apply_numeric_converter_plan_batch(
-                    latent[:, :, start:end],
+                    latent_for_extraction[:, :, start:end],
                     rng.keyed("converter", spec.spec_index),
                     plan,
                 )
@@ -1548,13 +1551,13 @@ def _apply_node_plan_batch(
                         spec_out = torch.nn.functional.pad(
                             spec_out, (0, (end - start) - int(spec_out.shape[2]))
                         )
-                latent[:, :, start:end] = spec_out
+                latent_for_extraction[:, :, start:end] = spec_out
                 extracted[str(spec.key)] = values
             continue
 
         if not group.uses_center_random_fn:
             x_prime, values = _apply_categorical_group_batch(
-                _categorical_group_input_views(latent, group.slices),
+                _categorical_group_input_views(latent_for_extraction, group.slices),
                 rng,
                 group.plan,
                 n_categories=group.category_count,
@@ -1573,13 +1576,13 @@ def _apply_node_plan_batch(
                         spec_out = torch.nn.functional.pad(
                             spec_out, (0, (end - start) - int(spec_out.shape[2]))
                         )
-                latent[:, :, start:end] = spec_out
+                latent_for_extraction[:, :, start:end] = spec_out
                 extracted[str(spec.key)] = values[:, :, local_index]
             continue
         for spec in group.slices:
             start = int(spec.column_start)
             end = int(spec.column_end)
-            spec_view = latent[:, :, start:end].unsqueeze(2)
+            spec_view = latent_for_extraction[:, :, start:end].unsqueeze(2)
             x_prime, values = _apply_categorical_group_batch(
                 spec_view,
                 rng.keyed("converter", spec.spec_index),
@@ -1596,7 +1599,7 @@ def _apply_node_plan_batch(
                     spec_out = torch.nn.functional.pad(
                         spec_out, (0, (end - start) - int(spec_out.shape[2]))
                     )
-            latent[:, :, start:end] = spec_out
+            latent_for_extraction[:, :, start:end] = spec_out
             extracted[str(spec.key)] = values[:, :, 0]
 
     _accumulate_runtime_metric(
@@ -1612,7 +1615,7 @@ def _apply_node_plan_batch(
 
     if intervention_value is None:
         scale = rng.keyed("latent_scale").log_uniform((rng.batch_size,), low=0.1, high=10.0)
-        latent = latent * scale.view(-1, 1, 1)
+        latent_for_descendants = latent_for_extraction * scale.view(-1, 1, 1)
     _accumulate_runtime_metric(
         runtime_metrics_out,
         "node_apply_elapsed_seconds",
@@ -1623,7 +1626,7 @@ def _apply_node_plan_batch(
         "node_apply_cpu_time_seconds",
         time.process_time() - node_start_cpu,
     )
-    return latent, extracted
+    return latent_for_descendants, extracted
 
 
 def _apply_node_plan_batch_prepared(
@@ -1763,6 +1766,11 @@ def _apply_node_plan_batch_prepared(
     latent = latent * weights.unsqueeze(1)
     mean_l2 = torch.mean(torch.norm(latent, dim=2), dim=1)
     latent = latent / torch.clamp(mean_l2.view(-1, 1, 1), min=1e-6)
+    latent_for_descendants = latent
+    latent_for_extraction = latent
+    if intervention_value is not None:
+        latent_for_descendants = torch.full_like(latent, float(intervention_value))
+        latent_for_extraction = latent_for_descendants.clone()
 
     extracted: dict[str, torch.Tensor] = {}
     converter_start = time.perf_counter()
@@ -1772,7 +1780,7 @@ def _apply_node_plan_batch_prepared(
             if group.all_unit_width:
                 grouped_input = torch.cat(
                     [
-                        latent[:, :, int(spec.column_start) : int(spec.column_end)]
+                        latent_for_extraction[:, :, int(spec.column_start) : int(spec.column_end)]
                         for spec in group.slices
                     ],
                     dim=2,
@@ -1791,14 +1799,16 @@ def _apply_node_plan_batch_prepared(
                 for local_index, spec in enumerate(group.slices):
                     start = int(spec.column_start)
                     end = int(spec.column_end)
-                    latent[:, :, start:end] = x_prime[:, :, local_index : local_index + 1]
+                    latent_for_extraction[:, :, start:end] = x_prime[
+                        :, :, local_index : local_index + 1
+                    ]
                     extracted[str(spec.key)] = values[:, :, local_index]
                 continue
             for spec, plan in zip(group.slices, group.plans, strict=True):
                 start = int(spec.column_start)
                 end = int(spec.column_end)
                 spec_out, values = apply_numeric_converter_plan_batch(
-                    latent[:, :, start:end],
+                    latent_for_extraction[:, :, start:end],
                     node_rng.keyed("converter", spec.spec_index),
                     plan,
                 )
@@ -1809,13 +1819,13 @@ def _apply_node_plan_batch_prepared(
                         spec_out = torch.nn.functional.pad(
                             spec_out, (0, (end - start) - int(spec_out.shape[2]))
                         )
-                latent[:, :, start:end] = spec_out
+                latent_for_extraction[:, :, start:end] = spec_out
                 extracted[str(spec.key)] = values
             continue
 
         if not group.uses_center_random_fn:
             x_prime, values = _apply_categorical_group_batch(
-                _categorical_group_input_views(latent, group.slices),
+                _categorical_group_input_views(latent_for_extraction, group.slices),
                 node_rng,
                 group.plan,
                 n_categories=group.category_count,
@@ -1834,13 +1844,13 @@ def _apply_node_plan_batch_prepared(
                         spec_out = torch.nn.functional.pad(
                             spec_out, (0, (end - start) - int(spec_out.shape[2]))
                         )
-                latent[:, :, start:end] = spec_out
+                latent_for_extraction[:, :, start:end] = spec_out
                 extracted[str(spec.key)] = values[:, :, local_index]
             continue
         for spec in group.slices:
             start = int(spec.column_start)
             end = int(spec.column_end)
-            spec_view = latent[:, :, start:end].unsqueeze(2)
+            spec_view = latent_for_extraction[:, :, start:end].unsqueeze(2)
             x_prime, values = _apply_categorical_group_batch(
                 spec_view,
                 node_rng.keyed("converter", spec.spec_index),
@@ -1862,7 +1872,7 @@ def _apply_node_plan_batch_prepared(
                     spec_out = torch.nn.functional.pad(
                         spec_out, (0, (end - start) - int(spec_out.shape[2]))
                     )
-            latent[:, :, start:end] = spec_out
+            latent_for_extraction[:, :, start:end] = spec_out
             extracted[str(spec.key)] = values[:, :, 0]
 
     _accumulate_runtime_metric(
@@ -1882,7 +1892,7 @@ def _apply_node_plan_batch_prepared(
             path=("latent_scale",),
             cached_child_rngs=cached_child_rngs,
         ).log_uniform((node_rng.batch_size,), low=0.1, high=10.0)
-        latent = latent * scale.view(-1, 1, 1)
+        latent_for_descendants = latent_for_extraction * scale.view(-1, 1, 1)
     _accumulate_runtime_metric(
         runtime_metrics_out,
         "node_apply_elapsed_seconds",
@@ -1893,7 +1903,7 @@ def _apply_node_plan_batch_prepared(
         "node_apply_cpu_time_seconds",
         time.process_time() - node_start_cpu,
     )
-    return latent, extracted
+    return latent_for_descendants, extracted
 
 
 def _generate_fixed_layout_raw_batch(

@@ -114,7 +114,7 @@ def canonical_request_run_provenance(metadata: Mapping[str, Any]) -> dict[str, A
             path="metadata.noise_distribution.mixture_weights",
         )
 
-    return {
+    payload = {
         "dataset": {
             "task": _require_string(
                 dataset.get("task"),
@@ -165,6 +165,20 @@ def canonical_request_run_provenance(metadata: Mapping[str, Any]) -> dict[str, A
             ),
         },
     }
+    intervention = metadata.get("intervention")
+    if intervention is not None:
+        intervention_mapping = _require_mapping(intervention, path="metadata.intervention")
+        payload["intervention"] = {
+            "mode": _require_string(
+                intervention_mapping.get("mode"),
+                path="metadata.intervention.mode",
+            ),
+            "signature": _require_string(
+                intervention_mapping.get("signature"),
+                path="metadata.intervention.signature",
+            ),
+        }
+    return payload
 
 
 def canonical_request_run_split_group(

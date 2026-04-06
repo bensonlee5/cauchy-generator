@@ -431,6 +431,20 @@ def test_generate_one_executes_hard_interventional_target_mode() -> None:
     assert isinstance(bundle.metadata["split_groups"]["request_run"], str)
 
 
+def test_generate_batch_heterogeneous_executes_hard_interventional_target_mode() -> None:
+    cfg = _tiny_heterogeneous_regression_config()
+    cfg.intervention.mode = INTERVENTION_MODE_HARD_INTERVENTIONAL
+    cfg.intervention.targets = [{"target_kind": "target", "value": 1.0}]  # type: ignore[list-item]
+    cfg.validate_generation_constraints()
+
+    bundles = generate_batch(cfg, num_datasets=2, seed=10, device="cpu")
+
+    assert len(bundles) == 2
+    for bundle in bundles:
+        torch.testing.assert_close(bundle.y_train, torch.full_like(bundle.y_train, 1.0))
+        torch.testing.assert_close(bundle.y_test, torch.full_like(bundle.y_test, 1.0))
+
+
 def test_generate_one_with_compositional_stress_profile_records_internal_layout_stress_name() -> (
     None
 ):
@@ -3693,10 +3707,18 @@ def test_generate_one_request_run_identity_changes_with_hard_intervention_signat
     bundle_a = generate_one(interventional_a, seed=1234, device="cpu")
     bundle_b = generate_one(interventional_b, seed=1234, device="cpu")
 
-    assert bundle_base.metadata["layout_plan_signature"] == bundle_a.metadata["layout_plan_signature"]
+    assert (
+        bundle_base.metadata["layout_plan_signature"] == bundle_a.metadata["layout_plan_signature"]
+    )
     assert bundle_a.metadata["layout_plan_signature"] == bundle_b.metadata["layout_plan_signature"]
-    assert bundle_base.metadata["split_groups"]["request_run"] != bundle_a.metadata["split_groups"]["request_run"]
-    assert bundle_a.metadata["split_groups"]["request_run"] != bundle_b.metadata["split_groups"]["request_run"]
+    assert (
+        bundle_base.metadata["split_groups"]["request_run"]
+        != bundle_a.metadata["split_groups"]["request_run"]
+    )
+    assert (
+        bundle_a.metadata["split_groups"]["request_run"]
+        != bundle_b.metadata["split_groups"]["request_run"]
+    )
     assert bundle_base.metadata["dataset_id"] != bundle_a.metadata["dataset_id"]
     assert bundle_a.metadata["dataset_id"] != bundle_b.metadata["dataset_id"]
 

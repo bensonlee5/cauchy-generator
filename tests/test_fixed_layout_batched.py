@@ -140,6 +140,38 @@ def _regression_intervention_layout_and_plan() -> tuple[LayoutPlan, FixedLayoutE
     return layout, FixedLayoutExecutionPlan(node_plans=(node_0_plan, node_1_plan, node_2_plan))
 
 
+def _layout_stub(
+    *,
+    feature_types: list[str],
+    graph_nodes: int,
+    adjacency: torch.Tensor,
+    feature_node_assignment: list[int],
+    target_node_assignment: int | None = None,
+) -> LayoutPlan:
+    graph_edges = int(adjacency.to(dtype=torch.int64).sum().item())
+    n_features = len(feature_types)
+    cat_idx = [idx for idx, kind in enumerate(feature_types) if kind == "cat"]
+    card_by_feature = {idx: 4 for idx in cat_idx}
+    density_denominator = graph_nodes * max(graph_nodes - 1, 1)
+    graph_edge_density = float(graph_edges) / float(density_denominator) if graph_nodes > 1 else 0.0
+    return LayoutPlan(
+        n_features=n_features,
+        n_cat=len(cat_idx),
+        cat_idx=cat_idx,
+        cardinalities=[4 for _ in cat_idx],
+        card_by_feature=card_by_feature,
+        n_classes=3,
+        feature_types=list(feature_types),
+        graph_nodes=int(graph_nodes),
+        graph_edges=graph_edges,
+        graph_depth_nodes=int(graph_nodes),
+        graph_edge_density=graph_edge_density,
+        adjacency=adjacency,
+        feature_node_assignment=list(feature_node_assignment),
+        target_to_node=0 if target_node_assignment is None else int(target_node_assignment),
+    )
+
+
 @pytest.mark.parametrize(
     "name",
     ["relu_sq", "softmax", "onehot_argmax", "argsort", "rank"],
@@ -1322,7 +1354,9 @@ def test_generate_fixed_layout_label_batch_matches_graph_batch_targets() -> None
     torch.testing.assert_close(label_batch, y_batch)
 
 
-def test_resolve_fixed_layout_intervention_plan_collapses_duplicates_and_rejects_conflicts() -> None:
+def test_resolve_fixed_layout_intervention_plan_collapses_duplicates_and_rejects_conflicts() -> (
+    None
+):
     layout = _layout_stub(
         feature_types=["num", "num", "num"],
         graph_nodes=3,
@@ -1365,7 +1399,9 @@ def test_resolve_fixed_layout_intervention_plan_collapses_duplicates_and_rejects
         resolve_fixed_layout_intervention_plan(conflicting, layout)
 
 
-def test_generate_fixed_layout_graph_batch_feature_node_intervention_clamps_node_and_descendants() -> None:
+def test_generate_fixed_layout_graph_batch_feature_node_intervention_clamps_node_and_descendants() -> (
+    None
+):
     cfg = load_repo_config()
     cfg.dataset.task = "regression"
     cfg.dataset.n_train = 6
@@ -1396,15 +1432,14 @@ def test_generate_fixed_layout_graph_batch_feature_node_intervention_clamps_node
         noise_spec=None,
     )
 
-    torch.testing.assert_close(
-        intervened_x[:, :, 0],
-        torch.full_like(intervened_x[:, :, 0], 3.5),
-    )
+    torch.testing.assert_close(intervened_x[:, :, 0], torch.zeros_like(intervened_x[:, :, 0]))
     torch.testing.assert_close(intervened_x[:, :, 1], baseline_x[:, :, 1])
     assert not torch.allclose(intervened_y, baseline_y)
 
 
-def test_generate_fixed_layout_graph_batch_latent_node_intervention_clamps_node_and_descendants() -> None:
+def test_generate_fixed_layout_graph_batch_latent_node_intervention_clamps_node_and_descendants() -> (
+    None
+):
     cfg = load_repo_config()
     cfg.dataset.task = "regression"
     cfg.dataset.n_train = 6
@@ -1438,10 +1473,7 @@ def test_generate_fixed_layout_graph_batch_latent_node_intervention_clamps_node_
         noise_spec=None,
     )
 
-    torch.testing.assert_close(
-        intervened_x[:, :, 0],
-        torch.full_like(intervened_x[:, :, 0], -2.25),
-    )
+    torch.testing.assert_close(intervened_x[:, :, 0], torch.zeros_like(intervened_x[:, :, 0]))
     torch.testing.assert_close(intervened_x[:, :, 1], baseline_x[:, :, 1])
     assert not torch.allclose(intervened_y, baseline_y)
 

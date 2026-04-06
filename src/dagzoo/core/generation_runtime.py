@@ -10,7 +10,11 @@ from typing import Any
 
 import torch
 
-from dagzoo.config import GeneratorConfig
+from dagzoo.config import (
+    INTERVENTION_MODE_HARD_INTERVENTIONAL,
+    INTERVENTION_TARGET_KIND_TARGET,
+    GeneratorConfig,
+)
 from dagzoo.core.config_predicates import missingness_enabled as _is_missingness_enabled
 from dagzoo.core.layout_types import LayoutPlan
 from dagzoo.core.metadata import _build_lineage_metadata, _build_shift_metadata
@@ -331,6 +335,44 @@ def _build_bundle_metadata(
     return metadata
 
 
+def _direct_target_intervention_value(config: GeneratorConfig) -> float | None:
+    """Return the authored direct target intervention value when present."""
+
+    if str(config.intervention.mode) != INTERVENTION_MODE_HARD_INTERVENTIONAL:
+        return None
+    for target in config.intervention.targets:
+        if str(target.target_kind) == INTERVENTION_TARGET_KIND_TARGET:
+            return float(target.value)
+    return None
+
+
+def _apply_emitted_target_intervention(
+    config: GeneratorConfig,
+    layout: LayoutPlan,
+    *,
+    y_train: torch.Tensor,
+    y_test: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, bool]:
+    """Apply a direct target intervention to emitted targets after postprocess."""
+
+    target_value = _direct_target_intervention_value(config)
+    if target_value is None:
+        return y_train, y_test, False
+    if str(config.dataset.task) == "classification":
+        class_value = int(target_value) % int(layout.n_classes)
+        return (
+            torch.full_like(y_train, class_value),
+            torch.full_like(y_test, class_value),
+            True,
+        )
+    emitted_value = float(target_value)
+    return (
+        torch.full_like(y_train, emitted_value),
+        torch.full_like(y_test, emitted_value),
+        True,
+    )
+
+
 def _finalize_processed_bundle(
     config: GeneratorConfig,
     layout: LayoutPlan,
@@ -369,7 +411,18 @@ def _finalize_processed_bundle(
     else:
         missingness_summary = None
 
-    if config.dataset.task == "classification" and not _classification_split_valid(y_train, y_test):
+    y_train, y_test, has_direct_target_override = _apply_emitted_target_intervention(
+        config,
+        layout,
+        y_train=y_train,
+        y_test=y_test,
+    )
+
+    if (
+        config.dataset.task == "classification"
+        and not has_direct_target_override
+        and not _classification_split_valid(y_train, y_test)
+    ):
         raise InvalidClassSplitError("invalid_class_split")
 
     x_train = x_train.to(device=device, dtype=dtype)
