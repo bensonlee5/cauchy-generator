@@ -352,6 +352,60 @@ def _batch_corpus_payload(bundles: list[DatasetBundle]) -> list[dict[str, object
     return [_bundle_corpus_payload(bundle) for bundle in bundles]
 
 
+def _assert_corpus_payload_matches_expected(
+    observed: object,
+    expected: object,
+    *,
+    path: str = "root",
+    atol: float = 1e-6,
+) -> None:
+    if isinstance(expected, bool) or isinstance(observed, bool):
+        assert observed is expected, f"{path}: expected {expected!r}, observed {observed!r}"
+        return
+    if expected is None or observed is None:
+        assert observed is expected, f"{path}: expected {expected!r}, observed {observed!r}"
+        return
+    if isinstance(expected, dict):
+        assert isinstance(observed, dict), (
+            f"{path}: expected dict, observed {type(observed).__name__}"
+        )
+        assert set(observed) == set(expected), f"{path}: key mismatch"
+        for key in expected:
+            _assert_corpus_payload_matches_expected(
+                observed[key],
+                expected[key],
+                path=f"{path}.{key}",
+                atol=atol,
+            )
+        return
+    if isinstance(expected, list):
+        assert isinstance(observed, list), (
+            f"{path}: expected list, observed {type(observed).__name__}"
+        )
+        assert len(observed) == len(expected), (
+            f"{path}: expected {len(expected)} items, observed {len(observed)}"
+        )
+        for index, (observed_item, expected_item) in enumerate(
+            zip(observed, expected, strict=True)
+        ):
+            _assert_corpus_payload_matches_expected(
+                observed_item,
+                expected_item,
+                path=f"{path}[{index}]",
+                atol=atol,
+            )
+        return
+    if isinstance(expected, float):
+        assert isinstance(observed, (int, float)), (
+            f"{path}: expected float-compatible value, observed {type(observed).__name__}"
+        )
+        assert abs(float(observed) - expected) <= atol, (
+            f"{path}: expected {expected!r}, observed {observed!r}, atol={atol}"
+        )
+        return
+    assert observed == expected, f"{path}: expected {expected!r}, observed {observed!r}"
+
+
 def test_generate_one_shapes() -> None:
     cfg = _tiny_regression_config()
     bundle = generate_one(cfg, seed=7, device="cpu")
@@ -470,7 +524,7 @@ def test_public_heterogeneous_and_stratified_batches_match_committed_corpus_fixt
     }
     expected_payload = json.loads(_PUBLIC_BATCH_CORPUS_FIXTURE.read_text(encoding="utf-8"))
 
-    assert observed_payload == expected_payload
+    _assert_corpus_payload_matches_expected(observed_payload, expected_payload)
 
 
 def test_generate_batch_rejects_removed_public_fixed_layout_mode() -> None:

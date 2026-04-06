@@ -432,17 +432,6 @@ def _batch_rng_for_dataset_seeds(
     return FixedLayoutBatchRng(seed=batch_seed, batch_size=len(dataset_seeds), device=device)
 
 
-def _build_prepared_batch_node_context(
-    node_context: _PreparedNodeExecutionContext,
-    batch_rng: FixedLayoutBatchRng,
-) -> _PreparedBatchNodeExecutionContext:
-    node_rng = batch_rng.keyed(*node_context.node_rng_path)
-    return _PreparedBatchNodeExecutionContext(
-        node_rng=node_rng,
-        child_rngs={path: node_rng.keyed(*path) for path in node_context.cached_rng_paths},
-    )
-
-
 def _is_leaf_function_plan(plan: FixedLayoutFunctionPlan) -> bool:
     return not isinstance(plan, (ProductFunctionPlan, PiecewiseFunctionPlan))
 
