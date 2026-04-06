@@ -1,0 +1,31 @@
+seed: 93
+
+dataset:
+  task: regression
+  n_train: 96
+  n_test: 24
+  n_features_min: 6
+  n_features_max: 6
+
+graph:
+  n_nodes_min: 6
+  n_nodes_max: 6
+
+intervention:
+  mode: hard_interventional
+  targets:
+    - target_kind: latent_node
+      index: 0
+      value: 1.75
+
+runtime:
+  device: cpu
+
+output:
+  out_dir: data/run_intervention_latent_node_smoke
+
+diagnostics:
+  enabled: false
+
+filter:
+  enabled: false

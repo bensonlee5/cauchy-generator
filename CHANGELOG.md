@@ -10,6 +10,27 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.19.9] - 2026-04-06
+
+### Added
+
+- Added repo-local hard-intervention smoke presets for direct target,
+  `feature_node`, and `latent_node` workflows so the supported selector shapes
+  are discoverable and runnable from `configs/`.
+- Added a public interventions workflow guide covering observational defaults,
+  hard-intervention authoring, supported selector kinds, artifact expectations,
+  and the deferred counterfactual boundary.
+
+### Changed
+
+- Extended CLI and handoff regression coverage so documented intervention
+  workflows now assert summary-only intervention metadata propagation across
+  generated catalogs, replay sidecars, and handoff manifests, while
+  observational runs continue omitting those fields.
+- Updated the docs publishing sync plus internal roadmap/parity references so
+  the generated site and maintainer status docs reflect the shipped RD-002
+  observational and hard-interventional workflow contract.
+
 ## [0.19.8] - 2026-04-06
 
 ### Changed

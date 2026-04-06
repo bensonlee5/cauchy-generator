@@ -41,7 +41,7 @@ top-level keys include:
 - runtime and identity fields such as `device`, `requested_device`,
   `resolved_device`, `dataset_index`, `dataset_id`, `dataset_seed`, and
   `run_num_datasets`
-- semantic summaries such as `prior`, `lineage`, `shift`,
+- semantic summaries such as `prior`, `lineage`, `shift`, `intervention`,
   `noise_distribution`, `generation_attempts`, and `filter`
 - optional task/runtime summaries such as `class_structure`, `missingness`,
   `split_groups`, `keyed_replay`, and `mechanism_families`
@@ -49,6 +49,11 @@ top-level keys include:
 
 The exhaustive recursive contract for `metadata.*` lives in
 [export-contract-fields.md](export-contract-fields.md).
+
+Observational bundles omit `metadata.intervention`. Hard-interventional bundles
+add only the summary object `{mode, signature}` at the top level; the full
+authored selector payload remains in `effective_config.yaml` rather than
+`metadata.config`.
 
 ### `metadata.prior` sub-object
 
@@ -171,6 +176,7 @@ Present when public grouping ids are available.
 ### `intervention` sub-object
 
 Present when hard-intervention metadata is available.
+Observational runs omit this field entirely.
 
 | Key         | Type | Description                             |
 | ----------- | ---- | --------------------------------------- |
@@ -214,7 +220,9 @@ handoff_root/
 ```
 
 `generated/` reuses the same public shard contract described above.
-`internal/` remains dagzoo-only.
+`internal/` remains dagzoo-only. `replay_catalog.ndjson` stores the full
+per-dataset metadata payload, including the same summary-only `intervention`
+object when present.
 
 ### `handoff_manifest.json`
 
@@ -223,7 +231,7 @@ handoff_root/
 | Key                  | Type   | Description                                                                          |
 | -------------------- | ------ | ------------------------------------------------------------------------------------ |
 | `schema_name`        | str    | Exact string `dagzoo_generate_handoff_manifest`                                      |
-| `schema_version`     | int    | Exact integer `4`                                                                    |
+| `schema_version`     | int    | Exact integer `5`                                                                    |
 | `identity`           | object | Stable generate-run and corpus ids plus source-family tag                            |
 | `artifacts_relative` | object | Manifest-relative artifact paths for portable downstream consumption                 |
 | `summary`            | object | Generated dataset count                                                              |
@@ -260,6 +268,8 @@ Current `provenance.intervention` keys:
 
 - `mode`
 - `signature`
+
+`provenance.intervention` is omitted for observational generated corpora.
 
 ______________________________________________________________________
 

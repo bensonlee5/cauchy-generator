@@ -1,0 +1,31 @@
+seed: 92
+
+dataset:
+  task: regression
+  n_train: 96
+  n_test: 24
+  n_features_min: 6
+  n_features_max: 6
+
+graph:
+  n_nodes_min: 6
+  n_nodes_max: 6
+
+intervention:
+  mode: hard_interventional
+  targets:
+    - target_kind: feature_node
+      index: 1
+      value: -1.25
+
+runtime:
+  device: cpu
+
+output:
+  out_dir: data/run_intervention_feature_node_smoke
+
+diagnostics:
+  enabled: false
+
+filter:
+  enabled: false

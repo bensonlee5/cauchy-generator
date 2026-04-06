@@ -1198,6 +1198,86 @@ def test_generate_cli_shift_presets_emit_shift_metadata_no_write(
 
 
 @pytest.mark.parametrize(
+    ("preset_path", "output_dir_name"),
+    [
+        (
+            "configs/preset_intervention_target_generate_smoke.yaml",
+            "intervention_target",
+        ),
+        (
+            "configs/preset_intervention_feature_node_generate_smoke.yaml",
+            "intervention_feature_node",
+        ),
+        (
+            "configs/preset_intervention_latent_node_generate_smoke.yaml",
+            "intervention_latent_node",
+        ),
+    ],
+)
+def test_generate_cli_intervention_presets_emit_summary_metadata_no_write(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    preset_path: str,
+    output_dir_name: str,
+) -> None:
+    from dagzoo.core import dataset as dataset_mod
+
+    cfg = GeneratorConfig.from_yaml(preset_path)
+    cfg.runtime.device = "cpu"
+    cfg.output.out_dir = str(tmp_path / output_dir_name)
+    config_path = write_config(tmp_path, cfg, f"{output_dir_name}.yaml")
+
+    captured_metadata: list[dict[str, object]] = []
+    original_generate_batch_iter = dataset_mod.generate_batch_iter
+
+    def _capture_generate_batch_iter(
+        config,
+        *,
+        num_datasets: int,
+        seed: int | None = None,
+        device: str | None = None,
+    ):
+        for bundle in original_generate_batch_iter(
+            config,
+            num_datasets=num_datasets,
+            seed=seed,
+            device=device,
+        ):
+            captured_metadata.append(bundle.metadata)
+            yield bundle
+
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.generate.generate_batch_iter",
+        _capture_generate_batch_iter,
+    )
+
+    code = main(
+        [
+            "generate",
+            "--config",
+            str(config_path),
+            "--num-datasets",
+            "2",
+            "--device",
+            "cpu",
+            "--hardware-policy",
+            "none",
+            "--no-dataset-write",
+        ]
+    )
+
+    assert code == 0
+    assert len(captured_metadata) == 2
+    expected_summary = {
+        "mode": "hard_interventional",
+        "signature": str(cfg.intervention.signature),
+    }
+    for metadata in captured_metadata:
+        assert metadata["intervention"] == expected_summary
+        assert "intervention" not in metadata["config"]
+
+
+@pytest.mark.parametrize(
     ("config_path", "expected_family"),
     [
         ("configs/preset_noise_gaussian_generate_smoke.yaml", "gaussian"),

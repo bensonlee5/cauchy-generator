@@ -194,7 +194,25 @@ itself.
 
 ______________________________________________________________________
 
-## 6. Missingness workflows
+## 6. Intervention workflows
+
+Use interventions when you need opt-in hard interventions on the canonical
+generation path while keeping observational generation as the default.
+
+```bash
+dagzoo generate --config configs/preset_intervention_target_generate_smoke.yaml --num-datasets 25 --out data/run_intervention_target
+```
+
+Public artifacts expose only `intervention.mode` and `intervention.signature`;
+the authored selector/value payload stays in `effective_config.yaml`.
+`counterfactual` remains deferred and unsupported in the current public
+surface.
+
+Detailed guide: [Interventions](features/interventions.md)
+
+______________________________________________________________________
+
+## 7. Missingness workflows
 
 Use missingness workflows for MCAR/MAR/MNAR robustness regimes:
 
@@ -206,7 +224,7 @@ Detailed guide: [Missingness](features/missingness.md)
 
 ______________________________________________________________________
 
-## 7. Many-class workflows
+## 8. Many-class workflows
 
 Use many-class workflows to exercise the rollout envelope (`n_classes_max <= 32`).
 
@@ -236,7 +254,7 @@ Detailed guide: [Many-class](features/many-class.md)
 
 ______________________________________________________________________
 
-## 8. Shift workflows
+## 9. Shift workflows
 
 Use shift profiles for controlled graph/mechanism/noise drift:
 
@@ -248,7 +266,7 @@ Detailed guide: [Shift / Drift](features/shift.md)
 
 ______________________________________________________________________
 
-## 9. Steering workflows
+## 10. Steering workflows
 
 Use steering workflows when you want one opt-in harder-front preset that
 reuses existing missingness, shift, and noise levers:
@@ -272,7 +290,7 @@ Detailed guide: [Meta-Feature Coverage Steering](features/steering.md)
 
 ______________________________________________________________________
 
-## 10. Stress-profile workflows
+## 11. Stress-profile workflows
 
 Use robustness stress profiles when you want one named carried slice rather
 than a hand-authored harder config:
@@ -296,7 +314,7 @@ Detailed guide: [Robustness Stress Profiles](features/stress-profiles.md)
 
 ______________________________________________________________________
 
-## 11. Noise workflows
+## 12. Noise workflows
 
 Use noise workflows for explicit Gaussian/Laplace/Student-t/mixture regimes:
 
@@ -308,7 +326,7 @@ Detailed guide: [Noise Diversification](features/noise.md)
 
 ______________________________________________________________________
 
-## 12. Mechanism-diversity workflows
+## 13. Mechanism-diversity workflows
 
 Use mechanism-diversity workflows when you want to compare the current
 baseline sampler against the shipped `piecewise` control and the widened `gp`
@@ -349,7 +367,7 @@ Detailed guide: [Mechanism Diversity](features/mechanism-diversity.md)
 
 ______________________________________________________________________
 
-## 13. Benchmark workflows and guardrails
+## 14. Benchmark workflows and guardrails
 
 Use benchmark workflows for smoke checks, feature guardrails, and regression
 gating.
@@ -385,7 +403,7 @@ with per-variant diversity status and throughput deltas.
 
 ______________________________________________________________________
 
-## 14. Generate handoff workflows
+## 15. Generate handoff workflows
 
 Use `dagzoo generate --handoff-root` when a downstream consumer needs a stable
 handoff root. There is no separate request-file

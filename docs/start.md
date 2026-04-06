@@ -64,6 +64,9 @@ Every generate run writes:
 `filter.enabled` controls deferred replay and benchmark filter measurement, but
 generation still uses `filter.min_target_*` plus `filter.max_attempts` when it
 resamples layouts for structural validity.
+Observational generation is the default. Hard interventions are opt-in through
+`intervention.mode: hard_interventional`; when that section is absent, public
+artifacts omit intervention metadata entirely.
 
 ______________________________________________________________________
 
@@ -96,6 +99,7 @@ ______________________________________________________________________
 
 - Want the published catalog and citations: [reference-packs.md](reference-packs.md)
 - Need custom generation controls: [usage-guide.md](usage-guide.md)
+- Need observational vs hard-interventional workflows: [features/interventions.md](features/interventions.md)
 - Need artifact and API contracts: [output-format.md](output-format.md)
 - Need the exhaustive field catalog: [export-contract-fields.md](export-contract-fields.md)
 - Want the runtime model: [how-it-works.md](how-it-works.md)
