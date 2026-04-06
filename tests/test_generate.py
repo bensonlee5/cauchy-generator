@@ -321,6 +321,27 @@ def test_generate_batch_heterogeneous_request_run_identity_changes_with_steering
     )
 
 
+def test_generate_batch_heterogeneous_request_run_identity_changes_with_hard_intervention_signature() -> (
+    None
+):
+    baseline = _tiny_heterogeneous_regression_config()
+    interventional = deepcopy(baseline)
+    interventional.intervention.mode = INTERVENTION_MODE_HARD_INTERVENTIONAL
+    interventional.intervention.targets = [  # type: ignore[list-item]
+        {"target_kind": "target", "value": 1.0},
+    ]
+    interventional.validate_generation_constraints()
+
+    batch_base = generate_batch(baseline, num_datasets=3, seed=1234, device="cpu")
+    batch_interventional = generate_batch(interventional, num_datasets=3, seed=1234, device="cpu")
+
+    assert (
+        batch_base[0].metadata["split_groups"]["request_run"]
+        != batch_interventional[0].metadata["split_groups"]["request_run"]
+    )
+    assert batch_base[0].metadata["dataset_id"] != batch_interventional[0].metadata["dataset_id"]
+
+
 def test_generate_one_uses_fixed_dataset_rows_and_updates_metadata_config_split() -> None:
     cfg = _tiny_regression_config()
     cfg.dataset.rows = 1024  # type: ignore[assignment]
@@ -391,17 +412,23 @@ def test_generate_one_with_relationship_stress_profile_materializes_locked_field
     assert "stress" not in bundle.metadata["config"]
 
 
-def test_generate_one_rejects_hard_interventional_mode_until_sampling_ships() -> None:
+def test_generate_one_executes_hard_interventional_target_mode() -> None:
     cfg = _tiny_regression_config()
     cfg.intervention.mode = INTERVENTION_MODE_HARD_INTERVENTIONAL
     cfg.intervention.targets = [{"target_kind": "target", "value": 1.0}]  # type: ignore[list-item]
     cfg.validate_generation_constraints()
 
-    with pytest.raises(
-        ValueError,
-        match=r"Interventional generation is not implemented yet",
-    ):
-        generate_one(cfg, seed=10, device="cpu")
+    bundle = generate_one(cfg, seed=10, device="cpu")
+
+    torch.testing.assert_close(
+        bundle.y_train,
+        torch.full_like(bundle.y_train, 1.0),
+    )
+    torch.testing.assert_close(
+        bundle.y_test,
+        torch.full_like(bundle.y_test, 1.0),
+    )
+    assert isinstance(bundle.metadata["split_groups"]["request_run"], str)
 
 
 def test_generate_one_with_compositional_stress_profile_records_internal_layout_stress_name() -> (
@@ -579,12 +606,14 @@ def test_generate_batch_with_plan_iter_batches_steering_missingness_changes(
         _layout,
         *,
         execution_plan: FixedLayoutExecutionPlan,
+        intervention_plan=None,
         grouped_noise_runtime,
         requested_device: str,
         resolved_device: str,
         noise_sigma_multiplier: float,
     ) -> list[SimpleNamespace]:
         _ = execution_plan
+        _ = intervention_plan
         _ = requested_device
         _ = resolved_device
         _ = noise_sigma_multiplier
@@ -826,12 +855,14 @@ def test_generate_batch_with_plan_iter_batches_noise_only_steering_by_cohort(
         _layout,
         *,
         execution_plan: FixedLayoutExecutionPlan,
+        intervention_plan=None,
         grouped_noise_runtime,
         requested_device: str,
         resolved_device: str,
         noise_sigma_multiplier: float,
     ) -> list[SimpleNamespace]:
         _ = execution_plan
+        _ = intervention_plan
         _ = requested_device
         _ = resolved_device
         _ = noise_sigma_multiplier
@@ -1072,12 +1103,14 @@ def test_generate_batch_with_plan_iter_batches_graph_steering_by_effective_plan(
         _layout,
         *,
         execution_plan: FixedLayoutExecutionPlan,
+        intervention_plan=None,
         grouped_noise_runtime,
         requested_device: str,
         resolved_device: str,
         noise_sigma_multiplier: float,
     ) -> list[SimpleNamespace]:
         _ = execution_plan
+        _ = intervention_plan
         _ = requested_device
         _ = resolved_device
         _ = noise_sigma_multiplier
@@ -1305,12 +1338,14 @@ def test_generate_batch_with_plan_iter_classification_steering_captures_split_fa
         _layout,
         *,
         execution_plan: FixedLayoutExecutionPlan,
+        intervention_plan=None,
         grouped_noise_runtime,
         requested_device: str,
         resolved_device: str,
         noise_sigma_multiplier: float,
     ) -> list[SimpleNamespace]:
         _ = execution_plan
+        _ = intervention_plan
         _ = requested_device
         _ = resolved_device
         _ = noise_sigma_multiplier
@@ -1581,12 +1616,14 @@ def test_generate_batch_with_plan_iter_dynamic_steering_uses_retry_attempt_plan_
         _layout,
         *,
         execution_plan: FixedLayoutExecutionPlan,
+        intervention_plan=None,
         grouped_noise_runtime,
         requested_device: str,
         resolved_device: str,
         noise_sigma_multiplier: float,
     ) -> list[SimpleNamespace]:
         _ = execution_plan
+        _ = intervention_plan
         _ = requested_device
         _ = resolved_device
         _ = noise_sigma_multiplier
@@ -1823,12 +1860,14 @@ def test_generate_batch_with_plan_iter_dynamic_steering_rejects_schema_mismatch(
         _layout,
         *,
         execution_plan: FixedLayoutExecutionPlan,
+        intervention_plan=None,
         grouped_noise_runtime,
         requested_device: str,
         resolved_device: str,
         noise_sigma_multiplier: float,
     ) -> list[SimpleNamespace]:
         _ = execution_plan
+        _ = intervention_plan
         _ = requested_device
         _ = resolved_device
         _ = noise_sigma_multiplier
@@ -2044,12 +2083,14 @@ def test_generate_batch_with_plan_iter_dynamic_steering_requires_all_grouped_off
         _layout,
         *,
         execution_plan: FixedLayoutExecutionPlan,
+        intervention_plan=None,
         grouped_noise_runtime,
         requested_device: str,
         resolved_device: str,
         noise_sigma_multiplier: float,
     ) -> list[SimpleNamespace]:
         _ = execution_plan
+        _ = intervention_plan
         _ = requested_device
         _ = resolved_device
         _ = noise_sigma_multiplier
@@ -3633,6 +3674,33 @@ def test_generate_one_request_run_identity_changes_with_noise_contract() -> None
     assert bundle_base.metadata["dataset_id"] != bundle_drifted.metadata["dataset_id"]
 
 
+def test_generate_one_request_run_identity_changes_with_hard_intervention_signature() -> None:
+    baseline = _tiny_regression_config()
+    interventional_a = deepcopy(baseline)
+    interventional_b = deepcopy(baseline)
+    interventional_a.intervention.mode = INTERVENTION_MODE_HARD_INTERVENTIONAL
+    interventional_a.intervention.targets = [  # type: ignore[list-item]
+        {"target_kind": "target", "value": 1.0},
+    ]
+    interventional_b.intervention.mode = INTERVENTION_MODE_HARD_INTERVENTIONAL
+    interventional_b.intervention.targets = [  # type: ignore[list-item]
+        {"target_kind": "target", "value": 2.0},
+    ]
+    interventional_a.validate_generation_constraints()
+    interventional_b.validate_generation_constraints()
+
+    bundle_base = generate_one(baseline, seed=1234, device="cpu")
+    bundle_a = generate_one(interventional_a, seed=1234, device="cpu")
+    bundle_b = generate_one(interventional_b, seed=1234, device="cpu")
+
+    assert bundle_base.metadata["layout_plan_signature"] == bundle_a.metadata["layout_plan_signature"]
+    assert bundle_a.metadata["layout_plan_signature"] == bundle_b.metadata["layout_plan_signature"]
+    assert bundle_base.metadata["split_groups"]["request_run"] != bundle_a.metadata["split_groups"]["request_run"]
+    assert bundle_a.metadata["split_groups"]["request_run"] != bundle_b.metadata["split_groups"]["request_run"]
+    assert bundle_base.metadata["dataset_id"] != bundle_a.metadata["dataset_id"]
+    assert bundle_a.metadata["dataset_id"] != bundle_b.metadata["dataset_id"]
+
+
 def test_generate_one_request_run_identity_changes_with_realized_row_shape() -> None:
     baseline = _tiny_regression_config()
     drifted = deepcopy(baseline)
@@ -3905,6 +3973,7 @@ def test_generate_batch_with_plan_iter_groups_mixed_noise_runtime_subbatches(
         _layout,
         *,
         execution_plan,
+        intervention_plan=None,
         dataset_seeds,
         device,
         noise_sigma_multiplier,
@@ -3912,6 +3981,7 @@ def test_generate_batch_with_plan_iter_groups_mixed_noise_runtime_subbatches(
         runtime_metrics_out=None,
     ):
         _ = execution_plan
+        _ = intervention_plan
         _ = device
         _ = noise_sigma_multiplier
         _ = noise_spec
@@ -4071,12 +4141,14 @@ def test_fixed_layout_plan_supports_classification_run_groups_mixed_noise_runtim
         _layout,
         *,
         execution_plan,
+        intervention_plan=None,
         dataset_seeds,
         device,
         noise_sigma_multiplier,
         noise_spec,
     ):
         _ = execution_plan
+        _ = intervention_plan
         _ = device
         _ = noise_sigma_multiplier
         _ = noise_spec
@@ -4180,12 +4252,14 @@ def test_fixed_layout_plan_classification_attempt_plan_does_not_scalarize_other_
         _layout,
         *,
         execution_plan,
+        intervention_plan=None,
         dataset_seeds: list[int],
         device: str,
         noise_sigma_multiplier: float,
         noise_spec,
     ) -> tuple[torch.Tensor, list[dict[str, object]]]:
         _ = execution_plan
+        _ = intervention_plan
         _ = device
         _ = noise_sigma_multiplier
         _ = noise_spec
@@ -4411,12 +4485,14 @@ def test_fixed_layout_plan_classification_attempt_plan_caps_replay_budget_to_fil
         _layout,
         *,
         execution_plan,
+        intervention_plan=None,
         dataset_seeds: list[int],
         device: str,
         noise_sigma_multiplier: float,
         noise_spec,
     ) -> tuple[torch.Tensor, list[dict[str, object]]]:
         _ = execution_plan
+        _ = intervention_plan
         _ = dataset_seeds
         _ = device
         _ = noise_sigma_multiplier
@@ -4541,6 +4617,7 @@ def test_auto_surfaces_mps_runtime_failure_in_generate_one(
         _layout,
         *,
         execution_plan,
+        intervention_plan=None,
         dataset_seeds,
         device,
         noise_sigma_multiplier,
@@ -4548,6 +4625,7 @@ def test_auto_surfaces_mps_runtime_failure_in_generate_one(
         runtime_metrics_out=None,
     ):
         _ = execution_plan
+        _ = intervention_plan
         _ = dataset_seeds
         _ = noise_sigma_multiplier
         _ = noise_spec
@@ -4589,6 +4667,7 @@ def test_generate_batch_iter_auto_surfaces_mps_batch_generation_failure(
         _layout,
         *,
         execution_plan,
+        intervention_plan=None,
         dataset_seeds,
         device,
         noise_sigma_multiplier,
@@ -4596,6 +4675,7 @@ def test_generate_batch_iter_auto_surfaces_mps_batch_generation_failure(
         runtime_metrics_out=None,
     ):
         _ = execution_plan
+        _ = intervention_plan
         _ = dataset_seeds
         _ = noise_sigma_multiplier
         _ = noise_spec
@@ -6155,12 +6235,14 @@ def test_generate_batch_with_plan_iter_allows_late_classification_failure_after_
         _layout,
         *,
         execution_plan: FixedLayoutExecutionPlan,
+        intervention_plan=None,
         grouped_noise_runtime,
         requested_device: str,
         resolved_device: str,
         noise_sigma_multiplier: float,
     ) -> list[SimpleNamespace]:
         _ = execution_plan
+        _ = intervention_plan
         _ = requested_device
         _ = resolved_device
         _ = noise_sigma_multiplier
@@ -6365,12 +6447,14 @@ def test_generate_batch_with_plan_iter_uses_cached_classification_attempt_plan_f
         _layout,
         *,
         execution_plan: FixedLayoutExecutionPlan,
+        intervention_plan=None,
         grouped_noise_runtime,
         requested_device: str,
         resolved_device: str,
         noise_sigma_multiplier: float,
     ) -> list[SimpleNamespace]:
         _ = execution_plan
+        _ = intervention_plan
         _ = requested_device
         _ = resolved_device
         _ = noise_sigma_multiplier
@@ -6525,6 +6609,7 @@ def test_generate_fixed_layout_bundle_with_retries_reuses_cached_finalization_co
         _layout,
         *,
         execution_plan: FixedLayoutExecutionPlan,
+        intervention_plan=None,
         dataset_seeds: list[int],
         device: str,
         noise_sigma_multiplier: float,
@@ -6532,6 +6617,7 @@ def test_generate_fixed_layout_bundle_with_retries_reuses_cached_finalization_co
         runtime_metrics_out=None,
     ) -> tuple[torch.Tensor, torch.Tensor, list[dict[str, object]]]:
         _ = execution_plan
+        _ = intervention_plan
         _ = dataset_seeds
         _ = device
         _ = noise_sigma_multiplier

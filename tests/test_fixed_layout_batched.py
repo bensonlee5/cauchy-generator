@@ -30,6 +30,11 @@ from dagzoo.core.fixed_layout.batched import (
     generate_fixed_layout_graph_batch,
     generate_fixed_layout_label_batch,
 )
+from dagzoo.core.fixed_layout.interventions import (
+    FixedLayoutNodeIntervention,
+    FixedLayoutResolvedInterventionPlan,
+    resolve_fixed_layout_intervention_plan,
+)
 from dagzoo.core.fixed_layout.plan_types import (
     ActivationMatrixPlan,
     CategoricalConverterGroup,
@@ -66,6 +71,73 @@ class ConverterSpec:
     kind: str
     dim: int
     cardinality: int | None = None
+
+
+def _regression_intervention_layout_and_plan() -> tuple[LayoutPlan, FixedLayoutExecutionPlan]:
+    layout = LayoutPlan(
+        n_features=2,
+        n_cat=0,
+        cat_idx=[],
+        cardinalities=[],
+        card_by_feature={},
+        n_classes=3,
+        feature_types=["num", "num"],
+        graph_nodes=3,
+        graph_edges=1,
+        graph_depth_nodes=2,
+        graph_edge_density=1.0 / 3.0,
+        adjacency=torch.tensor(
+            [
+                [False, False, True],
+                [False, False, False],
+                [False, False, False],
+            ],
+            dtype=torch.bool,
+        ),
+        feature_node_assignment=[0, 1],
+        target_to_node=2,
+    )
+    feature_0_specs = typed_converter_specs([ConverterSpec(key="feature_0", kind="num", dim=1)])
+    feature_1_specs = typed_converter_specs([ConverterSpec(key="feature_1", kind="num", dim=1)])
+    target_specs = typed_converter_specs([ConverterSpec(key="target", kind="target_reg", dim=1)])
+    feature_plan = NumericConverterPlan(kind="num", warp_enabled=False)
+    target_plan = NumericConverterPlan(kind="target_reg", warp_enabled=False)
+    node_0_plan = FixedLayoutNodePlan(
+        node_index=0,
+        parent_indices=(),
+        converter_specs=feature_0_specs,
+        converter_plans=(feature_plan,),
+        converter_groups=fixed_layout_converter_groups(feature_0_specs, (feature_plan,)),
+        latent=FixedLayoutLatentPlan(required_dim=1, extra_dim=0, total_dim=1),
+        source=RandomPointsNodeSource(
+            base_kind="normal",
+            function=LinearFunctionPlan(matrix=GaussianMatrixPlan()),
+        ),
+    )
+    node_1_plan = FixedLayoutNodePlan(
+        node_index=1,
+        parent_indices=(),
+        converter_specs=feature_1_specs,
+        converter_plans=(feature_plan,),
+        converter_groups=fixed_layout_converter_groups(feature_1_specs, (feature_plan,)),
+        latent=FixedLayoutLatentPlan(required_dim=1, extra_dim=0, total_dim=1),
+        source=RandomPointsNodeSource(
+            base_kind="normal",
+            function=LinearFunctionPlan(matrix=GaussianMatrixPlan()),
+        ),
+    )
+    node_2_plan = FixedLayoutNodePlan(
+        node_index=2,
+        parent_indices=(0,),
+        converter_specs=target_specs,
+        converter_plans=(target_plan,),
+        converter_groups=fixed_layout_converter_groups(target_specs, (target_plan,)),
+        latent=FixedLayoutLatentPlan(required_dim=1, extra_dim=0, total_dim=1),
+        source=ConcatNodeSource(
+            function=LinearFunctionPlan(matrix=GaussianMatrixPlan()),
+        ),
+    )
+    return layout, FixedLayoutExecutionPlan(node_plans=(node_0_plan, node_1_plan, node_2_plan))
 
 
 @pytest.mark.parametrize(
@@ -1014,6 +1086,7 @@ def test_generate_fixed_layout_raw_batch_keys_seeded_batch_rng_per_node(
         _node_plan,
         _parent_data,
         *,
+        intervention_value: float | None = None,
         n_rows: int,
         rng: FixedLayoutBatchRng,
         device: str,
@@ -1025,6 +1098,7 @@ def test_generate_fixed_layout_raw_batch_keys_seeded_batch_rng_per_node(
             _config,
             _node_plan,
             _parent_data,
+            intervention_value,
             device,
             noise_sigma_multiplier,
             noise_spec,
@@ -1108,6 +1182,7 @@ def test_generate_fixed_layout_raw_batch_reports_runtime_metrics(
         _node_plan,
         _parent_data,
         *,
+        intervention_value: float | None = None,
         n_rows: int,
         rng: FixedLayoutBatchRng,
         device: str,
@@ -1119,6 +1194,7 @@ def test_generate_fixed_layout_raw_batch_reports_runtime_metrics(
             _config,
             _node_plan,
             _parent_data,
+            intervention_value,
             device,
             noise_sigma_multiplier,
             noise_spec,
@@ -1246,6 +1322,249 @@ def test_generate_fixed_layout_label_batch_matches_graph_batch_targets() -> None
     torch.testing.assert_close(label_batch, y_batch)
 
 
+def test_resolve_fixed_layout_intervention_plan_collapses_duplicates_and_rejects_conflicts() -> None:
+    layout = _layout_stub(
+        feature_types=["num", "num", "num"],
+        graph_nodes=3,
+        adjacency=torch.tensor(
+            [
+                [False, False, True],
+                [False, False, False],
+                [False, False, False],
+            ],
+            dtype=torch.bool,
+        ),
+        feature_node_assignment=[0, 0, 1],
+        target_node_assignment=2,
+    )
+    cfg = load_repo_config()
+    cfg.intervention.mode = "hard_interventional"
+    cfg.intervention.targets = [  # type: ignore[list-item]
+        {"target_kind": "feature_node", "index": 0, "value": 2.0},
+        {"target_kind": "latent_node", "index": 0, "value": 2.0},
+        {"target_kind": "target", "value": 1.5},
+    ]
+    cfg.validate_generation_constraints()
+
+    resolved = resolve_fixed_layout_intervention_plan(cfg, layout)
+
+    assert resolved == FixedLayoutResolvedInterventionPlan(
+        node_interventions=(FixedLayoutNodeIntervention(node_index=0, value=2.0),),
+        target_value=1.5,
+    )
+
+    conflicting = load_repo_config()
+    conflicting.intervention.mode = "hard_interventional"
+    conflicting.intervention.targets = [  # type: ignore[list-item]
+        {"target_kind": "feature_node", "index": 1, "value": 2.0},
+        {"target_kind": "latent_node", "index": 0, "value": 3.0},
+    ]
+    conflicting.validate_generation_constraints()
+
+    with pytest.raises(ValueError, match="Resolved hard-intervention selectors collide"):
+        resolve_fixed_layout_intervention_plan(conflicting, layout)
+
+
+def test_generate_fixed_layout_graph_batch_feature_node_intervention_clamps_node_and_descendants() -> None:
+    cfg = load_repo_config()
+    cfg.dataset.task = "regression"
+    cfg.dataset.n_train = 6
+    cfg.dataset.n_test = 2
+    layout, execution_plan = _regression_intervention_layout_and_plan()
+    dataset_seeds = [901, 902]
+
+    baseline_x, baseline_y, _ = generate_fixed_layout_graph_batch(
+        cfg,
+        layout,
+        execution_plan=execution_plan,
+        dataset_seeds=dataset_seeds,
+        device="cpu",
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+    intervention_plan = FixedLayoutResolvedInterventionPlan(
+        node_interventions=(FixedLayoutNodeIntervention(node_index=0, value=3.5),),
+    )
+    intervened_x, intervened_y, _ = generate_fixed_layout_graph_batch(
+        cfg,
+        layout,
+        execution_plan=execution_plan,
+        intervention_plan=intervention_plan,
+        dataset_seeds=dataset_seeds,
+        device="cpu",
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+
+    torch.testing.assert_close(
+        intervened_x[:, :, 0],
+        torch.full_like(intervened_x[:, :, 0], 3.5),
+    )
+    torch.testing.assert_close(intervened_x[:, :, 1], baseline_x[:, :, 1])
+    assert not torch.allclose(intervened_y, baseline_y)
+
+
+def test_generate_fixed_layout_graph_batch_latent_node_intervention_clamps_node_and_descendants() -> None:
+    cfg = load_repo_config()
+    cfg.dataset.task = "regression"
+    cfg.dataset.n_train = 6
+    cfg.dataset.n_test = 2
+    cfg.intervention.mode = "hard_interventional"
+    cfg.intervention.targets = [  # type: ignore[list-item]
+        {"target_kind": "latent_node", "index": 0, "value": -2.25},
+    ]
+    cfg.validate_generation_constraints()
+    layout, execution_plan = _regression_intervention_layout_and_plan()
+    intervention_plan = resolve_fixed_layout_intervention_plan(cfg, layout)
+    assert intervention_plan is not None
+
+    baseline_x, baseline_y, _ = generate_fixed_layout_graph_batch(
+        cfg,
+        layout,
+        execution_plan=execution_plan,
+        dataset_seeds=[1001, 1002],
+        device="cpu",
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+    intervened_x, intervened_y, _ = generate_fixed_layout_graph_batch(
+        cfg,
+        layout,
+        execution_plan=execution_plan,
+        intervention_plan=intervention_plan,
+        dataset_seeds=[1001, 1002],
+        device="cpu",
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+
+    torch.testing.assert_close(
+        intervened_x[:, :, 0],
+        torch.full_like(intervened_x[:, :, 0], -2.25),
+    )
+    torch.testing.assert_close(intervened_x[:, :, 1], baseline_x[:, :, 1])
+    assert not torch.allclose(intervened_y, baseline_y)
+
+
+def test_generate_fixed_layout_graph_batch_target_intervention_overwrites_target_only() -> None:
+    cfg = load_repo_config()
+    cfg.dataset.task = "regression"
+    cfg.dataset.n_train = 6
+    cfg.dataset.n_test = 2
+    layout, execution_plan = _regression_intervention_layout_and_plan()
+    dataset_seeds = [1201, 1202]
+
+    baseline_x, baseline_y, _ = generate_fixed_layout_graph_batch(
+        cfg,
+        layout,
+        execution_plan=execution_plan,
+        dataset_seeds=dataset_seeds,
+        device="cpu",
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+    intervened_x, intervened_y, _ = generate_fixed_layout_graph_batch(
+        cfg,
+        layout,
+        execution_plan=execution_plan,
+        intervention_plan=FixedLayoutResolvedInterventionPlan(target_value=7.0),
+        dataset_seeds=dataset_seeds,
+        device="cpu",
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+    )
+
+    torch.testing.assert_close(intervened_x, baseline_x)
+    assert not torch.allclose(intervened_y, baseline_y)
+    torch.testing.assert_close(intervened_y, torch.full_like(intervened_y, 7.0))
+
+
+def test_generate_fixed_layout_raw_batch_target_intervention_uses_class_modulo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = load_repo_config()
+    cfg.dataset.task = "classification"
+    cfg.dataset.n_train = 4
+    cfg.dataset.n_test = 2
+
+    layout = LayoutPlan(
+        n_features=0,
+        n_cat=0,
+        cat_idx=[],
+        cardinalities=[],
+        card_by_feature={},
+        n_classes=3,
+        feature_types=[],
+        graph_nodes=1,
+        graph_edges=0,
+        graph_depth_nodes=1,
+        graph_edge_density=0.0,
+        adjacency=torch.zeros((1, 1), dtype=torch.bool),
+        feature_node_assignment=[],
+        target_to_node=0,
+    )
+    node_plan = FixedLayoutNodePlan(
+        node_index=0,
+        parent_indices=(),
+        converter_specs=(),
+        converter_plans=(),
+        converter_groups=(),
+        latent=FixedLayoutLatentPlan(required_dim=0, extra_dim=1, total_dim=1),
+        source=RandomPointsNodeSource(
+            base_kind="normal",
+            function=LinearFunctionPlan(matrix=GaussianMatrixPlan()),
+        ),
+    )
+    execution_plan = FixedLayoutExecutionPlan(node_plans=(node_plan,))
+
+    def _stub_apply_node_plan_batch(
+        _config,
+        _node_plan,
+        _parent_data,
+        *,
+        intervention_value: float | None = None,
+        n_rows: int,
+        rng: FixedLayoutBatchRng,
+        device: str,
+        noise_sigma_multiplier: float,
+        noise_spec,
+        runtime_metrics_out=None,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        _ = (
+            _config,
+            _node_plan,
+            _parent_data,
+            intervention_value,
+            device,
+            noise_sigma_multiplier,
+            noise_spec,
+            runtime_metrics_out,
+        )
+        return (
+            torch.zeros((rng.batch_size, n_rows, 1), device=rng.device),
+            {"target": torch.zeros((rng.batch_size, n_rows), device=rng.device)},
+        )
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.batched._apply_node_plan_batch",
+        _stub_apply_node_plan_batch,
+    )
+
+    _x, y, _aux = _generate_fixed_layout_raw_batch(
+        cfg,
+        layout,
+        execution_plan=execution_plan,
+        intervention_plan=FixedLayoutResolvedInterventionPlan(target_value=5.0),
+        dataset_seeds=[1301, 1302],
+        device="cpu",
+        noise_sigma_multiplier=1.0,
+        noise_spec=None,
+        emit_features=False,
+    )
+
+    torch.testing.assert_close(y, torch.full_like(y, 2))
+
+
 def test_generate_fixed_layout_graph_batch_prepared_matches_public_graph_batch() -> None:
     cfg = load_repo_config()
     cfg.dataset.task = "regression"
@@ -1256,6 +1575,11 @@ def test_generate_fixed_layout_graph_batch_prepared_matches_public_graph_batch()
     cfg.dataset.n_features_max = 5
     cfg.graph.n_nodes_min = 3
     cfg.graph.n_nodes_max = 5
+    cfg.intervention.mode = "hard_interventional"
+    cfg.intervention.targets = [  # type: ignore[list-item]
+        {"target_kind": "feature_node", "index": 0, "value": 1.75},
+    ]
+    cfg.validate_generation_constraints()
     plan = _sample_fixed_layout(cfg, seed=211, device="cpu")
     assert plan.prepared_execution_context is not None
     dataset_seeds = [1001, 1002]
@@ -1264,6 +1588,7 @@ def test_generate_fixed_layout_graph_batch_prepared_matches_public_graph_batch()
         cfg,
         plan.layout,
         execution_plan=plan.execution_plan,
+        intervention_plan=plan.intervention_plan,
         dataset_seeds=dataset_seeds,
         device="cpu",
         noise_sigma_multiplier=1.0,
@@ -1274,6 +1599,7 @@ def test_generate_fixed_layout_graph_batch_prepared_matches_public_graph_batch()
         plan.layout,
         execution_plan=plan.execution_plan,
         prepared_execution_context=plan.prepared_execution_context,
+        intervention_plan=plan.intervention_plan,
         dataset_seeds=dataset_seeds,
         device="cpu",
         noise_sigma_multiplier=1.0,
@@ -1296,6 +1622,11 @@ def test_generate_fixed_layout_validation_label_batch_matches_public_label_batch
     cfg.dataset.n_classes_max = 4
     cfg.graph.n_nodes_min = 3
     cfg.graph.n_nodes_max = 6
+    cfg.intervention.mode = "hard_interventional"
+    cfg.intervention.targets = [  # type: ignore[list-item]
+        {"target_kind": "target", "value": 2.0},
+    ]
+    cfg.validate_generation_constraints()
     plan = _sample_fixed_layout(cfg, seed=311, device="cpu")
     assert plan.prepared_execution_context is not None
     dataset_seeds = [1101, 1102, 1103]
@@ -1304,6 +1635,7 @@ def test_generate_fixed_layout_validation_label_batch_matches_public_label_batch
         cfg,
         plan.layout,
         execution_plan=plan.execution_plan,
+        intervention_plan=plan.intervention_plan,
         dataset_seeds=dataset_seeds,
         device="cpu",
         noise_sigma_multiplier=1.0,
@@ -1314,6 +1646,7 @@ def test_generate_fixed_layout_validation_label_batch_matches_public_label_batch
         plan.layout,
         execution_plan=plan.execution_plan,
         prepared_execution_context=plan.prepared_execution_context,
+        intervention_plan=plan.intervention_plan,
         dataset_seeds=dataset_seeds,
         device="cpu",
         noise_sigma_multiplier=1.0,
@@ -1405,6 +1738,7 @@ def test_generate_fixed_layout_validation_label_batch_skips_non_ancestor_nodes(
         node_context,
         _parent_data,
         *,
+        intervention_value: float | None = None,
         n_rows: int,
         batch_node_context,
         device: str,
@@ -1412,7 +1746,13 @@ def test_generate_fixed_layout_validation_label_batch_skips_non_ancestor_nodes(
         noise_spec,
         runtime_metrics_out=None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        _ = (device, noise_sigma_multiplier, noise_spec, runtime_metrics_out)
+        _ = (
+            intervention_value,
+            device,
+            noise_sigma_multiplier,
+            noise_spec,
+            runtime_metrics_out,
+        )
         observed_node_indices.append(int(node_context.node_plan.node_index))
         node_rng = batch_node_context.node_rng
         latent = torch.full(

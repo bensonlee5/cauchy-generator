@@ -48,6 +48,7 @@ from .batch_functions import (
     _sample_random_matrix_from_plan_batch,
     _sample_random_points_batch,
 )
+from .interventions import FixedLayoutResolvedInterventionPlan
 from .plan_types import (
     DEFAULT_FIXED_LAYOUT_EXECUTION_CONTRACT,
     CategoricalConverterPlan,
@@ -1388,6 +1389,7 @@ def _apply_node_plan_batch(
     node_plan: FixedLayoutNodePlan,
     parent_data: list[torch.Tensor],
     *,
+    intervention_value: float | None = None,
     n_rows: int,
     rng: FixedLayoutBatchRng,
     device: str,
@@ -1496,6 +1498,10 @@ def _apply_node_plan_batch(
     latent = latent * weights.unsqueeze(1)
     mean_l2 = torch.mean(torch.norm(latent, dim=2), dim=1)
     latent = latent / torch.clamp(mean_l2.view(-1, 1, 1), min=1e-6)
+    if intervention_value is not None:
+        latent = torch.full_like(latent, float(intervention_value))
+    if intervention_value is not None:
+        latent = torch.full_like(latent, float(intervention_value))
 
     extracted: dict[str, torch.Tensor] = {}
     converter_start = time.perf_counter()
@@ -1604,8 +1610,9 @@ def _apply_node_plan_batch(
         time.process_time() - converter_start_cpu,
     )
 
-    scale = rng.keyed("latent_scale").log_uniform((rng.batch_size,), low=0.1, high=10.0)
-    latent = latent * scale.view(-1, 1, 1)
+    if intervention_value is None:
+        scale = rng.keyed("latent_scale").log_uniform((rng.batch_size,), low=0.1, high=10.0)
+        latent = latent * scale.view(-1, 1, 1)
     _accumulate_runtime_metric(
         runtime_metrics_out,
         "node_apply_elapsed_seconds",
@@ -1624,6 +1631,7 @@ def _apply_node_plan_batch_prepared(
     node_context: _PreparedNodeExecutionContext,
     parent_data: list[torch.Tensor],
     *,
+    intervention_value: float | None = None,
     n_rows: int,
     batch_node_context: _PreparedBatchNodeExecutionContext,
     device: str,
@@ -1868,12 +1876,13 @@ def _apply_node_plan_batch_prepared(
         time.process_time() - converter_start_cpu,
     )
 
-    scale = _resolve_compiled_program_rng(
-        node_rng,
-        path=("latent_scale",),
-        cached_child_rngs=cached_child_rngs,
-    ).log_uniform((node_rng.batch_size,), low=0.1, high=10.0)
-    latent = latent * scale.view(-1, 1, 1)
+    if intervention_value is None:
+        scale = _resolve_compiled_program_rng(
+            node_rng,
+            path=("latent_scale",),
+            cached_child_rngs=cached_child_rngs,
+        ).log_uniform((node_rng.batch_size,), low=0.1, high=10.0)
+        latent = latent * scale.view(-1, 1, 1)
     _accumulate_runtime_metric(
         runtime_metrics_out,
         "node_apply_elapsed_seconds",
@@ -1892,6 +1901,7 @@ def _generate_fixed_layout_raw_batch(
     layout: LayoutPlan,
     *,
     execution_plan: FixedLayoutExecutionPlan,
+    intervention_plan: FixedLayoutResolvedInterventionPlan | None = None,
     dataset_seeds: list[int],
     device: str,
     noise_sigma_multiplier: float,
@@ -1917,6 +1927,14 @@ def _generate_fixed_layout_raw_batch(
         None
         if prepared_execution_context is None
         else _build_fixed_layout_batch_execution_context(prepared_execution_context, rng)
+    )
+    node_intervention_values = (
+        {}
+        if intervention_plan is None
+        else {
+            int(intervention.node_index): float(intervention.value)
+            for intervention in intervention_plan.node_interventions
+        }
     )
 
     node_outputs: list[torch.Tensor | None] = [None] * int(layout.graph_nodes)
@@ -1944,6 +1962,7 @@ def _generate_fixed_layout_raw_batch(
                 config,
                 node_plan,
                 parent_tensors,
+                intervention_value=node_intervention_values.get(int(node_index)),
                 n_rows=n_rows,
                 rng=node_rng,
                 device=device,
@@ -1956,6 +1975,7 @@ def _generate_fixed_layout_raw_batch(
                 config,
                 prepared_execution_context.node_contexts[int(node_index)],
                 parent_tensors,
+                intervention_value=node_intervention_values.get(int(node_index)),
                 n_rows=n_rows,
                 batch_node_context=prepared_batch_context.node_contexts[int(node_index)],
                 device=device,
@@ -1976,6 +1996,10 @@ def _generate_fixed_layout_raw_batch(
                 target_values = values
             else:
                 raise ValueError(f"Unexpected extracted fixed-layout key {key!r}.")
+    if intervention_plan is not None and intervention_plan.target_value is not None:
+        if target_values is None:
+            raise RuntimeError("Fixed-layout execution did not extract a latent target value.")
+        target_values = torch.full_like(target_values, float(intervention_plan.target_value))
 
     x_complete: torch.Tensor | None = None
     if emit_features:
@@ -2044,6 +2068,7 @@ def generate_fixed_layout_graph_batch(
     layout: LayoutPlan,
     *,
     execution_plan: FixedLayoutExecutionPlan,
+    intervention_plan: FixedLayoutResolvedInterventionPlan | None = None,
     dataset_seeds: list[int],
     device: str,
     noise_sigma_multiplier: float,
@@ -2056,6 +2081,7 @@ def generate_fixed_layout_graph_batch(
         config,
         layout,
         execution_plan=execution_plan,
+        intervention_plan=intervention_plan,
         dataset_seeds=dataset_seeds,
         device=device,
         noise_sigma_multiplier=noise_sigma_multiplier,
@@ -2073,6 +2099,7 @@ def generate_fixed_layout_label_batch(
     layout: LayoutPlan,
     *,
     execution_plan: FixedLayoutExecutionPlan,
+    intervention_plan: FixedLayoutResolvedInterventionPlan | None = None,
     dataset_seeds: list[int],
     device: str,
     noise_sigma_multiplier: float,
@@ -2085,6 +2112,7 @@ def generate_fixed_layout_label_batch(
         config,
         layout,
         execution_plan=execution_plan,
+        intervention_plan=intervention_plan,
         dataset_seeds=dataset_seeds,
         device=device,
         noise_sigma_multiplier=noise_sigma_multiplier,
@@ -2101,6 +2129,7 @@ def _generate_fixed_layout_graph_batch_prepared(
     *,
     execution_plan: FixedLayoutExecutionPlan,
     prepared_execution_context: _PreparedFixedLayoutExecutionContext,
+    intervention_plan: FixedLayoutResolvedInterventionPlan | None = None,
     dataset_seeds: list[int],
     device: str,
     noise_sigma_multiplier: float,
@@ -2113,6 +2142,7 @@ def _generate_fixed_layout_graph_batch_prepared(
         config,
         layout,
         execution_plan=execution_plan,
+        intervention_plan=intervention_plan,
         dataset_seeds=dataset_seeds,
         device=device,
         noise_sigma_multiplier=noise_sigma_multiplier,
@@ -2132,6 +2162,7 @@ def _generate_fixed_layout_validation_label_batch(
     *,
     execution_plan: FixedLayoutExecutionPlan,
     prepared_execution_context: _PreparedFixedLayoutExecutionContext,
+    intervention_plan: FixedLayoutResolvedInterventionPlan | None = None,
     dataset_seeds: list[int],
     device: str,
     noise_sigma_multiplier: float,
@@ -2144,6 +2175,7 @@ def _generate_fixed_layout_validation_label_batch(
         config,
         layout,
         execution_plan=execution_plan,
+        intervention_plan=intervention_plan,
         dataset_seeds=dataset_seeds,
         device=device,
         noise_sigma_multiplier=noise_sigma_multiplier,

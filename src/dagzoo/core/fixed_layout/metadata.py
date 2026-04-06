@@ -12,6 +12,7 @@ import torch
 from dagzoo.core.layout_types import LayoutPlan
 from dagzoo.types import DatasetBundle
 
+from .interventions import FixedLayoutResolvedInterventionPlan
 from .plan_types import (
     FixedLayoutExecutionPlan,
     execution_plan_family_counts,
@@ -40,6 +41,7 @@ class _FixedLayoutPlan:
     steering_layout_root_path: list[object] | None = None
     steering_execution_plan_root_path: list[object] | None = None
     stress_profile_name: str | None = None
+    intervention_plan: FixedLayoutResolvedInterventionPlan | None = None
     prepared_execution_context: Any | None = field(default=None, repr=False)
 
 

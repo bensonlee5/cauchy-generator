@@ -64,6 +64,7 @@ from .grouped import (
 )
 from .grouped import generate_grouped_raw_batches as _generate_grouped_raw_batches_impl
 from .grouped import group_noise_runtime_chunk as _group_noise_runtime_chunk_impl
+from .interventions import resolve_fixed_layout_intervention_plan
 from .metadata import (
     _annotate_fixed_layout_metadata,
     _extract_emitted_schema_signature,
@@ -348,6 +349,7 @@ def _replay_emitted_fixed_layout_plan(
         stress_profile_name=None if stress_profile_name is None else str(stress_profile_name),
     )
     prepared_execution_context = _prepare_fixed_layout_execution_context(layout, execution_plan)
+    intervention_plan = resolve_fixed_layout_intervention_plan(effective_config, layout)
 
     requested_device = metadata.get("requested_device")
     if not isinstance(requested_device, str) or not requested_device:
@@ -385,6 +387,7 @@ def _replay_emitted_fixed_layout_plan(
             else list(normalized_steering_execution_plan_root_path)
         ),
         stress_profile_name=None if stress_profile_name is None else str(stress_profile_name),
+        intervention_plan=intervention_plan,
         prepared_execution_context=prepared_execution_context,
     )
 
@@ -441,6 +444,7 @@ def _generate_grouped_raw_batches(
     layout: LayoutPlan,
     *,
     execution_plan: FixedLayoutExecutionPlan,
+    intervention_plan,
     grouped_noise_runtime: list[_NoiseRuntimeGroup],
     requested_device: str,
     resolved_device: str,
@@ -450,6 +454,7 @@ def _generate_grouped_raw_batches(
         config,
         layout,
         execution_plan=execution_plan,
+        intervention_plan=intervention_plan,
         grouped_noise_runtime=grouped_noise_runtime,
         resolved_device=resolved_device,
         noise_sigma_multiplier=noise_sigma_multiplier,
@@ -575,6 +580,7 @@ def _sample_fixed_layout_once(
         stress_profile_name=stress_profile_name,
     )
     prepared_execution_context = _prepare_fixed_layout_execution_context(layout, execution_plan)
+    intervention_plan = resolve_fixed_layout_intervention_plan(config, layout)
     return _FixedLayoutPlan(
         layout=layout,
         requested_device=requested_device,
@@ -587,6 +593,7 @@ def _sample_fixed_layout_once(
         execution_plan=execution_plan,
         plan_signature=fixed_layout_plan_signature(execution_plan),
         stress_profile_name=stress_profile_name,
+        intervention_plan=intervention_plan,
         prepared_execution_context=prepared_execution_context,
     )
 
@@ -646,6 +653,7 @@ def _resolve_steered_plan_for_dataset(
     )
     prepared_execution_context = _prepare_fixed_layout_execution_context(layout, execution_plan)
     plan_seed = layout_root.child_seed()
+    intervention_plan = resolve_fixed_layout_intervention_plan(effective_config, layout)
     return effective_config, _FixedLayoutPlan(
         layout=layout,
         requested_device=str(base_plan.requested_device),
@@ -668,6 +676,7 @@ def _resolve_steered_plan_for_dataset(
         steering_layout_root_path=list(steering_layout_root_path),
         steering_execution_plan_root_path=list(steering_execution_plan_root_path),
         stress_profile_name=base_plan.stress_profile_name,
+        intervention_plan=intervention_plan,
         prepared_execution_context=prepared_execution_context,
     )
 
@@ -964,6 +973,7 @@ def _generate_batch_with_dynamic_steering_iter(
                     representative.effective_config,
                     representative.effective_plan.layout,
                     execution_plan=representative.effective_plan.execution_plan,
+                    intervention_plan=representative.effective_plan.intervention_plan,
                     grouped_noise_runtime=grouped_noise_runtime,
                     requested_device=requested_device,
                     resolved_device=validated_resolved_device,
@@ -1268,6 +1278,7 @@ def _execute_heterogeneous_descriptor_chunk(
                 representative.effective_config,
                 representative.effective_plan.layout,
                 execution_plan=representative.effective_plan.execution_plan,
+                intervention_plan=representative.effective_plan.intervention_plan,
                 grouped_noise_runtime=grouped_noise_runtime,
                 requested_device=requested_device,
                 resolved_device=resolved_device,
@@ -1599,6 +1610,7 @@ def _first_valid_classification_attempt_for_dataset(
                 plan.layout,
                 execution_plan=plan.execution_plan,
                 prepared_execution_context=plan.prepared_execution_context,
+                intervention_plan=plan.intervention_plan,
                 dataset_seeds=[
                     dataset_root.keyed("attempt", attempt, "raw_generation").child_seed()
                 ],
@@ -1611,6 +1623,7 @@ def _first_valid_classification_attempt_for_dataset(
                 config,
                 plan.layout,
                 execution_plan=plan.execution_plan,
+                intervention_plan=plan.intervention_plan,
                 dataset_seeds=[
                     dataset_root.keyed("attempt", attempt, "raw_generation").child_seed()
                 ],
@@ -1653,6 +1666,7 @@ def _grouped_validation_labels_for_attempts(
                 plan.layout,
                 execution_plan=plan.execution_plan,
                 prepared_execution_context=plan.prepared_execution_context,
+                intervention_plan=plan.intervention_plan,
                 dataset_seeds=group.generation_seeds,
                 device=resolved_device,
                 noise_sigma_multiplier=float(noise_sigma_multiplier),
@@ -1663,6 +1677,7 @@ def _grouped_validation_labels_for_attempts(
                 config,
                 plan.layout,
                 execution_plan=plan.execution_plan,
+                intervention_plan=plan.intervention_plan,
                 dataset_seeds=group.generation_seeds,
                 device=resolved_device,
                 noise_sigma_multiplier=float(noise_sigma_multiplier),
@@ -1929,6 +1944,7 @@ def _generate_fixed_layout_graph_batch_with_runtime_metrics(
             plan.layout,
             execution_plan=plan.execution_plan,
             prepared_execution_context=plan.prepared_execution_context,
+            intervention_plan=plan.intervention_plan,
             dataset_seeds=dataset_seeds,
             device=resolved_device,
             noise_sigma_multiplier=noise_sigma_multiplier,
@@ -1939,6 +1955,7 @@ def _generate_fixed_layout_graph_batch_with_runtime_metrics(
         config,
         plan.layout,
         execution_plan=plan.execution_plan,
+        intervention_plan=plan.intervention_plan,
         dataset_seeds=dataset_seeds,
         device=resolved_device,
         noise_sigma_multiplier=noise_sigma_multiplier,
@@ -2131,6 +2148,7 @@ def _generate_batch_with_plan_iter(
             config,
             plan.layout,
             execution_plan=plan.execution_plan,
+            intervention_plan=plan.intervention_plan,
             grouped_noise_runtime=grouped_noise_runtime,
             requested_device=requested_device,
             resolved_device=validated_resolved_device,
