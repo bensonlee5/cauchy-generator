@@ -36,7 +36,8 @@ def test_sync_docs_rewrites_usage_guide_links_to_steering_page() -> None:
         rewritten
         == "Detailed guide: [Meta-Feature Coverage Steering](/dagzoo/docs/features/steering/)\n"
     )
-    assert module.PAGE_METADATA["features/steering.md"].weight == 64
+    assert module.PAGE_METADATA["features/interventions.md"].weight == 61
+    assert module.PAGE_METADATA["features/steering.md"].weight == 65
 
 
 def test_sync_docs_front_matter_includes_aliases_and_page_flags() -> None:

@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from dagzoo.cli.entrypoint import main
+from dagzoo.config import GeneratorConfig
 from dagzoo.core.generate_handoff import (
     GENERATE_HANDOFF_SCHEMA_NAME,
     GENERATE_HANDOFF_SCHEMA_VERSION,
@@ -377,7 +378,9 @@ def test_generate_cli_handoff_root_writes_minimal_public_outputs_and_internal_si
     assert len(generated_catalog) == 1
     assert len(replay_catalog) == 1
     assert "metadata" not in generated_catalog[0]
+    assert "intervention" not in generated_catalog[0]
     assert replay_catalog[0]["metadata"]["dataset_id"] == generated_catalog[0]["dataset_id"]
+    assert "intervention" not in replay_catalog[0]["metadata"]
 
     effective_config = yaml.safe_load(
         (handoff_root / "internal" / "effective_config.yaml").read_text(encoding="utf-8")
@@ -388,6 +391,7 @@ def test_generate_cli_handoff_root_writes_minimal_public_outputs_and_internal_si
     validate_generate_handoff_manifest(handoff)
     assert handoff["schema_name"] == GENERATE_HANDOFF_SCHEMA_NAME
     assert handoff["artifacts_relative"] == {"generated_dir": "generated"}
+    assert "intervention" not in handoff["provenance"]
     assert set(handoff) == {
         "schema_name",
         "schema_version",
@@ -396,6 +400,53 @@ def test_generate_cli_handoff_root_writes_minimal_public_outputs_and_internal_si
         "summary",
         "provenance",
     }
+
+
+def test_generate_cli_handoff_root_projects_intervention_summary_across_artifacts(
+    tmp_path: Path,
+) -> None:
+    handoff_root = tmp_path / "handoff_run"
+
+    code = main(
+        [
+            "generate",
+            "--config",
+            "configs/preset_intervention_target_generate_smoke.yaml",
+            "--handoff-root",
+            str(handoff_root),
+            "--num-datasets",
+            "1",
+            "--device",
+            "cpu",
+            "--hardware-policy",
+            "none",
+        ]
+    )
+
+    assert code == 0
+
+    generated_catalog_path = handoff_root / "generated" / "shard_00000" / DATASET_CATALOG_FILENAME
+    replay_catalog_path = handoff_root / "internal" / "shard_00000" / REPLAY_CATALOG_FILENAME
+    generated_catalog = _load_ndjson(generated_catalog_path)
+    replay_catalog = _load_ndjson(replay_catalog_path)
+    assert len(generated_catalog) == 1
+    assert len(replay_catalog) == 1
+
+    signature = GeneratorConfig.from_yaml(
+        "configs/preset_intervention_target_generate_smoke.yaml"
+    ).intervention.signature
+    assert signature is not None
+    expected_summary = {
+        "mode": "hard_interventional",
+        "signature": signature,
+    }
+
+    assert generated_catalog[0]["intervention"] == expected_summary
+    assert replay_catalog[0]["metadata"]["intervention"] == expected_summary
+
+    handoff = json.loads((handoff_root / "handoff_manifest.json").read_text(encoding="utf-8"))
+    validate_generate_handoff_manifest(handoff)
+    assert handoff["provenance"]["intervention"] == expected_summary
 
 
 def test_generate_handoff_identity_is_stable_after_handoff_root_move(tmp_path: Path) -> None:

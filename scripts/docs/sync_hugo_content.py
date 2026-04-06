@@ -45,6 +45,7 @@ USER_MD_SOURCES = [
     "output-format.md",
     "export-contract-fields.md",
     "features/diagnostics.md",
+    "features/interventions.md",
     "features/missingness.md",
     "features/many-class.md",
     "features/shift.md",
@@ -101,36 +102,40 @@ PAGE_METADATA: dict[str, PageMeta] = {
         weight=60,
         description="Runtime observability metrics and diagnostic outputs.",
     ),
-    "features/missingness.md": PageMeta(
+    "features/interventions.md": PageMeta(
         weight=61,
+        description="Observational defaults, hard-intervention workflows, and intervention artifact guardrails.",
+    ),
+    "features/missingness.md": PageMeta(
+        weight=62,
         description="Controlled injection of missing values into generated datasets.",
     ),
     "features/many-class.md": PageMeta(
-        weight=62,
+        weight=63,
         description="Multi-class target generation with configurable class counts.",
     ),
     "features/shift.md": PageMeta(
-        weight=63,
+        weight=64,
         description="Distribution-shift controls for graph, mechanism, and noise.",
     ),
     "features/steering.md": PageMeta(
-        weight=64,
+        weight=65,
         description="Meta-feature steering presets for auditable harder-front workflows.",
     ),
     "features/noise.md": PageMeta(
-        weight=65,
+        weight=66,
         description="Noise family selection, mixture modes, and per-dataset resolution.",
     ),
     "features/stress-profiles.md": PageMeta(
-        weight=66,
+        weight=67,
         description="Opt-in robustness stress-profile slices for anti-memorization and structure stress testing.",
     ),
     "features/benchmark-guardrails.md": PageMeta(
-        weight=67,
+        weight=68,
         description="Automated quality checks for benchmark suite runs.",
     ),
     "features/mechanism-diversity.md": PageMeta(
-        weight=68,
+        weight=69,
         description="Opt-in mechanism-family rollout workflows and diagnostics checks.",
     ),
 }
