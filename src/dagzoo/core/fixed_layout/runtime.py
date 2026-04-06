@@ -513,6 +513,10 @@ def prepare_canonical_fixed_layout_run(
         if (
             precompute_classification_attempt_plan
             and str(realized_config.dataset.task) == "classification"
+            and not (
+                plan.intervention_plan is not None
+                and plan.intervention_plan.target_value is not None
+            )
         ):
             classification_attempt_plan = _fixed_layout_plan_classification_attempt_plan(
                 realized_config,
@@ -1839,6 +1843,10 @@ def _fixed_layout_plan_supports_classification_run(
 ) -> bool:
     """Return whether a classification plan can replay for the full requested run."""
 
+    if str(config.dataset.task) != "classification":
+        return True
+    if plan.intervention_plan is not None and plan.intervention_plan.target_value is not None:
+        return True
     return (
         _fixed_layout_plan_classification_attempt_plan(
             config,
@@ -1906,6 +1914,8 @@ def _sample_fixed_layout(
             last_error = str(exc.reason)
             continue
         if str(config.dataset.task) != "classification":
+            return plan
+        if plan.intervention_plan is not None and plan.intervention_plan.target_value is not None:
             return plan
         valid = False
         for validation_attempt in range(attempts):

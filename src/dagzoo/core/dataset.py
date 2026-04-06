@@ -80,7 +80,9 @@ def _request_run_provenance_for_config(
                 "n_test": int(config.dataset.n_test),
                 "missing_rate": float(config.dataset.missing_rate),
                 "missing_mechanism": str(config.dataset.missing_mechanism),
-                "missing_mar_observed_fraction": float(config.dataset.missing_mar_observed_fraction),
+                "missing_mar_observed_fraction": float(
+                    config.dataset.missing_mar_observed_fraction
+                ),
                 "missing_mar_logit_scale": float(config.dataset.missing_mar_logit_scale),
                 "missing_mnar_logit_scale": float(config.dataset.missing_mnar_logit_scale),
             },
@@ -91,7 +93,9 @@ def _request_run_provenance_for_config(
         },
         "noise_distribution": noise_distribution,
         "shift": {
-            "variance_sigma_multiplier": float(resolve_shift_runtime_params(config).variance_sigma_multiplier)
+            "variance_sigma_multiplier": float(
+                resolve_shift_runtime_params(config).variance_sigma_multiplier
+            )
         },
         "prior": {
             "target_derivation": "tabiclv2_latent_node",

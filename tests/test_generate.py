@@ -431,6 +431,22 @@ def test_generate_one_executes_hard_interventional_target_mode() -> None:
     assert isinstance(bundle.metadata["split_groups"]["request_run"], str)
 
 
+def test_generate_one_executes_hard_interventional_target_mode_for_classification() -> None:
+    cfg = _tiny_config()
+    cfg.dataset.task = "classification"
+    cfg.filter.enabled = False
+    cfg.dataset.n_classes_min = 4
+    cfg.dataset.n_classes_max = 4
+    cfg.intervention.mode = INTERVENTION_MODE_HARD_INTERVENTIONAL
+    cfg.intervention.targets = [{"target_kind": "target", "value": 6.0}]  # type: ignore[list-item]
+    cfg.validate_generation_constraints()
+
+    bundle = generate_one(cfg, seed=10, device="cpu")
+
+    torch.testing.assert_close(bundle.y_train, torch.full_like(bundle.y_train, 2))
+    torch.testing.assert_close(bundle.y_test, torch.full_like(bundle.y_test, 2))
+
+
 def test_generate_batch_heterogeneous_executes_hard_interventional_target_mode() -> None:
     cfg = _tiny_heterogeneous_regression_config()
     cfg.intervention.mode = INTERVENTION_MODE_HARD_INTERVENTIONAL
