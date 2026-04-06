@@ -140,6 +140,35 @@ def test_write_packed_parquet_shards_stream_writes_iterable(tmp_path, monkeypatc
     assert replay_records[0]["metadata"]["peak_flops"] is None
 
 
+def test_write_packed_parquet_shards_stream_projects_intervention_summary_contract(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "dagzoo.io.parquet_writer._write_packed_split",
+        _stub_write_packed_split,
+    )
+    bundle = _bundle(7)
+    bundle.metadata["intervention"] = {
+        "mode": "hard_interventional",
+        "signature": "a" * 32,
+    }
+
+    written = write_packed_parquet_shards_stream(
+        [bundle],
+        tmp_path,
+        shard_size=1,
+        compression="zstd",
+    )
+
+    assert written == 1
+    public_records = _load_ndjson_records(tmp_path / "shard_00000" / DATASET_CATALOG_FILENAME)
+    replay_records = _load_ndjson_records(
+        tmp_path / "internal" / "shard_00000" / REPLAY_CATALOG_FILENAME
+    )
+    assert public_records[0]["intervention"] == bundle.metadata["intervention"]
+    assert replay_records[0]["metadata"]["intervention"] == bundle.metadata["intervention"]
+
+
 def test_write_packed_parquet_shards_stream_writes_real_parquet_tables(tmp_path) -> None:
     pyarrow_parquet = pytest.importorskip("pyarrow.parquet")
     written = write_packed_parquet_shards_stream(

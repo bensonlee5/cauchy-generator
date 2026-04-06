@@ -383,6 +383,22 @@ def test_generate_one_omits_default_intervention_from_metadata_config() -> None:
     bundle = generate_one(cfg, seed=10, device="cpu")
 
     assert "intervention" not in bundle.metadata["config"]
+    assert "intervention" not in bundle.metadata
+
+
+def test_generate_one_emits_hard_intervention_summary_metadata() -> None:
+    cfg = _tiny_regression_config()
+    cfg.intervention.mode = INTERVENTION_MODE_HARD_INTERVENTIONAL
+    cfg.intervention.targets = [{"target_kind": "target", "value": 1.0}]  # type: ignore[list-item]
+    cfg.validate_generation_constraints()
+
+    bundle = generate_one(cfg, seed=10, device="cpu")
+
+    assert bundle.metadata["intervention"] == {
+        "mode": INTERVENTION_MODE_HARD_INTERVENTIONAL,
+        "signature": cfg.intervention.signature,
+    }
+    assert "intervention" not in bundle.metadata["config"]
 
 
 def test_generate_one_with_stress_profile_omits_stress_from_metadata_config() -> None:

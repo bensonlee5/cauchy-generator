@@ -154,6 +154,7 @@ per dataset. Current record keys are:
 | `feature_types`     | list[str]         | Per-feature type annotations                            |
 | `n_classes`         | int or null       | Realized emitted class count (`null` for regression)    |
 | `group_ids`         | object (optional) | Stable downstream grouping keys                         |
+| `intervention`      | object (optional) | Summary-only intervention regime metadata               |
 | `target_derivation` | str (optional)    | Current target-construction marker                      |
 | `target_relevance`  | object (optional) | Summary of which emitted features reach the target node |
 
@@ -166,6 +167,15 @@ Present when public grouping ids are available.
 | `request_run` | str  | Stable grouping key for one requested public run               |
 | `cohort`      | str  | Stable grouping key for heterogeneous raw-generation cohorts   |
 | `layout_plan` | str  | Stable grouping key for datasets sharing one fixed-layout plan |
+
+### `intervention` sub-object
+
+Present when hard-intervention metadata is available.
+
+| Key         | Type | Description                             |
+| ----------- | ---- | --------------------------------------- |
+| `mode`      | str  | Emitted intervention regime             |
+| `signature` | str  | Stable summary intervention identifier  |
 
 ### `target_relevance` sub-object
 
@@ -241,9 +251,15 @@ Current `summary` keys:
 
 Current `provenance` keys:
 
+- `intervention` (optional)
 - `target_derivation`
 - `target_relevant_feature_count_range`
 - `target_relevant_feature_fraction_range`
+
+Current `provenance.intervention` keys:
+
+- `mode`
+- `signature`
 
 ______________________________________________________________________
 

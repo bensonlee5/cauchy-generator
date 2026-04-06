@@ -11,6 +11,7 @@ DATASET_CATALOG_FILENAME = "dataset_catalog.ndjson"
 INTERNAL_DIRNAME = "internal"
 REPLAY_CATALOG_FILENAME = "replay_catalog.ndjson"
 RUN_CONTEXT_FILENAME = "run_context.json"
+_BLAKE2S_HEX_LENGTH = 32
 
 
 def _is_direct_shard_input(path: Path) -> bool:
@@ -48,6 +49,28 @@ def infer_task_from_metadata(metadata: Mapping[str, Any]) -> str:
                 if normalized in {"classification", "regression"}:
                     return normalized
     return "classification" if metadata.get("n_classes") is not None else "regression"
+
+
+def _normalize_intervention_summary(value: object, *, path: str) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{path} must be a mapping.")
+    mode = value.get("mode")
+    signature = value.get("signature")
+    if not isinstance(mode, str) or not mode.strip():
+        raise ValueError(f"{path}.mode must be a non-empty string.")
+    if not isinstance(signature, str) or not signature.strip():
+        raise ValueError(f"{path}.signature must be a non-empty string.")
+    normalized_signature = signature.strip()
+    if len(normalized_signature) != _BLAKE2S_HEX_LENGTH or any(
+        ch not in "0123456789abcdef" for ch in normalized_signature
+    ):
+        raise ValueError(
+            f"{path}.signature must be a {_BLAKE2S_HEX_LENGTH}-character lowercase hexadecimal string."
+        )
+    return {
+        "mode": mode.strip(),
+        "signature": normalized_signature,
+    }
 
 
 def build_dataset_catalog_record(
@@ -106,6 +129,12 @@ def build_dataset_catalog_record(
                     "feature_count": int(target_relevant_feature_count),
                     "feature_fraction": float(target_relevant_feature_fraction),
                 }
+    intervention = metadata.get("intervention")
+    if intervention is not None:
+        record["intervention"] = _normalize_intervention_summary(
+            intervention,
+            path="metadata.intervention",
+        )
     return record
 
 

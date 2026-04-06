@@ -16,7 +16,7 @@ from dagzoo.math import sanitize_json
 
 HANDOFF_MANIFEST_FILENAME = "handoff_manifest.json"
 GENERATE_HANDOFF_SCHEMA_NAME = "dagzoo_generate_handoff_manifest"
-GENERATE_HANDOFF_SCHEMA_VERSION = 4
+GENERATE_HANDOFF_SCHEMA_VERSION = 5
 HANDOFF_SOURCE_FAMILY_FIXED = "dagzoo.fixed_layout_scm"
 HANDOFF_SOURCE_FAMILY_HETEROGENEOUS = "dagzoo.heterogeneous_scm"
 HANDOFF_SOURCE_FAMILIES = (
@@ -68,6 +68,21 @@ def _require_hex_string(value: object, *, path: str, expected_length: int) -> st
     if len(text) != expected_length or any(ch not in "0123456789abcdef" for ch in text):
         _raise(path, f"must be a {expected_length}-character lowercase hexadecimal string")
     return text
+
+
+def _normalize_intervention_summary(value: object, *, path: str) -> dict[str, str]:
+    mapping = _require_mapping(value, path=path)
+    return {
+        "mode": _require_non_empty_string(
+            mapping.get("mode"),
+            path=f"{path}.mode",
+        ),
+        "signature": _require_hex_string(
+            mapping.get("signature"),
+            path=f"{path}.signature",
+            expected_length=_BLAKE2S_HEX_LENGTH,
+        ),
+    }
 
 
 def _relative_posix_path(path: str | Path, *, start: str | Path) -> str:
@@ -172,6 +187,8 @@ def _load_generated_provenance(
     target_derivations: set[str] = set()
     target_relevant_feature_counts: list[int] = []
     target_relevant_feature_fractions: list[float] = []
+    intervention_summary: object = None
+    intervention_initialized = False
     for catalog_path in catalog_paths:
         for record in iter_ndjson_records(catalog_path):
             target_derivation = record.get("target_derivation")
@@ -187,6 +204,19 @@ def _load_generated_provenance(
                     feature_fraction, (int, float)
                 ):
                     target_relevant_feature_fractions.append(float(feature_fraction))
+            current_intervention = record.get("intervention")
+            if current_intervention is None:
+                normalized_intervention = None
+            else:
+                normalized_intervention = _normalize_intervention_summary(
+                    current_intervention,
+                    path=f"{catalog_path}.intervention",
+                )
+            if not intervention_initialized:
+                intervention_summary = normalized_intervention
+                intervention_initialized = True
+            elif normalized_intervention != intervention_summary:
+                _raise("generated_dir", "contains mixed intervention summaries; expected one")
     payload: dict[str, Any] = {}
     if len(target_derivations) == 1:
         payload["target_derivation"] = next(iter(target_derivations))
@@ -202,6 +232,8 @@ def _load_generated_provenance(
             "min": float(min(target_relevant_feature_fractions)),
             "max": float(max(target_relevant_feature_fractions)),
         }
+    if intervention_initialized and intervention_summary is not None:
+        payload["intervention"] = dict(cast(dict[str, str], intervention_summary))
     return payload
 
 
@@ -330,6 +362,12 @@ def validate_generate_handoff_manifest(payload: Mapping[str, Any]) -> None:
             _require_non_empty_string(
                 target_derivation,
                 path="handoff_manifest.provenance.target_derivation",
+            )
+        intervention = provenance_mapping.get("intervention")
+        if intervention is not None:
+            _normalize_intervention_summary(
+                intervention,
+                path="handoff_manifest.provenance.intervention",
             )
         for key in (
             "target_relevant_feature_count_range",
