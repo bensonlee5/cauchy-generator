@@ -34,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  ./scripts/dev bootstrap\n"
             "  ./.venv/bin/nox -s quick\n"
             "  ./.venv/bin/nox -s bench_smoke\n"
+            "  ./.venv/bin/nox -s bench_public_smoke\n"
             "  ./scripts/dev review-base\n"
             "  ./scripts/dev impact"
         ),

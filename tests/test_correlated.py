@@ -2,8 +2,9 @@
 
 import torch
 
+import dagzoo.sampling.correlated as correlated_mod
 from dagzoo.rng import KeyedRng
-from dagzoo.sampling.correlated import CorrelatedSampler
+from dagzoo.sampling.correlated import CorrelatedSampler, correlated_sampling_scope
 
 
 def test_sample_num_within_bounds() -> None:
@@ -80,3 +81,80 @@ def test_correlated_sampler_keeps_named_sequences_independent() -> None:
 
     assert first_b == ref_first_b
     assert second_b == ref_second_b
+
+
+def test_correlated_sampling_scope_reuses_numeric_params_for_compatible_paths(
+    monkeypatch,
+) -> None:
+    draw_calls: list[str] = []
+    original = correlated_mod._draw_numeric_params
+
+    def _tracking_draw_numeric_params(
+        generator: torch.Generator,
+        *,
+        device: str,
+    ) -> correlated_mod._NumericParams:
+        draw_calls.append(device)
+        return original(generator, device=device)
+
+    monkeypatch.setattr(correlated_mod, "_draw_numeric_params", _tracking_draw_numeric_params)
+    dataset_root = KeyedRng(17).keyed("dataset", 0)
+
+    with correlated_sampling_scope(dataset_root):
+        first = correlated_mod.numeric_params_for_name(
+            dataset_root.keyed("lhs"),
+            "shared_numeric",
+            device="cpu",
+        )
+        second = correlated_mod.numeric_params_for_name(
+            dataset_root.keyed("rhs"),
+            "shared_numeric",
+            device="cpu",
+        )
+
+    assert draw_calls == ["cpu"]
+    assert first == second
+
+
+def test_correlated_sampling_scope_reuses_categorical_weight_tensor_for_compatible_paths(
+    monkeypatch,
+) -> None:
+    categorical_weight_calls: list[tuple[str, str, str]] = []
+    original = correlated_mod.CorrelatedSamplingContext.categorical_weight
+
+    def _tracking_categorical_weight(
+        self: correlated_mod.CorrelatedSamplingContext,
+        *,
+        name: str,
+        label: str,
+        device: str,
+    ) -> float:
+        categorical_weight_calls.append((name, label, device))
+        return original(self, name=name, label=label, device=device)
+
+    monkeypatch.setattr(
+        correlated_mod.CorrelatedSamplingContext,
+        "categorical_weight",
+        _tracking_categorical_weight,
+    )
+    dataset_root = KeyedRng(23).keyed("dataset", 0)
+
+    with correlated_sampling_scope(dataset_root):
+        _ = correlated_mod.sample_correlated_choice(
+            dataset_root.keyed("lhs"),
+            name="shared_category",
+            values=("alpha", "beta", "gamma"),
+            device="cpu",
+        )
+        _ = correlated_mod.sample_correlated_choice(
+            dataset_root.keyed("rhs"),
+            name="shared_category",
+            values=("alpha", "beta", "gamma"),
+            device="cpu",
+        )
+
+    assert categorical_weight_calls == [
+        ("shared_category", "alpha", "cpu"),
+        ("shared_category", "beta", "cpu"),
+        ("shared_category", "gamma", "cpu"),
+    ]

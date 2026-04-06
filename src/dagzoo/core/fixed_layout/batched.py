@@ -6,7 +6,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, cast
 
 import torch
 
@@ -43,10 +43,17 @@ from .batch_functions import (
     _apply_leaf_pair_batch,
     _apply_linear_batch,
     _apply_nn_batch,
+    _apply_piecewise_gate_with_params,
     _apply_quadratic_batch,
+    _apply_sampled_leaf_function_batch,
     _apply_tree_batch,
+    _concat_piecewise_gate_params,
+    _concat_sampled_leaf_function_params,
+    _sample_leaf_function_params_batch,
+    _sample_piecewise_gate_params,
     _sample_random_matrix_from_plan_batch,
     _sample_random_points_batch,
+    _SampledPiecewiseGateParams,
 )
 from .plan_types import (
     DEFAULT_FIXED_LAYOUT_EXECUTION_CONTRACT,
@@ -56,6 +63,8 @@ from .plan_types import (
     ConcatNodeSource,
     DiscretizationFunctionPlan,
     EmFunctionPlan,
+    FixedActivationPlan,
+    FixedLayoutActivationPlan,
     FixedLayoutCompiledConverterGroup,
     FixedLayoutCompiledConverterSlice,
     FixedLayoutConverterSpec,
@@ -67,6 +76,7 @@ from .plan_types import (
     NeuralNetFunctionPlan,
     NumericConverterGroup,
     NumericConverterPlan,
+    ParametricActivationPlan,
     PiecewiseFunctionPlan,
     ProductFunctionPlan,
     QuadraticFunctionPlan,
@@ -139,6 +149,41 @@ class _FixedLayoutBatchExecutionContext:
     """Per-batch cached RNG handles for prepared fixed-layout execution."""
 
     node_contexts: tuple[_PreparedBatchNodeExecutionContext, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _MixedPreparedLogicalCohort:
+    """One exact logical cohort executed within a heterogeneous physical microbatch."""
+
+    layout: LayoutPlan
+    execution_plan: FixedLayoutExecutionPlan
+    prepared_execution_context: _PreparedFixedLayoutExecutionContext
+    dataset_seeds: tuple[int, ...]
+    noise_spec: NoiseSamplingSpec | None
+    task: str
+    n_rows: int
+
+
+@dataclass(frozen=True, slots=True)
+class _MixedNodeRun:
+    """One logical cohort segment for mixed node execution."""
+
+    node_context: _PreparedNodeExecutionContext
+    batch_node_context: _PreparedBatchNodeExecutionContext
+    start: int
+    stop: int
+    noise_spec: NoiseSamplingSpec | None
+
+
+@dataclass(frozen=True, slots=True)
+class _MixedFunctionRun:
+    """One logical cohort segment for mixed compiled-function execution."""
+
+    function_context: _CompiledFunctionExecutionContext
+    batch_node_context: _PreparedBatchNodeExecutionContext
+    start: int
+    stop: int
+    noise_spec: NoiseSamplingSpec | None
 
 
 def _append_compiled_function_program_step(
@@ -370,6 +415,273 @@ def _build_fixed_layout_batch_execution_context(
             )(batch_rng.keyed(*node_context.node_rng_path))
             for node_context in prepared_execution_context.node_contexts
         )
+    )
+
+
+def _batch_rng_for_dataset_seeds(
+    dataset_seeds: list[int] | tuple[int, ...],
+    *,
+    device: str,
+) -> FixedLayoutBatchRng:
+    if not dataset_seeds:
+        raise ValueError("dataset_seeds must be non-empty.")
+    batch_seed = KeyedRng(int(dataset_seeds[0])).child_seed(
+        "fixed_layout_chunk",
+        len(dataset_seeds),
+    )
+    return FixedLayoutBatchRng(seed=batch_seed, batch_size=len(dataset_seeds), device=device)
+
+
+def _build_prepared_batch_node_context(
+    node_context: _PreparedNodeExecutionContext,
+    batch_rng: FixedLayoutBatchRng,
+) -> _PreparedBatchNodeExecutionContext:
+    node_rng = batch_rng.keyed(*node_context.node_rng_path)
+    return _PreparedBatchNodeExecutionContext(
+        node_rng=node_rng,
+        child_rngs={path: node_rng.keyed(*path) for path in node_context.cached_rng_paths},
+    )
+
+
+def _is_leaf_function_plan(plan: FixedLayoutFunctionPlan) -> bool:
+    return not isinstance(plan, (ProductFunctionPlan, PiecewiseFunctionPlan))
+
+
+def _function_plan_supports_mixed_execution(plan: FixedLayoutFunctionPlan) -> bool:
+    if _is_leaf_function_plan(plan):
+        return True
+    if isinstance(plan, ProductFunctionPlan):
+        return _function_plan_supports_mixed_execution(
+            plan.lhs
+        ) and _function_plan_supports_mixed_execution(plan.rhs)
+    if isinstance(plan, PiecewiseFunctionPlan):
+        return _function_plan_supports_mixed_execution(
+            plan.lhs
+        ) and _function_plan_supports_mixed_execution(plan.rhs)
+    return False
+
+
+def _source_supports_mixed_execution(
+    source: RandomPointsNodeSource | ConcatNodeSource | StackedNodeSource,
+) -> bool:
+    if isinstance(source, RandomPointsNodeSource):
+        return _function_plan_supports_mixed_execution(source.function)
+    if isinstance(source, ConcatNodeSource):
+        return _function_plan_supports_mixed_execution(source.function)
+    return all(_function_plan_supports_mixed_execution(plan) for plan in source.parent_functions)
+
+
+def _activation_kernel_signature(
+    plan: FixedLayoutActivationPlan | None,
+) -> tuple[object, ...] | None:
+    if plan is None:
+        return None
+    if isinstance(plan, FixedActivationPlan):
+        return ("fixed", str(plan.name))
+    if isinstance(plan, ParametricActivationPlan):
+        return (
+            "parametric",
+            str(plan.kind),
+            None if plan.poly_power is None else int(plan.poly_power),
+            None if plan.temperature is None else float(plan.temperature),
+        )
+    return (type(plan).__name__,)
+
+
+def _function_family_topology_signature(
+    plan: FixedLayoutFunctionPlan,
+) -> tuple[object, ...]:
+    family_name = _function_family_name(plan)
+    if isinstance(plan, ProductFunctionPlan):
+        return (
+            family_name,
+            _function_family_topology_signature(plan.lhs),
+            _function_family_topology_signature(plan.rhs),
+        )
+    if isinstance(plan, PiecewiseFunctionPlan):
+        return (
+            family_name,
+            _function_family_topology_signature(plan.lhs),
+            _function_family_topology_signature(plan.rhs),
+        )
+    return (family_name,)
+
+
+def _function_apply_kernel_signature(
+    plan: FixedLayoutFunctionPlan,
+) -> tuple[object, ...]:
+    if isinstance(plan, LinearFunctionPlan):
+        return ("linear",)
+    if isinstance(plan, QuadraticFunctionPlan):
+        return ("quadratic",)
+    if isinstance(plan, NeuralNetFunctionPlan):
+        return (
+            "nn",
+            int(plan.n_layers),
+            int(plan.hidden_width),
+            _activation_kernel_signature(plan.input_activation),
+            tuple(
+                _activation_kernel_signature(activation) for activation in plan.hidden_activations
+            ),
+            _activation_kernel_signature(plan.output_activation),
+        )
+    if isinstance(plan, TreeFunctionPlan):
+        return ("tree", tuple(int(depth) for depth in plan.depths))
+    if isinstance(plan, DiscretizationFunctionPlan):
+        return ("discretization", int(plan.n_centers))
+    if isinstance(plan, GpFunctionPlan):
+        return ("gp", str(plan.branch_kind), str(plan.variant))
+    if isinstance(plan, EmFunctionPlan):
+        return ("em", int(plan.m_val))
+    if isinstance(plan, ProductFunctionPlan):
+        return (
+            "product",
+            _function_apply_kernel_signature(plan.lhs),
+            _function_apply_kernel_signature(plan.rhs),
+        )
+    if isinstance(plan, PiecewiseFunctionPlan):
+        return (
+            "piecewise",
+            float(plan.gate_bias),
+            float(plan.gate_temperature),
+            _function_apply_kernel_signature(plan.lhs),
+            _function_apply_kernel_signature(plan.rhs),
+        )
+    return (_function_family_name(plan),)
+
+
+def _compiled_function_apply_kernel_signature(
+    context: _CompiledFunctionExecutionContext | None,
+) -> tuple[object, ...] | None:
+    if context is None:
+        return None
+    return _function_apply_kernel_signature(context.plan)
+
+
+def _compiled_converter_group_signature(
+    node_context: _PreparedNodeExecutionContext,
+    group: FixedLayoutCompiledConverterGroup,
+    *,
+    coarse: bool,
+) -> tuple[object, ...]:
+    if isinstance(group, CompiledNumericConverterGroup):
+        return (
+            "numeric",
+            int(len(group.slices)),
+            tuple(int(spec.width) for spec in group.slices),
+            bool(group.all_unit_width),
+        )
+    nested_function_signature: tuple[object, ...] | None = None
+    if group.uses_center_random_fn:
+        nested_context = node_context.converter_nested_function_contexts[int(group.spec_indices[0])]
+        nested_function_signature = (
+            _function_family_topology_signature(nested_context.plan)
+            if coarse and nested_context is not None
+            else _compiled_function_apply_kernel_signature(nested_context)
+        )
+    return (
+        "categorical",
+        str(group.plan.method),
+        str(group.plan.variant),
+        int(len(group.slices)),
+        tuple(int(spec.width) for spec in group.slices),
+        tuple(None if spec.cardinality is None else int(spec.cardinality) for spec in group.slices),
+        bool(group.uses_center_random_fn),
+        nested_function_signature,
+    )
+
+
+def _node_source_coarse_sketch(
+    node_context: _PreparedNodeExecutionContext,
+) -> tuple[object, ...]:
+    node_plan = node_context.node_plan
+    source = node_plan.source
+    if isinstance(source, RandomPointsNodeSource):
+        return (
+            "random_points",
+            _function_family_topology_signature(source.function),
+        )
+    if isinstance(source, ConcatNodeSource):
+        return (
+            "concat",
+            _function_family_topology_signature(source.function),
+        )
+    return (
+        "stacked",
+        str(source.aggregation_kind),
+        tuple(_function_family_topology_signature(plan) for plan in source.parent_functions),
+    )
+
+
+def mixed_execution_cohort_compatibility_sketch(
+    execution_plan: FixedLayoutExecutionPlan,
+    prepared_execution_context: _PreparedFixedLayoutExecutionContext,
+) -> tuple[object, ...]:
+    """Return one coarse compatibility sketch used for heterogeneous physical grouping."""
+
+    node_sketches: list[tuple[object, ...]] = []
+    for node_context, node_plan in zip(
+        prepared_execution_context.node_contexts,
+        execution_plan.node_plans,
+        strict=True,
+    ):
+        converter_groups = _resolved_compiled_converter_groups(node_plan)
+        node_sketches.append(
+            (
+                int(node_plan.latent.total_dim),
+                int(len(node_plan.parent_indices)),
+                _node_source_coarse_sketch(node_context),
+                tuple(
+                    _compiled_converter_group_signature(
+                        node_context,
+                        group,
+                        coarse=True,
+                    )
+                    for group in converter_groups
+                ),
+                tuple(
+                    str(spec.key)
+                    for spec in node_plan.converter_specs
+                    if str(spec.key).startswith("target")
+                ),
+            )
+        )
+    return (
+        tuple(node_sketches),
+        tuple(int(index) for index in prepared_execution_context.target_ancestor_node_indices),
+    )
+
+
+def _source_bucket_key(
+    node_context: _PreparedNodeExecutionContext,
+    *,
+    parent_widths: tuple[int, ...],
+) -> tuple[object, ...]:
+    node_plan = node_context.node_plan
+    source = node_plan.source
+    if isinstance(source, RandomPointsNodeSource):
+        source_signature: tuple[object, ...] = (
+            "random_points",
+            _compiled_function_apply_kernel_signature(node_context.root_source_function),
+        )
+    elif isinstance(source, ConcatNodeSource):
+        source_signature = (
+            "concat",
+            _compiled_function_apply_kernel_signature(node_context.concat_function),
+        )
+    else:
+        source_signature = (
+            "stacked",
+            str(source.aggregation_kind),
+            tuple(
+                _compiled_function_apply_kernel_signature(function_context)
+                for function_context in node_context.parent_function_contexts
+            ),
+        )
+    return (
+        source_signature,
+        int(node_plan.latent.total_dim),
+        tuple(int(width) for width in parent_widths),
     )
 
 
@@ -650,17 +962,16 @@ def _apply_function_plan_batch_core(
             out = lhs * rhs
         elif isinstance(plan, PiecewiseFunctionPlan):
             piecewise_rng = rng.keyed("piecewise")
-            gate_matrix = _sample_random_matrix_from_plan_batch(
-                plan.gate_matrix,
-                out_dim=1,
-                in_dim=int(y.shape[2]),
-                rng=piecewise_rng.keyed("gate_matrix"),
-                noise_sigma_multiplier=noise_sigma_multiplier,
-                noise_spec=noise_spec,
-            )
-            gate_projection = torch.einsum("bni,boi->bno", y, gate_matrix)
-            gate = torch.sigmoid(
-                (gate_projection + float(plan.gate_bias)) * float(plan.gate_temperature)
+            gate = _apply_piecewise_gate_with_params(
+                y,
+                plan,
+                _sample_piecewise_gate_params(
+                    y,
+                    piecewise_rng.keyed("gate_matrix"),
+                    plan,
+                    noise_sigma_multiplier=noise_sigma_multiplier,
+                    noise_spec=noise_spec,
+                ),
             )
             branch_input = _batch_standardize(y)
             lhs = _apply_function_plan_batch_core(
@@ -896,22 +1207,20 @@ def _apply_compiled_function_plan_batch_core(
             if isinstance(step.plan, PiecewiseFunctionPlan):
                 if step.gate_matrix_rng_path is None:
                     raise ValueError("Compiled piecewise program step is missing gate-matrix path.")
-                gate_matrix = _sample_random_matrix_from_plan_batch(
-                    step.plan.gate_matrix,
-                    out_dim=1,
-                    in_dim=int(frame.input_tensor.shape[2]),
-                    rng=_resolve_compiled_program_rng(
-                        node_rng,
-                        path=step.gate_matrix_rng_path,
-                        cached_child_rngs=cached_child_rngs,
+                frame.gate = _apply_piecewise_gate_with_params(
+                    frame.input_tensor,
+                    step.plan,
+                    _sample_piecewise_gate_params(
+                        frame.input_tensor,
+                        _resolve_compiled_program_rng(
+                            node_rng,
+                            path=step.gate_matrix_rng_path,
+                            cached_child_rngs=cached_child_rngs,
+                        ),
+                        step.plan,
+                        noise_sigma_multiplier=noise_sigma_multiplier,
+                        noise_spec=noise_spec,
                     ),
-                    noise_sigma_multiplier=noise_sigma_multiplier,
-                    noise_spec=noise_spec,
-                )
-                gate_projection = torch.einsum("bni,boi->bno", frame.input_tensor, gate_matrix)
-                frame.gate = torch.sigmoid(
-                    (gate_projection + float(step.plan.gate_bias))
-                    * float(step.plan.gate_temperature)
                 )
             frame.exclusive_elapsed_seconds += time.perf_counter() - exclusive_start
             lhs_step = program_steps[step.lhs_index]
@@ -1049,6 +1358,199 @@ def apply_compiled_function_plan_batch(
         noise_sigma_multiplier=noise_sigma_multiplier,
         noise_spec=noise_spec,
         cached_child_rngs=cached_child_rngs,
+    )
+
+
+def _sample_mixed_leaf_function_params(
+    x: torch.Tensor,
+    *,
+    program_index: int,
+    cohort_runs: list[_MixedFunctionRun],
+    out_dim: int,
+    noise_sigma_multiplier: float,
+) -> Any:
+    representative_step = cohort_runs[0].function_context.program_steps[int(program_index)]
+    if representative_step.lhs_index is not None or representative_step.rhs_index is not None:
+        raise ValueError("Mixed leaf-parameter sampling requires a leaf program step.")
+    return _concat_sampled_leaf_function_params(
+        [
+            _sample_leaf_function_params_batch(
+                x[run.start : run.stop],
+                _resolve_compiled_program_rng(
+                    run.batch_node_context.node_rng,
+                    path=run.function_context.program_steps[int(program_index)].root_rng_path,
+                    cached_child_rngs=run.batch_node_context.child_rngs,
+                ),
+                cast(
+                    LinearFunctionPlan
+                    | QuadraticFunctionPlan
+                    | NeuralNetFunctionPlan
+                    | TreeFunctionPlan
+                    | DiscretizationFunctionPlan
+                    | GpFunctionPlan
+                    | EmFunctionPlan,
+                    run.function_context.program_steps[int(program_index)].plan,
+                ),
+                out_dim=out_dim,
+                noise_sigma_multiplier=noise_sigma_multiplier,
+                noise_spec=run.noise_spec,
+            )
+            for run in cohort_runs
+        ]
+    )
+
+
+def _sample_mixed_piecewise_gate(
+    x: torch.Tensor,
+    *,
+    program_index: int,
+    cohort_runs: list[_MixedFunctionRun],
+    noise_sigma_multiplier: float,
+) -> torch.Tensor:
+    step = cohort_runs[0].function_context.program_steps[int(program_index)]
+    if not isinstance(step.plan, PiecewiseFunctionPlan):
+        raise ValueError("Mixed piecewise gate sampling requires a piecewise program step.")
+    if step.gate_matrix_rng_path is None:
+        raise ValueError("Compiled piecewise program step is missing gate-matrix path.")
+    params_list: list[_SampledPiecewiseGateParams] = []
+    for run in cohort_runs:
+        run_step = run.function_context.program_steps[int(program_index)]
+        if run_step.gate_matrix_rng_path is None:
+            raise ValueError("Mixed piecewise cohort is missing gate-matrix path.")
+        params_list.append(
+            _sample_piecewise_gate_params(
+                x[run.start : run.stop],
+                _resolve_compiled_program_rng(
+                    run.batch_node_context.node_rng,
+                    path=run_step.gate_matrix_rng_path,
+                    cached_child_rngs=run.batch_node_context.child_rngs,
+                ),
+                cast(PiecewiseFunctionPlan, run_step.plan),
+                noise_sigma_multiplier=noise_sigma_multiplier,
+                noise_spec=run.noise_spec,
+            )
+        )
+    params = _concat_piecewise_gate_params(params_list)
+    return _apply_piecewise_gate_with_params(x, step.plan, params)
+
+
+def _apply_mixed_compiled_function_plan_batch_core(
+    y: torch.Tensor,
+    *,
+    cohort_runs: list[_MixedFunctionRun],
+    context: _CompiledFunctionExecutionContext,
+    out_dim: int,
+    noise_sigma_multiplier: float,
+    program_index: int | None = None,
+) -> torch.Tensor:
+    program_steps = context.program_steps
+    if not program_steps:
+        raise ValueError("Compiled fixed-layout function context is missing execution steps.")
+
+    current_program_index = int(
+        context.root_program_index if program_index is None else program_index
+    )
+    step = program_steps[current_program_index]
+    family_start = time.perf_counter()
+    exclusive_elapsed_seconds = 0.0
+    try:
+        if step.lhs_index is None and step.rhs_index is None:
+            out = _apply_sampled_leaf_function_batch(
+                y,
+                cast(
+                    LinearFunctionPlan
+                    | QuadraticFunctionPlan
+                    | NeuralNetFunctionPlan
+                    | TreeFunctionPlan
+                    | DiscretizationFunctionPlan
+                    | GpFunctionPlan
+                    | EmFunctionPlan,
+                    step.plan,
+                ),
+                _sample_mixed_leaf_function_params(
+                    y,
+                    program_index=current_program_index,
+                    cohort_runs=cohort_runs,
+                    out_dim=out_dim,
+                    noise_sigma_multiplier=noise_sigma_multiplier,
+                ),
+            )
+        else:
+            if step.lhs_index is None or step.rhs_index is None:
+                raise ValueError("Compiled higher-order program step is missing child indices.")
+            boundary_start = time.perf_counter()
+            branch_input = _batch_standardize(y) if step.standardize_input_boundary else y
+            exclusive_elapsed_seconds += time.perf_counter() - boundary_start
+            gate: torch.Tensor | None = None
+            if isinstance(step.plan, PiecewiseFunctionPlan):
+                gate_start = time.perf_counter()
+                gate = _sample_mixed_piecewise_gate(
+                    y,
+                    program_index=current_program_index,
+                    cohort_runs=cohort_runs,
+                    noise_sigma_multiplier=noise_sigma_multiplier,
+                )
+                exclusive_elapsed_seconds += time.perf_counter() - gate_start
+            lhs = _apply_mixed_compiled_function_plan_batch_core(
+                branch_input,
+                cohort_runs=cohort_runs,
+                context=context,
+                out_dim=out_dim,
+                noise_sigma_multiplier=noise_sigma_multiplier,
+                program_index=int(step.lhs_index),
+            )
+            rhs = _apply_mixed_compiled_function_plan_batch_core(
+                branch_input,
+                cohort_runs=cohort_runs,
+                context=context,
+                out_dim=out_dim,
+                noise_sigma_multiplier=noise_sigma_multiplier,
+                program_index=int(step.rhs_index),
+            )
+            combine_start = time.perf_counter()
+            if isinstance(step.plan, PiecewiseFunctionPlan):
+                if gate is None:
+                    raise RuntimeError("Mixed piecewise execution is missing gate values.")
+                out = gate * lhs + (1.0 - gate) * rhs
+            else:
+                out = lhs * rhs
+            exclusive_elapsed_seconds += time.perf_counter() - combine_start
+    finally:
+        elapsed_seconds = time.perf_counter() - family_start
+        record_runtime_profile_metric(
+            f"profile_node_apply_{step.family_name}_elapsed_seconds",
+            elapsed_seconds,
+        )
+        if step.lhs_index is not None and step.rhs_index is not None:
+            record_runtime_profile_metric(
+                f"profile_node_apply_{step.family_name}_exclusive_elapsed_seconds",
+                exclusive_elapsed_seconds,
+            )
+            record_runtime_profile_metric(
+                f"profile_node_apply_{step.family_name}_call_count",
+                1.0,
+            )
+    return _sanitize_function_output(out)
+
+
+def _apply_mixed_compiled_function_plan_batch(
+    x: torch.Tensor,
+    *,
+    cohort_runs: list[_MixedFunctionRun],
+    context: _CompiledFunctionExecutionContext,
+    out_dim: int,
+    noise_sigma_multiplier: float,
+    standardize_input: bool = True,
+) -> torch.Tensor:
+    y = x.to(torch.float32)
+    if standardize_input:
+        y = _batch_standardize(y)
+    return _apply_mixed_compiled_function_plan_batch_core(
+        y,
+        cohort_runs=cohort_runs,
+        context=context,
+        out_dim=out_dim,
+        noise_sigma_multiplier=noise_sigma_multiplier,
     )
 
 
@@ -1502,6 +2004,12 @@ def _apply_node_plan_batch(
     converter_start_cpu = time.process_time()
     for group in _resolved_compiled_converter_groups(node_plan):
         if isinstance(group, CompiledNumericConverterGroup):
+            _accumulate_runtime_metric(runtime_metrics_out, "mixed_converter_bucket_count", 1.0)
+            _accumulate_runtime_metric(
+                runtime_metrics_out,
+                "mixed_converter_bucket_dataset_sum",
+                float(rng.batch_size),
+            )
             if group.all_unit_width:
                 grouped_input = torch.cat(
                     [
@@ -1806,6 +2314,12 @@ def _apply_node_plan_batch_prepared(
             continue
 
         if not group.uses_center_random_fn:
+            _accumulate_runtime_metric(runtime_metrics_out, "mixed_converter_bucket_count", 1.0)
+            _accumulate_runtime_metric(
+                runtime_metrics_out,
+                "mixed_converter_bucket_dataset_sum",
+                float(node_rng.batch_size),
+            )
             x_prime, values = _apply_categorical_group_batch(
                 _categorical_group_input_views(latent, group.slices),
                 node_rng,
@@ -1885,6 +2399,628 @@ def _apply_node_plan_batch_prepared(
         time.process_time() - node_start_cpu,
     )
     return latent, extracted
+
+
+def _apply_node_converters_and_scale_prepared(
+    node_context: _PreparedNodeExecutionContext,
+    latent: torch.Tensor,
+    *,
+    batch_node_context: _PreparedBatchNodeExecutionContext,
+    noise_sigma_multiplier: float,
+    noise_spec: NoiseSamplingSpec | None,
+    runtime_metrics_out: dict[str, float] | None = None,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Apply only converter extraction and final latent scaling for one prepared node."""
+
+    node_plan = node_context.node_plan
+    node_rng = batch_node_context.node_rng
+    cached_child_rngs = batch_node_context.child_rngs
+    extracted: dict[str, torch.Tensor] = {}
+    converter_start = time.perf_counter()
+    converter_start_cpu = time.process_time()
+    for group in _resolved_compiled_converter_groups(node_plan):
+        if isinstance(group, CompiledNumericConverterGroup):
+            if group.all_unit_width:
+                grouped_input = torch.cat(
+                    [
+                        latent[:, :, int(spec.column_start) : int(spec.column_end)]
+                        for spec in group.slices
+                    ],
+                    dim=2,
+                )
+                warp_enabled = torch.tensor(
+                    group.warp_enabled,
+                    device=latent.device,
+                    dtype=torch.bool,
+                )
+                x_prime, values = _apply_numeric_converter_group_batch(
+                    grouped_input,
+                    node_rng,
+                    warp_enabled,
+                    spec_indices=group.spec_indices,
+                )
+                for local_index, spec in enumerate(group.slices):
+                    start = int(spec.column_start)
+                    end = int(spec.column_end)
+                    latent[:, :, start:end] = x_prime[:, :, local_index : local_index + 1]
+                    extracted[str(spec.key)] = values[:, :, local_index]
+                continue
+            for spec, plan in zip(group.slices, group.plans, strict=True):
+                start = int(spec.column_start)
+                end = int(spec.column_end)
+                spec_out, values = apply_numeric_converter_plan_batch(
+                    latent[:, :, start:end],
+                    node_rng.keyed("converter", spec.spec_index),
+                    plan,
+                )
+                if int(spec_out.shape[2]) != (end - start):
+                    if int(spec_out.shape[2]) > (end - start):
+                        spec_out = spec_out[:, :, : (end - start)]
+                    else:
+                        spec_out = torch.nn.functional.pad(
+                            spec_out, (0, (end - start) - int(spec_out.shape[2]))
+                        )
+                latent[:, :, start:end] = spec_out
+                extracted[str(spec.key)] = values
+            continue
+
+        if not group.uses_center_random_fn:
+            x_prime, values = _apply_categorical_group_batch(
+                _categorical_group_input_views(latent, group.slices),
+                node_rng,
+                group.plan,
+                n_categories=group.category_count,
+                noise_sigma_multiplier=noise_sigma_multiplier,
+                noise_spec=noise_spec,
+                spec_indices=group.spec_indices,
+            )
+            for local_index, spec in enumerate(group.slices):
+                start = int(spec.column_start)
+                end = int(spec.column_end)
+                spec_out = x_prime[:, :, local_index, :]
+                if int(spec_out.shape[2]) != (end - start):
+                    if int(spec_out.shape[2]) > (end - start):
+                        spec_out = spec_out[:, :, : (end - start)]
+                    else:
+                        spec_out = torch.nn.functional.pad(
+                            spec_out, (0, (end - start) - int(spec_out.shape[2]))
+                        )
+                latent[:, :, start:end] = spec_out
+                extracted[str(spec.key)] = values[:, :, local_index]
+            continue
+
+        for spec in group.slices:
+            _accumulate_runtime_metric(runtime_metrics_out, "mixed_converter_bucket_count", 1.0)
+            _accumulate_runtime_metric(
+                runtime_metrics_out,
+                "mixed_converter_bucket_dataset_sum",
+                float(node_rng.batch_size),
+            )
+            start = int(spec.column_start)
+            end = int(spec.column_end)
+            spec_view = latent[:, :, start:end].unsqueeze(2)
+            x_prime, values = _apply_categorical_group_batch(
+                spec_view,
+                node_rng.keyed("converter", spec.spec_index),
+                group.plan,
+                n_categories=max(2, int(spec.cardinality or 2)),
+                noise_sigma_multiplier=noise_sigma_multiplier,
+                noise_spec=noise_spec,
+                compiled_nested_function_context=node_context.converter_nested_function_contexts[
+                    spec.spec_index
+                ],
+                compiled_nested_function_node_rng=node_rng,
+                compiled_nested_function_cached_child_rngs=cached_child_rngs,
+            )
+            spec_out = x_prime[:, :, 0, :]
+            if int(spec_out.shape[2]) != (end - start):
+                if int(spec_out.shape[2]) > (end - start):
+                    spec_out = spec_out[:, :, : (end - start)]
+                else:
+                    spec_out = torch.nn.functional.pad(
+                        spec_out, (0, (end - start) - int(spec_out.shape[2]))
+                    )
+            latent[:, :, start:end] = spec_out
+            extracted[str(spec.key)] = values[:, :, 0]
+
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "converter_elapsed_seconds",
+        time.perf_counter() - converter_start,
+    )
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "converter_cpu_time_seconds",
+        time.process_time() - converter_start_cpu,
+    )
+
+    scale = _resolve_compiled_program_rng(
+        node_rng,
+        path=("latent_scale",),
+        cached_child_rngs=cached_child_rngs,
+    ).log_uniform((node_rng.batch_size,), low=0.1, high=10.0)
+    return latent * scale.view(-1, 1, 1), extracted
+
+
+def _materialize_fixed_layout_output_batch(
+    layout: LayoutPlan,
+    *,
+    task: str,
+    batch_rng: FixedLayoutBatchRng,
+    noise_spec: NoiseSamplingSpec | None,
+    feature_values: list[torch.Tensor | None],
+    target_values: torch.Tensor | None,
+    device: str,
+    emit_features: bool,
+    runtime_metrics_out: dict[str, float] | None = None,
+) -> tuple[torch.Tensor | None, torch.Tensor, list[dict[str, Any]]]:
+    """Materialize one per-layout raw feature/target batch from extracted tensors."""
+
+    batch_size = int(batch_rng.batch_size)
+    n_rows = int(target_values.shape[1]) if target_values is not None else 0
+    num_features = int(layout.n_features)
+    aux_meta_batch: list[dict[str, Any]] = [
+        {"filter": {"mode": "deferred", "status": "not_run"}} for _ in range(batch_size)
+    ]
+
+    x_complete: torch.Tensor | None = None
+    if emit_features:
+        feature_start = time.perf_counter()
+        feature_start_cpu = time.process_time()
+        feature_types = list(layout.feature_types)
+        card_by_feature = dict(layout.card_by_feature)
+        feature_columns: list[torch.Tensor] = []
+        for feature_index in range(num_features):
+            feature_tensor = feature_values[feature_index]
+            if feature_tensor is None:
+                if feature_types[feature_index] == "cat":
+                    cardinality = int(card_by_feature[feature_index])
+                    feature_tensor = batch_rng.randint(0, cardinality, (batch_size, n_rows))
+                else:
+                    feature_tensor = sample_noise_from_spec(
+                        (batch_size, n_rows),
+                        generator=batch_rng.torch_generator,
+                        device=device,
+                        noise_spec=noise_spec,
+                    )
+            feature_columns.append(feature_tensor.to(torch.float32).unsqueeze(2))
+        x_complete = (
+            torch.cat(feature_columns, dim=2)
+            if feature_columns
+            else torch.empty((batch_size, n_rows, 0), dtype=torch.float32, device=device)
+        )
+        x_complete, _feature_types, _feature_index_map = postprocess_feature_matrix(
+            x_complete,
+            list(layout.feature_types),
+            keyed_rng=None,
+            preserve_feature_schema=True,
+        )
+        _accumulate_runtime_metric(
+            runtime_metrics_out,
+            "feature_materialization_elapsed_seconds",
+            time.perf_counter() - feature_start,
+        )
+        _accumulate_runtime_metric(
+            runtime_metrics_out,
+            "feature_materialization_cpu_time_seconds",
+            time.process_time() - feature_start_cpu,
+        )
+
+    if target_values is None:
+        raise RuntimeError("Fixed-layout execution did not extract a latent target value.")
+    if task == "classification":
+        y = target_values.to(torch.int64) % int(layout.n_classes)
+    else:
+        y = target_values.to(torch.float32)
+    return x_complete if emit_features else None, y, aux_meta_batch
+
+
+def _build_mixed_supported_source_latent_bucket(
+    node_context: _PreparedNodeExecutionContext,
+    *,
+    parent_data: list[torch.Tensor],
+    cohort_runs: list[_MixedNodeRun],
+    n_rows: int,
+    noise_sigma_multiplier: float,
+) -> torch.Tensor:
+    """Build one mixed physical bucket for supported compiled node sources."""
+
+    node_plan = node_context.node_plan
+    total_dim = int(node_plan.latent.total_dim)
+    source = node_plan.source
+    if not _source_supports_mixed_execution(source):
+        raise ValueError("Mixed supported source bucket requires mixed-compatible sources.")
+
+    if parent_data:
+        if isinstance(source, ConcatNodeSource):
+            if node_context.concat_function is None:
+                raise ValueError("Prepared concat node context is incomplete.")
+            combined_input = _sanitize_and_batch_standardize(torch.cat(parent_data, dim=2))
+            latent = _apply_mixed_compiled_function_plan_batch(
+                combined_input,
+                cohort_runs=[
+                    _MixedFunctionRun(
+                        function_context=run.node_context.concat_function,
+                        batch_node_context=run.batch_node_context,
+                        start=int(run.start),
+                        stop=int(run.stop),
+                        noise_spec=run.noise_spec,
+                    )
+                    for run in cohort_runs
+                    if run.node_context.concat_function is not None
+                ],
+                context=node_context.concat_function,
+                out_dim=total_dim,
+                noise_sigma_multiplier=noise_sigma_multiplier,
+                standardize_input=False,
+            )
+        else:
+            if not isinstance(source, StackedNodeSource):
+                raise ValueError("Parent-driven mixed source bucket requires a multi-input source.")
+            standardized_parents = [
+                _sanitize_and_batch_standardize(parent_tensor) for parent_tensor in parent_data
+            ]
+            transformed_outputs: list[torch.Tensor] = []
+            for plan_index, standardized_parent in enumerate(standardized_parents):
+                parent_function_context = node_context.parent_function_contexts[plan_index]
+                transformed_outputs.append(
+                    _apply_mixed_compiled_function_plan_batch(
+                        standardized_parent,
+                        cohort_runs=[
+                            _MixedFunctionRun(
+                                function_context=run.node_context.parent_function_contexts[
+                                    plan_index
+                                ],
+                                batch_node_context=run.batch_node_context,
+                                start=int(run.start),
+                                stop=int(run.stop),
+                                noise_spec=run.noise_spec,
+                            )
+                            for run in cohort_runs
+                        ],
+                        context=parent_function_context,
+                        out_dim=total_dim,
+                        noise_sigma_multiplier=noise_sigma_multiplier,
+                        standardize_input=False,
+                    )
+                )
+            if source.aggregation_kind == "logsumexp":
+                latent = _aggregate_parent_outputs_batch(
+                    torch.stack(transformed_outputs, dim=2),
+                    aggregation_kind=source.aggregation_kind,
+                )
+            else:
+                aggregate: torch.Tensor | None = None
+                for transformed in transformed_outputs:
+                    aggregate = (
+                        transformed
+                        if aggregate is None
+                        else _aggregate_batch_incrementally(
+                            aggregate,
+                            transformed,
+                            aggregation_kind=source.aggregation_kind,
+                        )
+                    )
+                if aggregate is None:
+                    raise RuntimeError("Expected at least one parent tensor for stacked node plan.")
+                latent = aggregate
+    else:
+        if not isinstance(source, RandomPointsNodeSource):
+            raise ValueError("Root mixed source bucket must use random-points source.")
+        if (
+            node_context.root_source_base_rng_path is None
+            or node_context.root_source_function is None
+        ):
+            raise ValueError("Prepared root-node execution context is incomplete.")
+        base = torch.cat(
+            [
+                _sample_random_points_batch(
+                    _resolve_compiled_program_rng(
+                        run.batch_node_context.node_rng,
+                        path=(
+                            run.node_context.root_source_base_rng_path
+                            if run.node_context.root_source_base_rng_path is not None
+                            else ()
+                        ),
+                        cached_child_rngs=run.batch_node_context.child_rngs,
+                    ),
+                    n_rows=n_rows,
+                    dim=total_dim,
+                    base_kind=cast(
+                        RandomPointsNodeSource,
+                        run.node_context.node_plan.source,
+                    ).base_kind,
+                    noise_sigma_multiplier=noise_sigma_multiplier,
+                    noise_spec=run.noise_spec,
+                )
+                for run in cohort_runs
+            ],
+            dim=0,
+        )
+        standardized_base = _sanitize_and_batch_standardize(base)
+        latent = _apply_mixed_compiled_function_plan_batch(
+            standardized_base,
+            cohort_runs=[
+                _MixedFunctionRun(
+                    function_context=run.node_context.root_source_function,
+                    batch_node_context=run.batch_node_context,
+                    start=int(run.start),
+                    stop=int(run.stop),
+                    noise_spec=run.noise_spec,
+                )
+                for run in cohort_runs
+                if run.node_context.root_source_function is not None
+            ],
+            context=node_context.root_source_function,
+            out_dim=total_dim,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            standardize_input=False,
+        )
+
+    latent = torch.nan_to_num(latent.to(torch.float32), nan=0.0, posinf=1e6, neginf=-1e6)
+    latent = torch.clamp(latent, -1e6, 1e6)
+    latent = _batch_standardize(latent)
+    weights = torch.cat(
+        [
+            _sample_random_weights_batch(
+                _resolve_compiled_program_rng(
+                    run.batch_node_context.node_rng,
+                    path=("latent_weights",),
+                    cached_child_rngs=run.batch_node_context.child_rngs,
+                ),
+                dim=int(latent.shape[2]),
+                sigma_multiplier=float(noise_sigma_multiplier),
+                noise_spec=run.noise_spec,
+            )
+            for run in cohort_runs
+        ],
+        dim=0,
+    )
+    latent = latent * weights.unsqueeze(1)
+    mean_l2 = torch.mean(torch.norm(latent, dim=2), dim=1)
+    return latent / torch.clamp(mean_l2.view(-1, 1, 1), min=1e-6)
+
+
+def _generate_mixed_fixed_layout_graph_batch_prepared(
+    cohorts: list[_MixedPreparedLogicalCohort],
+    *,
+    device: str,
+    noise_sigma_multiplier: float,
+    runtime_metrics_out: dict[str, float] | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, list[dict[str, object]]]:
+    """Generate one mixed physical microbatch from several exact logical cohorts."""
+
+    if not cohorts:
+        raise ValueError("cohorts must be non-empty.")
+    raw_batch_start = time.perf_counter()
+    raw_batch_start_cpu = time.process_time()
+    total_items = int(sum(len(cohort.dataset_seeds) for cohort in cohorts))
+    batch_rngs = [
+        _batch_rng_for_dataset_seeds(cohort.dataset_seeds, device=device) for cohort in cohorts
+    ]
+    batch_execution_contexts = [
+        _build_fixed_layout_batch_execution_context(cohort.prepared_execution_context, batch_rng)
+        for cohort, batch_rng in zip(cohorts, batch_rngs, strict=True)
+    ]
+    cohort_feature_values: list[list[torch.Tensor | None]] = [
+        [None] * int(cohort.layout.n_features) for cohort in cohorts
+    ]
+    cohort_target_values: list[torch.Tensor | None] = [None] * len(cohorts)
+    cohort_node_outputs: list[list[torch.Tensor | None]] = [
+        [None] * len(cohort.execution_plan.node_plans) for cohort in cohorts
+    ]
+
+    max_graph_nodes = max(len(cohort.execution_plan.node_plans) for cohort in cohorts)
+    for node_index in range(max_graph_nodes):
+        supported_buckets: dict[tuple[object, ...], list[int]] = {}
+        unsupported_cohorts: list[int] = []
+        active_cohort_indices: list[int] = []
+        for cohort_index, cohort in enumerate(cohorts):
+            if node_index >= len(cohort.execution_plan.node_plans):
+                continue
+            active_cohort_indices.append(int(cohort_index))
+            node_plan = cohort.execution_plan.node_plans[node_index]
+            parent_data = [
+                cohort_node_outputs[cohort_index][int(parent_index)]
+                for parent_index in node_plan.parent_indices
+            ]
+            if any(parent is None for parent in parent_data):
+                raise RuntimeError("Parent node output is missing for mixed physical microbatch.")
+            resolved_parent_data = cast(list[torch.Tensor], parent_data)
+            if not _source_supports_mixed_execution(node_plan.source):
+                unsupported_cohorts.append(int(cohort_index))
+                continue
+            supported_buckets.setdefault(
+                _source_bucket_key(
+                    cohort.prepared_execution_context.node_contexts[node_index],
+                    parent_widths=tuple(int(parent.shape[2]) for parent in resolved_parent_data),
+                ),
+                [],
+            ).append(int(cohort_index))
+
+        if active_cohort_indices:
+            _accumulate_runtime_metric(runtime_metrics_out, "mixed_source_node_slot_count", 1.0)
+
+        for cohort_index in unsupported_cohorts:
+            cohort = cohorts[cohort_index]
+            batch_node_context = batch_execution_contexts[cohort_index].node_contexts[node_index]
+            parent_data = [
+                cohort_node_outputs[cohort_index][int(parent_index)]
+                for parent_index in cohort.execution_plan.node_plans[node_index].parent_indices
+            ]
+            latent, extracted = _apply_node_plan_batch_prepared(
+                None,
+                cohort.prepared_execution_context.node_contexts[node_index],
+                [parent for parent in parent_data if parent is not None],
+                n_rows=int(cohort.n_rows),
+                batch_node_context=batch_node_context,
+                device=device,
+                noise_sigma_multiplier=noise_sigma_multiplier,
+                noise_spec=cohort.noise_spec,
+                runtime_metrics_out=runtime_metrics_out,
+            )
+            cohort_node_outputs[cohort_index][node_index] = latent
+            for key, values in extracted.items():
+                if key.startswith("feature_"):
+                    cohort_feature_values[cohort_index][int(key.split("_", 1)[1])] = values
+                elif key == "target":
+                    cohort_target_values[cohort_index] = values
+                else:
+                    raise ValueError(f"Unexpected extracted fixed-layout key {key!r}.")
+
+        for cohort_indices in supported_buckets.values():
+            bucket_start = time.perf_counter()
+            bucket_start_cpu = time.process_time()
+            _accumulate_runtime_metric(runtime_metrics_out, "mixed_source_bucket_count", 1.0)
+            _accumulate_runtime_metric(
+                runtime_metrics_out,
+                "mixed_source_bucket_dataset_sum",
+                float(len(cohort_indices)),
+            )
+            if len(cohort_indices) == 1:
+                cohort_index = cohort_indices[0]
+                cohort = cohorts[cohort_index]
+                parent_data = [
+                    cohort_node_outputs[cohort_index][int(parent_index)]
+                    for parent_index in cohort.execution_plan.node_plans[node_index].parent_indices
+                ]
+                latent, extracted = _apply_node_plan_batch_prepared(
+                    None,
+                    cohort.prepared_execution_context.node_contexts[node_index],
+                    [parent for parent in parent_data if parent is not None],
+                    n_rows=int(cohort.n_rows),
+                    batch_node_context=batch_execution_contexts[cohort_index].node_contexts[
+                        node_index
+                    ],
+                    device=device,
+                    noise_sigma_multiplier=noise_sigma_multiplier,
+                    noise_spec=cohort.noise_spec,
+                    runtime_metrics_out=runtime_metrics_out,
+                )
+                cohort_node_outputs[cohort_index][node_index] = latent
+                for key, values in extracted.items():
+                    if key.startswith("feature_"):
+                        cohort_feature_values[cohort_index][int(key.split("_", 1)[1])] = values
+                    elif key == "target":
+                        cohort_target_values[cohort_index] = values
+                    else:
+                        raise ValueError(f"Unexpected extracted fixed-layout key {key!r}.")
+                continue
+            representative = cohorts[cohort_indices[0]]
+            representative_context = representative.prepared_execution_context.node_contexts[
+                node_index
+            ]
+            representative_parent_count = len(
+                representative.execution_plan.node_plans[node_index].parent_indices
+            )
+            bucket_parent_data: list[torch.Tensor] = []
+            for parent_slot in range(representative_parent_count):
+                parent_slot_outputs = [
+                    cohort_node_outputs[cohort_index][
+                        int(
+                            cohorts[cohort_index]
+                            .execution_plan.node_plans[node_index]
+                            .parent_indices[parent_slot]
+                        )
+                    ]
+                    for cohort_index in cohort_indices
+                ]
+                bucket_parent_data.append(
+                    torch.cat(cast(list[torch.Tensor], parent_slot_outputs), dim=0)
+                )
+            cohort_runs: list[_MixedNodeRun] = []
+            position = 0
+            for cohort_index in cohort_indices:
+                cohort = cohorts[cohort_index]
+                size = len(cohort.dataset_seeds)
+                cohort_runs.append(
+                    _MixedNodeRun(
+                        node_context=cohort.prepared_execution_context.node_contexts[node_index],
+                        batch_node_context=batch_execution_contexts[cohort_index].node_contexts[
+                            node_index
+                        ],
+                        start=int(position),
+                        stop=int(position + size),
+                        noise_spec=cohort.noise_spec,
+                    )
+                )
+                position += size
+            latent = _build_mixed_supported_source_latent_bucket(
+                representative_context,
+                parent_data=bucket_parent_data,
+                cohort_runs=cohort_runs,
+                n_rows=int(representative.n_rows),
+                noise_sigma_multiplier=noise_sigma_multiplier,
+            )
+            for run, cohort_index in zip(
+                cohort_runs,
+                cohort_indices,
+                strict=True,
+            ):
+                cohort_node_context = cohorts[
+                    cohort_index
+                ].prepared_execution_context.node_contexts[node_index]
+                cohort_latent, extracted = _apply_node_converters_and_scale_prepared(
+                    cohort_node_context,
+                    latent[run.start : run.stop],
+                    batch_node_context=run.batch_node_context,
+                    noise_sigma_multiplier=noise_sigma_multiplier,
+                    noise_spec=cohorts[cohort_index].noise_spec,
+                    runtime_metrics_out=runtime_metrics_out,
+                )
+                cohort_node_outputs[cohort_index][node_index] = cohort_latent
+                for key, values in extracted.items():
+                    if key.startswith("feature_"):
+                        cohort_feature_values[cohort_index][int(key.split("_", 1)[1])] = values
+                    elif key == "target":
+                        cohort_target_values[cohort_index] = values
+                    else:
+                        raise ValueError(f"Unexpected extracted fixed-layout key {key!r}.")
+            _accumulate_runtime_metric(
+                runtime_metrics_out,
+                "node_apply_elapsed_seconds",
+                time.perf_counter() - bucket_start,
+            )
+            _accumulate_runtime_metric(
+                runtime_metrics_out,
+                "node_apply_cpu_time_seconds",
+                time.process_time() - bucket_start_cpu,
+            )
+
+    x_batches: list[torch.Tensor] = []
+    y_batches: list[torch.Tensor] = []
+    aux_meta_batch: list[dict[str, object]] = []
+    for cohort_index, cohort in enumerate(cohorts):
+        x_batch, y_batch, cohort_aux = _materialize_fixed_layout_output_batch(
+            cohort.layout,
+            task=cohort.task,
+            batch_rng=batch_rngs[cohort_index],
+            noise_spec=cohort.noise_spec,
+            feature_values=cohort_feature_values[cohort_index],
+            target_values=cohort_target_values[cohort_index],
+            device=device,
+            emit_features=True,
+            runtime_metrics_out=runtime_metrics_out,
+        )
+        if x_batch is None:
+            raise RuntimeError("Expected mixed fixed-layout feature batch to be materialized.")
+        x_batches.append(x_batch)
+        y_batches.append(y_batch)
+        aux_meta_batch.extend(cohort_aux)
+
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "raw_batch_elapsed_seconds",
+        time.perf_counter() - raw_batch_start,
+    )
+    _accumulate_runtime_metric(
+        runtime_metrics_out,
+        "raw_batch_cpu_time_seconds",
+        time.process_time() - raw_batch_start_cpu,
+    )
+    if int(sum(int(x.shape[0]) for x in x_batches)) != total_items:
+        raise RuntimeError("Mixed physical microbatch emitted an inconsistent batch size.")
+    return torch.cat(x_batches, dim=0), torch.cat(y_batches, dim=0), aux_meta_batch
 
 
 def _generate_fixed_layout_raw_batch(

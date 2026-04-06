@@ -239,7 +239,7 @@ def _sample_target_node(
     device: str,
     relationship_profile: str | None = None,
 ) -> int:
-    generator = keyed_rng.keyed("assignments", "target").torch_rng(device=device)
+    generator = keyed_rng.torch_rng("assignments", "target", device=device)
     eligible_target_nodes = _eligible_target_nodes(
         adjacency=adjacency,
         feature_to_node=feature_to_node,
@@ -312,7 +312,7 @@ def _sample_layout(
             sampled_feature_min,
             sampled_feature_max + 1,
             (1,),
-            generator=keyed_rng.keyed("feature_count").torch_rng(device=device),
+            generator=keyed_rng.torch_rng("feature_count", device=device),
         ).item()
     )
 
@@ -332,7 +332,7 @@ def _sample_layout(
     if num_categorical_features > 0:
         cat_idx_t = torch.randperm(
             num_features,
-            generator=keyed_rng.keyed("categorical_feature_indices").torch_rng(device=device),
+            generator=keyed_rng.torch_rng("categorical_feature_indices", device=device),
             device=device,
         )[:num_categorical_features]
         cat_idx_t, _ = torch.sort(cat_idx_t)
@@ -362,7 +362,7 @@ def _sample_layout(
             config.dataset.n_classes_min,
             config.dataset.n_classes_max + 1,
             (1,),
-            generator=keyed_rng.keyed("n_classes").torch_rng(device=device),
+            generator=keyed_rng.torch_rng("n_classes", device=device),
         ).item()
     )
     n_classes = max(2, n_classes)
@@ -370,7 +370,7 @@ def _sample_layout(
     num_nodes = _sample_node_count(
         int(config.graph.n_nodes_min),
         int(config.graph.n_nodes_max),
-        keyed_rng.keyed("graph_nodes").torch_rng(device=device),
+        keyed_rng.torch_rng("graph_nodes", device=device),
         device,
     )
     relationship_profile = _sample_graph_relationship_profile(
@@ -401,7 +401,7 @@ def _sample_layout(
         )
         adjacency = sample_dag(
             num_nodes,
-            attempt_root.keyed("graph").torch_rng(device="cpu"),
+            attempt_root.torch_rng("graph", device="cpu"),
             edge_logit_bias=edge_logit_bias,
         )
         graph_depth_nodes = dag_longest_path_nodes(adjacency)
@@ -409,7 +409,7 @@ def _sample_layout(
         feature_to_node = _sample_assignments(
             num_features,
             num_nodes,
-            attempt_root.keyed("assignments", "feature").torch_rng(device=device),
+            attempt_root.torch_rng("assignments", "feature", device=device),
             device,
         )
         target_to_node = _sample_target_node(
@@ -518,7 +518,7 @@ def _resample_layout_graph(
         )
         adjacency = sample_dag(
             int(layout.graph_nodes),
-            attempt_root.keyed("graph").torch_rng(device="cpu"),
+            attempt_root.torch_rng("graph", device="cpu"),
             edge_logit_bias=effective_edge_logit_bias,
         )
         graph_depth_nodes = dag_longest_path_nodes(adjacency)
@@ -615,7 +615,7 @@ def _build_node_specs(
     ]
     for feature_index in feature_indices:
         if feature_types[feature_index] == "cat":
-            feature_generator = keyed_rng.keyed("feature", feature_index).torch_rng(device="cpu")
+            feature_generator = keyed_rng.torch_rng("feature", feature_index, device="cpu")
             cardinality = int(card_by_feature[feature_index])
             if (
                 cardinality > 2

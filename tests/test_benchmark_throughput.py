@@ -6,6 +6,10 @@ from types import SimpleNamespace
 import pytest
 
 from dagzoo.bench.micro import run_microbenchmarks
+from dagzoo.bench.public_throughput_smoke import (
+    build_public_throughput_smoke_baseline_payload,
+    build_public_throughput_smoke_summary,
+)
 from dagzoo.bench.throughput import (
     run_fixed_layout_target_cells_sweep,
     run_heterogeneous_throughput_benchmark,
@@ -751,6 +755,110 @@ def test_run_stratified_throughput_benchmark_aggregates_scheduler_metrics(monkey
     assert result["stratified_executed_microbatch_size_sum"] == pytest.approx(6.0)
     assert result["stratified_scalar_fallback_dataset_count"] == pytest.approx(1.0)
     assert result["stratified_scheduler_elapsed_seconds"] == pytest.approx(0.25)
+
+
+def test_build_public_throughput_smoke_summary_reports_ratios_and_stage_shares(
+    monkeypatch,
+) -> None:
+    fixed_result = {
+        "datasets_per_minute": 2400.0,
+        "elapsed_seconds": 5.0,
+    }
+    heterogeneous_result = {
+        "datasets_per_minute": 900.0,
+        "elapsed_seconds": 10.0,
+        "heterogeneous_descriptor_resolution_elapsed_seconds": 3.0,
+        "raw_batch_elapsed_seconds": 4.0,
+        "heterogeneous_logical_cohort_count": 24.0,
+        "heterogeneous_physical_microbatch_count": 5.0,
+        "heterogeneous_physical_microbatch_size_sum": 11.0,
+        "heterogeneous_physical_microbatch_predicted_utilization_sum": 4.2,
+        "heterogeneous_executor_fallback_dataset_count": 7.0,
+        "heterogeneous_supported_singleton_dataset_count": 6.0,
+        "mixed_source_node_slot_count": 10.0,
+        "mixed_source_bucket_count": 14.0,
+        "mixed_source_bucket_dataset_sum": 21.0,
+        "mixed_converter_bucket_count": 30.0,
+        "mixed_converter_bucket_dataset_sum": 54.0,
+    }
+    stratified_result = {
+        "datasets_per_minute": 1200.0,
+        "elapsed_seconds": 8.0,
+        "heterogeneous_descriptor_resolution_elapsed_seconds": 2.0,
+        "stratified_scheduler_elapsed_seconds": 1.5,
+        "raw_batch_elapsed_seconds": 3.0,
+        "heterogeneous_logical_cohort_count": 18.0,
+        "heterogeneous_physical_microbatch_count": 4.0,
+        "heterogeneous_physical_microbatch_size_sum": 9.0,
+        "heterogeneous_physical_microbatch_predicted_utilization_sum": 3.1,
+        "heterogeneous_executor_fallback_dataset_count": 5.0,
+        "heterogeneous_supported_singleton_dataset_count": 4.0,
+        "mixed_source_node_slot_count": 8.0,
+        "mixed_source_bucket_count": 12.0,
+        "mixed_source_bucket_dataset_sum": 18.0,
+        "mixed_converter_bucket_count": 24.0,
+        "mixed_converter_bucket_dataset_sum": 42.0,
+    }
+    monkeypatch.setattr(
+        "dagzoo.bench.public_throughput_smoke.run_throughput_benchmark",
+        lambda *_args, **_kwargs: fixed_result,
+    )
+    monkeypatch.setattr(
+        "dagzoo.bench.public_throughput_smoke.run_heterogeneous_throughput_benchmark",
+        lambda *_args, **_kwargs: heterogeneous_result,
+    )
+    monkeypatch.setattr(
+        "dagzoo.bench.public_throughput_smoke.run_stratified_throughput_benchmark",
+        lambda *_args, **_kwargs: stratified_result,
+    )
+
+    cfg = _tiny_parallel_config()
+    summary = build_public_throughput_smoke_summary(
+        cfg,
+        num_datasets=24,
+        warmup_datasets=4,
+        device="cpu",
+    )
+
+    result = summary["preset_results"][0]
+    assert result["preset_key"] == "parallel_test"
+    assert result["fixed_datasets_per_minute"] == pytest.approx(2400.0)
+    assert result["heterogeneous_datasets_per_minute"] == pytest.approx(900.0)
+    assert result["stratified_datasets_per_minute"] == pytest.approx(1200.0)
+    assert result["heterogeneous_vs_fixed_ratio"] == pytest.approx(0.375)
+    assert result["stratified_vs_fixed_ratio"] == pytest.approx(0.5)
+    assert result["heterogeneous_descriptor_share"] == pytest.approx(0.3)
+    assert result["heterogeneous_raw_batch_share"] == pytest.approx(0.4)
+    assert result["heterogeneous_logical_cohort_count"] == pytest.approx(24.0)
+    assert result["heterogeneous_mixed_physical_dataset_count"] == pytest.approx(11.0)
+    assert result["heterogeneous_executor_fallback_dataset_count"] == pytest.approx(7.0)
+    assert result["heterogeneous_supported_singleton_dataset_count"] == pytest.approx(6.0)
+    assert result["heterogeneous_avg_predicted_utilization"] == pytest.approx(0.84)
+    assert result["heterogeneous_avg_supported_buckets_per_node_slot"] == pytest.approx(1.4)
+    assert result["heterogeneous_avg_datasets_per_supported_bucket"] == pytest.approx(1.5)
+    assert result["heterogeneous_converter_bucket_count"] == pytest.approx(30.0)
+    assert result["heterogeneous_avg_converter_bucket_size"] == pytest.approx(1.8)
+    assert result["stratified_descriptor_share"] == pytest.approx(0.25)
+    assert result["stratified_scheduler_share"] == pytest.approx(0.1875)
+    assert result["stratified_raw_batch_share"] == pytest.approx(0.375)
+    assert result["stratified_logical_cohort_count"] == pytest.approx(18.0)
+    assert result["stratified_mixed_physical_dataset_count"] == pytest.approx(9.0)
+    assert result["stratified_executor_fallback_dataset_count"] == pytest.approx(5.0)
+    assert result["stratified_supported_singleton_dataset_count"] == pytest.approx(4.0)
+    assert result["stratified_avg_predicted_utilization"] == pytest.approx(0.775)
+    assert result["stratified_avg_supported_buckets_per_node_slot"] == pytest.approx(1.5)
+    assert result["stratified_avg_datasets_per_supported_bucket"] == pytest.approx(1.5)
+    assert result["stratified_converter_bucket_count"] == pytest.approx(24.0)
+    assert result["stratified_avg_converter_bucket_size"] == pytest.approx(1.75)
+
+    baseline = build_public_throughput_smoke_baseline_payload(summary)
+    assert baseline["suite"] == "public_throughput_smoke"
+    assert baseline["presets"]["parallel_test"]["heterogeneous_vs_fixed_ratio"] == pytest.approx(
+        0.375
+    )
+    assert baseline["presets"]["parallel_test"]["stratified_scheduler_share"] == pytest.approx(
+        0.1875
+    )
 
 
 def test_run_microbenchmarks_emits_heterogeneous_generate_one_metric(

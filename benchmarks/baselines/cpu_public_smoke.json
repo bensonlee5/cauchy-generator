@@ -1,0 +1,30 @@
+{
+  "metrics": [
+    "fixed_datasets_per_minute",
+    "heterogeneous_datasets_per_minute",
+    "stratified_datasets_per_minute",
+    "heterogeneous_vs_fixed_ratio",
+    "stratified_vs_fixed_ratio",
+    "heterogeneous_descriptor_share",
+    "heterogeneous_raw_batch_share",
+    "stratified_descriptor_share",
+    "stratified_scheduler_share",
+    "stratified_raw_batch_share"
+  ],
+  "presets": {
+    "cpu": {
+      "fixed_datasets_per_minute": 3490.7905736287503,
+      "heterogeneous_datasets_per_minute": 898.6955742907749,
+      "heterogeneous_descriptor_share": 0.2513615386218744,
+      "heterogeneous_raw_batch_share": 0.7180996470519109,
+      "heterogeneous_vs_fixed_ratio": 0.2574475767982156,
+      "stratified_datasets_per_minute": 895.6805358440286,
+      "stratified_descriptor_share": 0.2495596050858857,
+      "stratified_raw_batch_share": 0.7223297015024724,
+      "stratified_scheduler_share": 1.2551979090098803e-05,
+      "stratified_vs_fixed_ratio": 0.25658386458656834
+    }
+  },
+  "suite": "public_throughput_smoke",
+  "version": 1
+}

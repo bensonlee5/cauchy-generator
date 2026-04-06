@@ -10,6 +10,24 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.19.7] - 2026-04-05
+
+### Added
+
+- Added an internal public-throughput smoke workflow, committed CPU baseline,
+  and deterministic public corpus fixture to track public-path performance
+  regressions without changing the public CLI surface.
+
+### Changed
+
+- Reduced public heterogeneous and stratified generation overhead by caching
+  correlated descriptor sampling state and keyed RNG derivation on the
+  user-facing `generate_batch_iter` path.
+- Added prepared mixed-executor coverage for heterogeneous and stratified
+  fixed-layout generation, including higher-order source support, runtime
+  scheduling metrics, and deterministic descriptor prefetching while
+  preserving seeded outputs and metadata contracts.
+
 ## [0.19.6] - 2026-04-05
 
 ### Changed

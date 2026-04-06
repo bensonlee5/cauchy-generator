@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import Iterator, TypeVar
 
 import torch
 
@@ -22,6 +24,86 @@ class _NumericParams:
     beta: float
 
 
+@dataclass(slots=True)
+class CorrelatedSamplingContext:
+    """Memoize dataset-scoped correlated sampling draws by semantic name."""
+
+    shared_root: KeyedRng
+    _numeric_params: dict[tuple[str, str], _NumericParams]
+    _categorical_weights: dict[tuple[str, str, str], float]
+    _categorical_weight_tensors: dict[tuple[str, str, tuple[str, ...]], torch.Tensor]
+
+    @classmethod
+    def from_keyed_rng(cls, keyed_rng: KeyedRng) -> "CorrelatedSamplingContext":
+        return cls(
+            shared_root=_shared_correlation_root(keyed_rng),
+            _numeric_params={},
+            _categorical_weights={},
+            _categorical_weight_tensors={},
+        )
+
+    def matches(self, keyed_rng: KeyedRng) -> bool:
+        shared_root = _shared_correlation_root(keyed_rng)
+        return int(self.shared_root.seed) == int(shared_root.seed) and tuple(
+            self.shared_root._ambient_nonce
+        ) == tuple(shared_root._ambient_nonce)
+
+    def numeric_params(self, *, name: str, device: str) -> _NumericParams:
+        key = (str(device), str(name))
+        cached = self._numeric_params.get(key)
+        if cached is not None:
+            return cached
+        generator = self.shared_root.torch_rng("numeric_params", name, device=device)
+        params = _draw_numeric_params(generator, device=device)
+        self._numeric_params[key] = params
+        return params
+
+    def categorical_weight(self, *, name: str, label: str, device: str) -> float:
+        key = (str(device), str(name), str(label))
+        cached = self._categorical_weights.get(key)
+        if cached is not None:
+            return cached
+        generator = self.shared_root.torch_rng(
+            "categorical_weight",
+            name,
+            label,
+            device=device,
+        )
+        log_weight = torch.empty(1, device=_tensor_device(device)).uniform_(
+            _CATEGORY_WEIGHT_LOG_LOW,
+            _CATEGORY_WEIGHT_LOG_HIGH,
+            generator=generator,
+        )
+        value = float(torch.exp(log_weight).item())
+        self._categorical_weights[key] = value
+        return value
+
+    def categorical_weight_tensor(
+        self,
+        *,
+        name: str,
+        labels: tuple[str, ...],
+        device: str,
+    ) -> torch.Tensor:
+        key = (str(device), str(name), tuple(str(label) for label in labels))
+        cached = self._categorical_weight_tensors.get(key)
+        if cached is not None:
+            return cached
+        weights = torch.tensor(
+            [self.categorical_weight(name=name, label=label, device=device) for label in labels],
+            dtype=torch.float32,
+            device=_tensor_device(device),
+        )
+        self._categorical_weight_tensors[key] = weights
+        return weights
+
+
+_CURRENT_CORRELATED_SAMPLING_CONTEXT: ContextVar[CorrelatedSamplingContext | None] = ContextVar(
+    "dagzoo_correlated_sampling_context",
+    default=None,
+)
+
+
 def _shared_correlation_root(keyed_rng: KeyedRng) -> KeyedRng:
     """Return a keyed RNG rooted at the dataset seed, ignoring local call-site path."""
 
@@ -29,6 +111,28 @@ def _shared_correlation_root(keyed_rng: KeyedRng) -> KeyedRng:
         seed=int(keyed_rng.seed),
         _ambient_nonce=tuple(int(value) for value in keyed_rng._ambient_nonce),
     )
+
+
+def current_correlated_sampling_context() -> CorrelatedSamplingContext | None:
+    """Return the active correlated-sampling cache, if any."""
+
+    return _CURRENT_CORRELATED_SAMPLING_CONTEXT.get()
+
+
+@contextmanager
+def correlated_sampling_scope(keyed_rng: KeyedRng) -> Iterator[CorrelatedSamplingContext]:
+    """Install one correlated-sampling cache for compatible keyed roots."""
+
+    current = current_correlated_sampling_context()
+    if current is not None and current.matches(keyed_rng):
+        yield current
+        return
+    context = CorrelatedSamplingContext.from_keyed_rng(keyed_rng)
+    token = _CURRENT_CORRELATED_SAMPLING_CONTEXT.set(context)
+    try:
+        yield context
+    finally:
+        _CURRENT_CORRELATED_SAMPLING_CONTEXT.reset(token)
 
 
 def _tensor_device(device: str) -> str:
@@ -61,9 +165,10 @@ def numeric_params_for_name(
 ) -> _NumericParams:
     """Return shared Beta parameters for a semantic scalar variable name."""
 
-    generator = (
-        _shared_correlation_root(keyed_rng).keyed("numeric_params", name).torch_rng(device=device)
-    )
+    context = current_correlated_sampling_context()
+    if context is not None and context.matches(keyed_rng):
+        return context.numeric_params(name=name, device=device)
+    generator = _shared_correlation_root(keyed_rng).torch_rng("numeric_params", name, device=device)
     return _draw_numeric_params(generator, device=device)
 
 
@@ -78,7 +183,7 @@ def sample_correlated_unit_interval_tensor(
 
     normalized_shape = tuple(int(value) for value in shape)
     params = numeric_params_for_name(keyed_rng, name, device=device)
-    generator = keyed_rng.keyed("numeric_draw", name).torch_rng(device="cpu")
+    generator = keyed_rng.torch_rng("numeric_draw", name, device="cpu")
     tensor_device = _tensor_device(device)
     concentration = torch.tensor(
         [params.alpha, params.beta],
@@ -150,14 +255,14 @@ def _shared_category_weight(
     label: str,
     device: str,
 ) -> float:
-    generator = (
-        _shared_correlation_root(keyed_rng)
-        .keyed(
-            "categorical_weight",
-            name,
-            label,
-        )
-        .torch_rng(device=device)
+    context = current_correlated_sampling_context()
+    if context is not None and context.matches(keyed_rng):
+        return context.categorical_weight(name=name, label=label, device=device)
+    generator = _shared_correlation_root(keyed_rng).torch_rng(
+        "categorical_weight",
+        name,
+        label,
+        device=device,
     )
     log_weight = torch.empty(1, device=_tensor_device(device)).uniform_(
         _CATEGORY_WEIGHT_LOG_LOW,
@@ -198,22 +303,30 @@ def sample_correlated_choice(
         probs = probs / total
 
     labels = tuple(str(value) for value in normalized_values)
-    shared_weights = torch.tensor(
-        [
-            _shared_category_weight(
-                keyed_rng,
-                name=name,
-                label=label,
-                device=device,
-            )
-            for label in labels
-        ],
-        dtype=torch.float32,
-        device=_tensor_device(device),
-    )
+    context = current_correlated_sampling_context()
+    if context is not None and context.matches(keyed_rng):
+        shared_weights = context.categorical_weight_tensor(
+            name=name,
+            labels=labels,
+            device=device,
+        )
+    else:
+        shared_weights = torch.tensor(
+            [
+                _shared_category_weight(
+                    keyed_rng,
+                    name=name,
+                    label=label,
+                    device=device,
+                )
+                for label in labels
+            ],
+            dtype=torch.float32,
+            device=_tensor_device(device),
+        )
     adjusted = torch.clamp(probs * shared_weights, min=1e-8)
     adjusted = adjusted / torch.clamp(adjusted.sum(), min=1e-12)
-    generator = keyed_rng.keyed("categorical_draw", name, *labels).torch_rng(device=device)
+    generator = keyed_rng.torch_rng("categorical_draw", name, *labels, device=device)
     index = int(torch.multinomial(adjusted, 1, generator=generator).item())
     return normalized_values[index]
 
@@ -247,11 +360,12 @@ class CorrelatedSampler:
 
         draw_index = int(self._numeric_draw_counts.get(name, 0))
         self._numeric_draw_counts[name] = draw_index + 1
-        local_generator = self._keyed_rng.keyed(
+        local_generator = self._keyed_rng.torch_rng(
             "numeric_draw",
             name,
             draw_index,
-        ).torch_rng(device="cpu")
+            device="cpu",
+        )
         concentration = torch.tensor([alpha, beta], dtype=torch.float64, device="cpu")
         probs = torch._sample_dirichlet(concentration, generator=local_generator)
         return float(probs[0].item())
@@ -260,12 +374,13 @@ class CorrelatedSampler:
         key = (name, int(n_categories))
         draw_index = int(self._categorical_draw_counts.get(key, 0))
         self._categorical_draw_counts[key] = draw_index + 1
-        return self._keyed_rng.keyed(
+        return self._keyed_rng.torch_rng(
             "categorical_draw",
             name,
             int(n_categories),
             draw_index,
-        ).torch_rng(device=self._device)
+            device=self._device,
+        )
 
     def sample_num(
         self,
@@ -293,11 +408,12 @@ class CorrelatedSampler:
 
         key = (name, n_categories)
         if key not in self._categorical_weights:
-            generator = self._keyed_rng.keyed(
+            generator = self._keyed_rng.torch_rng(
                 "categorical_weights",
                 name,
                 int(n_categories),
-            ).torch_rng(device=self._device)
+                device=self._device,
+            )
             raw = (
                 torch.empty(n_categories, device=self._device).uniform_(0, 1, generator=generator)
                 + 1e-6

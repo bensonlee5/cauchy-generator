@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
+from typing import cast
 
 import torch
 
@@ -33,6 +35,7 @@ from .plan_types import (
     LinearFunctionPlan,
     NeuralNetFunctionPlan,
     ParametricActivationPlan,
+    PiecewiseFunctionPlan,
     QuadraticFunctionPlan,
     SingularValuesMatrixPlan,
     TreeFunctionPlan,
@@ -40,10 +43,169 @@ from .plan_types import (
 )
 
 
-def _apply_activation_plan(
+@dataclass(frozen=True, slots=True)
+class _SampledActivationPlanParams:
+    """One sampled activation payload reused across deterministic application."""
+
+    standardize_scale: torch.Tensor | None = None
+    standardize_row_index: torch.Tensor | None = None
+    parametric_q: torch.Tensor | None = None
+    uniform_noise: torch.Tensor | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _SampledLinearFunctionParams:
+    matrix: torch.Tensor
+
+
+@dataclass(frozen=True, slots=True)
+class _SampledQuadraticFunctionParams:
+    feature_subset: torch.Tensor | None
+    matrix: torch.Tensor
+
+
+@dataclass(frozen=True, slots=True)
+class _SampledNeuralNetFunctionParams:
+    input_activation: _SampledActivationPlanParams | None
+    layer_matrices: tuple[torch.Tensor, ...]
+    hidden_activations: tuple[_SampledActivationPlanParams, ...]
+    output_activation: _SampledActivationPlanParams | None
+
+
+@dataclass(frozen=True, slots=True)
+class _SampledTreeLevelParams:
+    split_feats: torch.Tensor
+    thresholds: torch.Tensor
+    leaf_values: torch.Tensor
+
+
+@dataclass(frozen=True, slots=True)
+class _SampledTreeFunctionParams:
+    levels: tuple[_SampledTreeLevelParams, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _SampledDiscretizationFunctionParams:
+    center_index: torch.Tensor
+    lp_norm: torch.Tensor
+    linear: _SampledLinearFunctionParams
+
+
+@dataclass(frozen=True, slots=True)
+class _SampledGpFunctionParams:
+    input_projection: torch.Tensor | None
+    omega: torch.Tensor
+    phase_bias: torch.Tensor
+    harmonics: torch.Tensor | None
+    output_matrix: torch.Tensor
+
+
+@dataclass(frozen=True, slots=True)
+class _SampledEmFunctionParams:
+    base_index: torch.Tensor
+    center_noise: torch.Tensor
+    sigma: torch.Tensor
+    p_val: torch.Tensor
+    q_val: torch.Tensor
+    linear: _SampledLinearFunctionParams
+
+
+@dataclass(frozen=True, slots=True)
+class _SampledPiecewiseGateParams:
+    gate_matrix: torch.Tensor
+
+
+SampledLeafFunctionParams = (
+    _SampledLinearFunctionParams
+    | _SampledQuadraticFunctionParams
+    | _SampledNeuralNetFunctionParams
+    | _SampledTreeFunctionParams
+    | _SampledDiscretizationFunctionParams
+    | _SampledGpFunctionParams
+    | _SampledEmFunctionParams
+)
+
+
+def _concat_optional_tensor(tensors: list[torch.Tensor | None]) -> torch.Tensor | None:
+    present = [tensor for tensor in tensors if tensor is not None]
+    if not present:
+        return None
+    return torch.cat(present, dim=0)
+
+
+def _concat_activation_plan_params(
+    params_list: list[_SampledActivationPlanParams],
+) -> _SampledActivationPlanParams:
+    return _SampledActivationPlanParams(
+        standardize_scale=_concat_optional_tensor(
+            [params.standardize_scale for params in params_list]
+        ),
+        standardize_row_index=_concat_optional_tensor(
+            [params.standardize_row_index for params in params_list]
+        ),
+        parametric_q=_concat_optional_tensor([params.parametric_q for params in params_list]),
+        uniform_noise=_concat_optional_tensor([params.uniform_noise for params in params_list]),
+    )
+
+
+def _concat_piecewise_gate_params(
+    params_list: list[_SampledPiecewiseGateParams],
+) -> _SampledPiecewiseGateParams:
+    if not params_list:
+        raise ValueError("params_list must be non-empty.")
+    return _SampledPiecewiseGateParams(
+        gate_matrix=torch.cat([params.gate_matrix for params in params_list], dim=0)
+    )
+
+
+def _sample_activation_plan_params(
     x: torch.Tensor,
     rng: FixedLayoutBatchRng,
     plan: FixedLayoutActivationPlan,
+    *,
+    with_standardize: bool,
+) -> _SampledActivationPlanParams:
+    y = x.to(torch.float32)
+    if y.dim() == 2:
+        y = y.unsqueeze(0)
+    leading_shape = tuple(int(dim) for dim in y.shape[:-2])
+    params = _SampledActivationPlanParams()
+    if with_standardize:
+        params = _SampledActivationPlanParams(
+            standardize_scale=rng.keyed("standardize_scale").log_uniform(
+                (y.shape[0],), low=1.0, high=10.0
+            ),
+            standardize_row_index=rng.keyed("standardize_row_index").randint(
+                0, y.shape[1], (y.shape[0],)
+            ),
+        )
+
+    if isinstance(plan, ParametricActivationPlan):
+        kind = str(plan.kind)
+        if kind in {"relu_pow", "signed_pow", "inv_pow"}:
+            q = rng.keyed(kind).log_uniform(leading_shape, low=0.1, high=10.0)
+            return _SampledActivationPlanParams(
+                standardize_scale=params.standardize_scale,
+                standardize_row_index=params.standardize_row_index,
+                parametric_q=q,
+            )
+        if kind == "gumbel_softmax":
+            return _SampledActivationPlanParams(
+                standardize_scale=params.standardize_scale,
+                standardize_row_index=params.standardize_row_index,
+                uniform_noise=rng.keyed("gumbel_softmax").uniform(
+                    y.shape,
+                    low=1e-6,
+                    high=1.0 - 1e-6,
+                ),
+            )
+    return params
+
+
+def _apply_activation_plan_with_params(
+    x: torch.Tensor,
+    plan: FixedLayoutActivationPlan,
+    params: _SampledActivationPlanParams,
     *,
     with_standardize: bool,
 ) -> torch.Tensor:
@@ -54,23 +216,46 @@ def _apply_activation_plan(
         squeezed = True
     leading_shape = tuple(int(dim) for dim in y.shape[:-2])
     if with_standardize:
+        if params.standardize_scale is None or params.standardize_row_index is None:
+            raise ValueError("Activation params are missing standardization draws.")
         y = _batch_standardize(y)
-        a = rng.keyed("standardize_scale").log_uniform((y.shape[0],), low=1.0, high=10.0)
-        row_idx = rng.keyed("standardize_row_index").randint(0, y.shape[1], (y.shape[0],))
-        offsets = y[torch.arange(y.shape[0], device=y.device), row_idx].unsqueeze(1)
-        y = a.view(-1, 1, 1) * (y - offsets)
+        offsets = y[
+            torch.arange(y.shape[0], device=y.device),
+            params.standardize_row_index.to(device=y.device, dtype=torch.long),
+        ].unsqueeze(1)
+        y = params.standardize_scale.to(device=y.device, dtype=y.dtype).view(-1, 1, 1) * (
+            y - offsets
+        )
 
     if isinstance(plan, ParametricActivationPlan):
         kind = str(plan.kind)
         if kind == "relu_pow":
-            q = rng.keyed("relu_pow").log_uniform(leading_shape, low=0.1, high=10.0)
-            y = torch.pow(torch.clamp(y, min=0.0), q.reshape(*leading_shape, 1, 1))
+            if params.parametric_q is None:
+                raise ValueError("relu_pow activation params are missing q.")
+            y = torch.pow(
+                torch.clamp(y, min=0.0),
+                params.parametric_q.to(device=y.device, dtype=y.dtype).reshape(
+                    *leading_shape, 1, 1
+                ),
+            )
         elif kind == "signed_pow":
-            q = rng.keyed("signed_pow").log_uniform(leading_shape, low=0.1, high=10.0)
-            y = torch.sign(y) * torch.pow(torch.abs(y), q.reshape(*leading_shape, 1, 1))
+            if params.parametric_q is None:
+                raise ValueError("signed_pow activation params are missing q.")
+            y = torch.sign(y) * torch.pow(
+                torch.abs(y),
+                params.parametric_q.to(device=y.device, dtype=y.dtype).reshape(
+                    *leading_shape, 1, 1
+                ),
+            )
         elif kind == "inv_pow":
-            q = rng.keyed("inv_pow").log_uniform(leading_shape, low=0.1, high=10.0)
-            y = torch.pow(torch.abs(y) + 1e-3, -q.reshape(*leading_shape, 1, 1))
+            if params.parametric_q is None:
+                raise ValueError("inv_pow activation params are missing q.")
+            y = torch.pow(
+                torch.abs(y) + 1e-3,
+                -params.parametric_q.to(device=y.device, dtype=y.dtype).reshape(
+                    *leading_shape, 1, 1
+                ),
+            )
         elif kind == "poly":
             if plan.poly_power is None:
                 raise ValueError("poly activation plan requires poly_power.")
@@ -78,15 +263,12 @@ def _apply_activation_plan(
         elif kind == "gumbel_softmax":
             if plan.temperature is None:
                 raise ValueError("gumbel_softmax activation plan requires temperature.")
-            uniform_noise = rng.keyed("gumbel_softmax").uniform(
-                y.shape,
-                low=1e-6,
-                high=1.0 - 1e-6,
-            )
+            if params.uniform_noise is None:
+                raise ValueError("gumbel_softmax activation params are missing noise.")
             y = activations_module._gumbel_softmax_activation(
                 y,
                 temperature=float(plan.temperature),
-                uniform_noise=uniform_noise,
+                uniform_noise=params.uniform_noise.to(device=y.device, dtype=y.dtype),
                 dim=-1,
             )
         else:
@@ -104,6 +286,26 @@ def _apply_activation_plan(
     if squeezed:
         y = y.squeeze(0)
     return y.to(torch.float32)
+
+
+def _apply_activation_plan(
+    x: torch.Tensor,
+    rng: FixedLayoutBatchRng,
+    plan: FixedLayoutActivationPlan,
+    *,
+    with_standardize: bool,
+) -> torch.Tensor:
+    return _apply_activation_plan_with_params(
+        x,
+        plan,
+        _sample_activation_plan_params(
+            x,
+            rng,
+            plan,
+            with_standardize=with_standardize,
+        ),
+        with_standardize=with_standardize,
+    )
 
 
 def _base_matrix_plan(kind: FixedLayoutMatrixBaseKind) -> FixedLayoutMatrixPlan:
@@ -241,6 +443,63 @@ def _sample_random_matrix_from_plan_batch(
     return matrix
 
 
+def _sample_piecewise_gate_params(
+    x: torch.Tensor,
+    rng: FixedLayoutBatchRng,
+    plan: PiecewiseFunctionPlan,
+    *,
+    noise_sigma_multiplier: float,
+    noise_spec: NoiseSamplingSpec | None,
+) -> _SampledPiecewiseGateParams:
+    return _SampledPiecewiseGateParams(
+        gate_matrix=_sample_random_matrix_from_plan_batch(
+            plan.gate_matrix,
+            out_dim=1,
+            in_dim=int(x.shape[2]),
+            rng=rng,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+        )
+    )
+
+
+def _apply_piecewise_gate_with_params(
+    x: torch.Tensor,
+    plan: PiecewiseFunctionPlan,
+    params: _SampledPiecewiseGateParams,
+) -> torch.Tensor:
+    gate_projection = torch.einsum("bni,boi->bno", x, params.gate_matrix)
+    return torch.sigmoid((gate_projection + float(plan.gate_bias)) * float(plan.gate_temperature))
+
+
+def _sample_linear_function_params(
+    x: torch.Tensor,
+    rng: FixedLayoutBatchRng,
+    plan: LinearFunctionPlan,
+    *,
+    out_dim: int,
+    noise_sigma_multiplier: float,
+    noise_spec: NoiseSamplingSpec | None,
+) -> _SampledLinearFunctionParams:
+    return _SampledLinearFunctionParams(
+        matrix=_sample_random_matrix_from_plan_batch(
+            plan.matrix,
+            out_dim=int(out_dim),
+            in_dim=int(x.shape[2]),
+            rng=rng.keyed("matrix"),
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+        )
+    )
+
+
+def _apply_sampled_linear_batch(
+    x: torch.Tensor,
+    params: _SampledLinearFunctionParams,
+) -> torch.Tensor:
+    return torch.einsum("bni,boi->bno", x, params.matrix)
+
+
 def _apply_linear_batch(
     x: torch.Tensor,
     rng: FixedLayoutBatchRng,
@@ -250,15 +509,73 @@ def _apply_linear_batch(
     noise_sigma_multiplier: float,
     noise_spec: NoiseSamplingSpec | None,
 ) -> torch.Tensor:
-    matrices = _sample_random_matrix_from_plan_batch(
-        plan.matrix,
-        out_dim=int(out_dim),
-        in_dim=int(x.shape[2]),
-        rng=rng.keyed("matrix"),
-        noise_sigma_multiplier=noise_sigma_multiplier,
-        noise_spec=noise_spec,
+    return _apply_sampled_linear_batch(
+        x,
+        _sample_linear_function_params(
+            x,
+            rng,
+            plan,
+            out_dim=out_dim,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+        ),
     )
-    return torch.einsum("bni,boi->bno", x, matrices)
+
+
+def _sample_quadratic_function_params(
+    x: torch.Tensor,
+    rng: FixedLayoutBatchRng,
+    plan: QuadraticFunctionPlan,
+    *,
+    out_dim: int,
+    noise_sigma_multiplier: float,
+    noise_spec: NoiseSamplingSpec | None,
+) -> _SampledQuadraticFunctionParams:
+    feature_cap = min(int(x.shape[2]), 20)
+    feature_subset: torch.Tensor | None = None
+    x_sub = x
+    if int(x.shape[2]) > feature_cap:
+        feature_subset = rng.keyed("feature_subset").randperm_indices(
+            length=int(x.shape[2]),
+            sample_size=feature_cap,
+        )
+        x_sub = torch.gather(
+            x,
+            2,
+            feature_subset.unsqueeze(1).expand(-1, x.shape[1], -1),
+        )
+    ones = torch.ones((x_sub.shape[0], x_sub.shape[1], 1), device=x.device, dtype=x_sub.dtype)
+    x_aug = torch.cat([x_sub, ones], dim=2)
+    return _SampledQuadraticFunctionParams(
+        feature_subset=feature_subset,
+        matrix=_sample_random_matrix_from_plan_batch(
+            plan.matrix,
+            out_dim=int(x_aug.shape[2]),
+            in_dim=int(x_aug.shape[2]),
+            rng=rng.keyed("matrix"),
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+            matrix_count=int(out_dim),
+        ),
+    )
+
+
+def _apply_sampled_quadratic_batch(
+    x: torch.Tensor,
+    params: _SampledQuadraticFunctionParams,
+) -> torch.Tensor:
+    x_sub = x
+    if params.feature_subset is not None:
+        x_sub = torch.gather(
+            x,
+            2,
+            params.feature_subset.to(device=x.device, dtype=torch.long)
+            .unsqueeze(1)
+            .expand(-1, x.shape[1], -1),
+        )
+    ones = torch.ones((x_sub.shape[0], x_sub.shape[1], 1), device=x.device, dtype=x_sub.dtype)
+    x_aug = torch.cat([x_sub, ones], dim=2)
+    return torch.einsum("bni,boij,bnj->bno", x_aug, params.matrix, x_aug)
 
 
 def _apply_quadratic_batch(
@@ -270,31 +587,17 @@ def _apply_quadratic_batch(
     noise_sigma_multiplier: float,
     noise_spec: NoiseSamplingSpec | None,
 ) -> torch.Tensor:
-    feature_cap = min(int(x.shape[2]), 20)
-    if int(x.shape[2]) > feature_cap:
-        indices = rng.keyed("feature_subset").randperm_indices(
-            length=int(x.shape[2]),
-            sample_size=feature_cap,
-        )
-        x_sub = torch.gather(
+    return _apply_sampled_quadratic_batch(
+        x,
+        _sample_quadratic_function_params(
             x,
-            2,
-            indices.unsqueeze(1).expand(-1, x.shape[1], -1),
-        )
-    else:
-        x_sub = x
-    ones = torch.ones((x_sub.shape[0], x_sub.shape[1], 1), device=x.device, dtype=x_sub.dtype)
-    x_aug = torch.cat([x_sub, ones], dim=2)
-    matrices = _sample_random_matrix_from_plan_batch(
-        plan.matrix,
-        out_dim=int(x_aug.shape[2]),
-        in_dim=int(x_aug.shape[2]),
-        rng=rng.keyed("matrix"),
-        noise_sigma_multiplier=noise_sigma_multiplier,
-        noise_spec=noise_spec,
-        matrix_count=int(out_dim),
+            rng,
+            plan,
+            out_dim=out_dim,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+        ),
     )
-    return torch.einsum("bni,boij,bnj->bno", x_aug, matrices, x_aug)
 
 
 def _sample_unit_ball_batch(
@@ -352,6 +655,111 @@ def _sample_random_points_batch(
     return torch.einsum("bni,bi,bij->bnj", points, weights, matrices.transpose(1, 2))
 
 
+def _sample_nn_function_params(
+    x: torch.Tensor,
+    rng: FixedLayoutBatchRng,
+    plan: NeuralNetFunctionPlan,
+    *,
+    out_dim: int,
+    noise_sigma_multiplier: float,
+    noise_spec: NoiseSamplingSpec | None,
+) -> _SampledNeuralNetFunctionParams:
+    hidden_width = max(1, int(plan.hidden_width))
+    n_layers = max(1, int(plan.n_layers))
+    layer_dims = [int(x.shape[2])]
+    for _ in range(max(0, n_layers - 1)):
+        layer_dims.append(hidden_width)
+    layer_dims.append(int(out_dim))
+    return _SampledNeuralNetFunctionParams(
+        input_activation=(
+            None
+            if plan.input_activation is None
+            else _sample_activation_plan_params(
+                x,
+                rng.keyed("input_activation"),
+                plan.input_activation,
+                with_standardize=True,
+            )
+        ),
+        layer_matrices=tuple(
+            _sample_random_matrix_from_plan_batch(
+                plan.layer_matrices[layer_index],
+                out_dim=int(dout),
+                in_dim=int(din),
+                rng=rng.keyed("layer_matrix", layer_index),
+                noise_sigma_multiplier=noise_sigma_multiplier,
+                noise_spec=noise_spec,
+            )
+            for layer_index, (din, dout) in enumerate(
+                zip(layer_dims[:-1], layer_dims[1:], strict=True)
+            )
+        ),
+        hidden_activations=tuple(
+            _sample_activation_plan_params(
+                torch.empty(
+                    (x.shape[0], x.shape[1], int(layer_dims[layer_index + 1])),
+                    device=x.device,
+                    dtype=x.dtype,
+                ),
+                rng.keyed("hidden_activation", layer_index),
+                plan.hidden_activations[layer_index],
+                with_standardize=True,
+            )
+            for layer_index in range(len(layer_dims) - 2)
+        ),
+        output_activation=(
+            None
+            if plan.output_activation is None
+            else _sample_activation_plan_params(
+                torch.empty(
+                    (x.shape[0], x.shape[1], int(out_dim)),
+                    device=x.device,
+                    dtype=x.dtype,
+                ),
+                rng.keyed("output_activation"),
+                plan.output_activation,
+                with_standardize=True,
+            )
+        ),
+    )
+
+
+def _apply_sampled_nn_batch(
+    x: torch.Tensor,
+    plan: NeuralNetFunctionPlan,
+    params: _SampledNeuralNetFunctionParams,
+) -> torch.Tensor:
+    y = x
+    if plan.input_activation is not None:
+        if params.input_activation is None:
+            raise ValueError("NN params are missing input activation draws.")
+        y = _apply_activation_plan_with_params(
+            y,
+            plan.input_activation,
+            params.input_activation,
+            with_standardize=True,
+        )
+    for layer_index, matrix in enumerate(params.layer_matrices):
+        y = torch.einsum("bni,boi->bno", y, matrix)
+        if layer_index < len(params.hidden_activations):
+            y = _apply_activation_plan_with_params(
+                y,
+                plan.hidden_activations[layer_index],
+                params.hidden_activations[layer_index],
+                with_standardize=True,
+            )
+    if plan.output_activation is not None:
+        if params.output_activation is None:
+            raise ValueError("NN params are missing output activation draws.")
+        y = _apply_activation_plan_with_params(
+            y,
+            plan.output_activation,
+            params.output_activation,
+            with_standardize=True,
+        )
+    return y
+
+
 def _apply_nn_batch(
     x: torch.Tensor,
     rng: FixedLayoutBatchRng,
@@ -361,60 +769,28 @@ def _apply_nn_batch(
     noise_sigma_multiplier: float,
     noise_spec: NoiseSamplingSpec | None,
 ) -> torch.Tensor:
-    y = x
-    if plan.input_activation is not None:
-        y = _apply_activation_plan(
-            y,
-            rng.keyed("input_activation"),
-            plan.input_activation,
-            with_standardize=True,
-        )
-
-    hidden_width = max(1, int(plan.hidden_width))
-    n_layers = max(1, int(plan.n_layers))
-    layer_dims = [int(x.shape[2])]
-    for _ in range(max(0, n_layers - 1)):
-        layer_dims.append(hidden_width)
-    layer_dims.append(int(out_dim))
-
-    for layer_index, (din, dout) in enumerate(zip(layer_dims[:-1], layer_dims[1:], strict=True)):
-        matrices = _sample_random_matrix_from_plan_batch(
-            plan.layer_matrices[layer_index],
-            out_dim=int(dout),
-            in_dim=int(din),
-            rng=rng.keyed("layer_matrix", layer_index),
+    return _apply_sampled_nn_batch(
+        x,
+        plan,
+        _sample_nn_function_params(
+            x,
+            rng,
+            plan,
+            out_dim=out_dim,
             noise_sigma_multiplier=noise_sigma_multiplier,
             noise_spec=noise_spec,
-        )
-        y = torch.einsum("bni,boi->bno", y, matrices)
-        if layer_index < len(layer_dims) - 2:
-            y = _apply_activation_plan(
-                y,
-                rng.keyed("hidden_activation", layer_index),
-                plan.hidden_activations[layer_index],
-                with_standardize=True,
-            )
-
-    if plan.output_activation is not None:
-        y = _apply_activation_plan(
-            y,
-            rng.keyed("output_activation"),
-            plan.output_activation,
-            with_standardize=True,
-        )
-    return y
+        ),
+    )
 
 
-def _apply_tree_batch(
+def _sample_tree_function_params(
     x: torch.Tensor,
     rng: FixedLayoutBatchRng,
     plan: TreeFunctionPlan,
     *,
     out_dim: int,
     noise_spec: NoiseSamplingSpec | None,
-) -> torch.Tensor:
-    batch_size = int(x.shape[0])
-    outputs = torch.zeros((batch_size, x.shape[1], out_dim), device=x.device, dtype=torch.float32)
+) -> _SampledTreeFunctionParams:
     correction = 1 if int(x.shape[1]) > 1 else 0
     var, _mean = torch.var_mean(x, dim=1, correction=correction)
     std = torch.sqrt(torch.clamp(var, min=0.0))
@@ -425,31 +801,122 @@ def _apply_tree_batch(
         torch.isfinite(probs).all(dim=1, keepdim=True) & torch.isfinite(totals) & (totals > 1e-12)
     )
     probs = torch.where(valid, probs / torch.clamp(totals, min=1e-12), uniform)
+    levels = []
     tree_root = rng.keyed("tree")
     for tree_index, depth in enumerate(plan.depths):
         tree_rng = tree_root.keyed(tree_index)
-        split_rng = tree_rng.keyed("splits")
-        split_dims, thresholds = sample_odt_splits_batch(
+        split_feats, thresholds = sample_odt_splits_batch(
             x,
             int(depth),
-            split_rng.torch_generator,
+            tree_rng.keyed("splits").torch_generator,
             feature_probs=probs,
         )
-        leaf_idx = compute_odt_leaf_indices_batch(x, split_dims, thresholds)
-        n_leaves = 2 ** int(depth)
-        leaf_values_rng = tree_rng.keyed("leaf_values")
-        leaf_vals = sample_noise_from_spec(
-            (batch_size, n_leaves, out_dim),
-            generator=leaf_values_rng.torch_generator,
-            device=str(x.device),
-            noise_spec=noise_spec,
+        levels.append(
+            _SampledTreeLevelParams(
+                split_feats=split_feats,
+                thresholds=thresholds,
+                leaf_values=sample_noise_from_spec(
+                    (int(x.shape[0]), 2 ** int(depth), int(out_dim)),
+                    generator=tree_rng.keyed("leaf_values").torch_generator,
+                    device=str(x.device),
+                    noise_spec=noise_spec,
+                ),
+            )
         )
+    return _SampledTreeFunctionParams(levels=tuple(levels))
+
+
+def _apply_sampled_tree_batch(
+    x: torch.Tensor,
+    params: _SampledTreeFunctionParams,
+) -> torch.Tensor:
+    out_dim = int(params.levels[0].leaf_values.shape[2]) if params.levels else 0
+    outputs = torch.zeros((int(x.shape[0]), int(x.shape[1]), out_dim), device=x.device)
+    for level in params.levels:
+        leaf_idx = compute_odt_leaf_indices_batch(x, level.split_feats, level.thresholds)
         outputs += torch.gather(
-            leaf_vals,
+            level.leaf_values.to(device=x.device, dtype=x.dtype),
             1,
             leaf_idx.unsqueeze(-1).expand(-1, -1, out_dim),
         )
-    return outputs / float(max(1, int(plan.n_trees)))
+    return outputs / float(max(1, len(params.levels)))
+
+
+def _apply_tree_batch(
+    x: torch.Tensor,
+    rng: FixedLayoutBatchRng,
+    plan: TreeFunctionPlan,
+    *,
+    out_dim: int,
+    noise_spec: NoiseSamplingSpec | None,
+) -> torch.Tensor:
+    return _apply_sampled_tree_batch(
+        x,
+        _sample_tree_function_params(
+            x,
+            rng,
+            plan,
+            out_dim=out_dim,
+            noise_spec=noise_spec,
+        ),
+    )
+
+
+def _sample_discretization_function_params(
+    x: torch.Tensor,
+    rng: FixedLayoutBatchRng,
+    plan: DiscretizationFunctionPlan,
+    *,
+    out_dim: int,
+    noise_sigma_multiplier: float,
+    noise_spec: NoiseSamplingSpec | None,
+) -> _SampledDiscretizationFunctionParams:
+    n_centers = min(int(plan.n_centers), int(x.shape[1]))
+    center_index = rng.keyed("center_index").randperm_indices(
+        length=int(x.shape[1]),
+        sample_size=n_centers,
+    )
+    gathered = torch.gather(
+        x,
+        1,
+        center_index.unsqueeze(-1).expand(-1, -1, int(x.shape[2])),
+    )
+    return _SampledDiscretizationFunctionParams(
+        center_index=center_index,
+        lp_norm=rng.keyed("lp_norm").log_uniform((rng.batch_size,), low=0.5, high=4.0),
+        linear=_sample_linear_function_params(
+            gathered,
+            rng.keyed("linear"),
+            LinearFunctionPlan(matrix=plan.linear_matrix),
+            out_dim=out_dim,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+        ),
+    )
+
+
+def _apply_sampled_discretization_batch(
+    x: torch.Tensor,
+    params: _SampledDiscretizationFunctionParams,
+) -> torch.Tensor:
+    centers = torch.gather(
+        x,
+        1,
+        params.center_index.to(device=x.device, dtype=torch.long)
+        .unsqueeze(-1)
+        .expand(-1, -1, int(x.shape[2])),
+    )
+    nearest = _nearest_lp_center_indices(
+        x,
+        centers,
+        p=params.lp_norm.to(device=x.device, dtype=x.dtype),
+    )
+    gathered = torch.gather(
+        centers,
+        1,
+        nearest.unsqueeze(-1).expand(-1, -1, int(x.shape[2])),
+    )
+    return _apply_sampled_linear_batch(gathered, params.linear)
 
 
 def _apply_discretization_batch(
@@ -461,32 +928,16 @@ def _apply_discretization_batch(
     noise_sigma_multiplier: float,
     noise_spec: NoiseSamplingSpec | None,
 ) -> torch.Tensor:
-    n_centers = min(int(plan.n_centers), int(x.shape[1]))
-    center_rng = rng.keyed("center_index")
-    center_idx = center_rng.randperm_indices(
-        length=int(x.shape[1]),
-        sample_size=n_centers,
-    )
-    centers = torch.gather(
+    return _apply_sampled_discretization_batch(
         x,
-        1,
-        center_idx.unsqueeze(-1).expand(-1, -1, x.shape[2]),
-    )
-    lp_norm_rng = rng.keyed("lp_norm")
-    p = lp_norm_rng.log_uniform((rng.batch_size,), low=0.5, high=4.0)
-    nearest = _nearest_lp_center_indices(x, centers, p=p)
-    gathered = torch.gather(
-        centers,
-        1,
-        nearest.unsqueeze(-1).expand(-1, -1, x.shape[2]),
-    )
-    return _apply_linear_batch(
-        gathered,
-        rng.keyed("linear"),
-        LinearFunctionPlan(matrix=plan.linear_matrix),
-        out_dim=out_dim,
-        noise_sigma_multiplier=noise_sigma_multiplier,
-        noise_spec=noise_spec,
+        _sample_discretization_function_params(
+            x,
+            rng,
+            plan,
+            out_dim=out_dim,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+        ),
     )
 
 
@@ -511,31 +962,26 @@ def _apply_gp_batch(
 ) -> torch.Tensor:
     batch_size, _, din = x.shape
     p = 256
-    a_rng = rng.keyed("a")
-    a = a_rng.log_uniform((rng.batch_size,), low=2.0, high=20.0)
+    a = rng.keyed("a").log_uniform((rng.batch_size,), low=2.0, high=20.0)
+    input_projection: torch.Tensor | None = None
 
     if str(plan.branch_kind) == "ha":
-        ha_radius_rng = rng.keyed("ha_radius")
-        r = _sample_radial_ha_batch(ha_radius_rng, n=p * din, a=a).view(batch_size, p, din)
-        ha_sign_rng = rng.keyed("ha_sign")
+        r = _sample_radial_ha_batch(rng.keyed("ha_radius"), n=p * din, a=a).view(batch_size, p, din)
         signs = torch.where(
-            ha_sign_rng.uniform((batch_size, p, din), low=0.0, high=1.0) < 0.5,
+            rng.keyed("ha_sign").uniform((batch_size, p, din), low=0.0, high=1.0) < 0.5,
             -1.0,
             1.0,
         )
         omega = r * signs
-        x_proj = x
     else:
-        projected_direction_rng = rng.keyed("projected_direction")
         z = sample_noise_from_spec(
             (batch_size, p, din),
-            generator=projected_direction_rng.torch_generator,
+            generator=rng.keyed("projected_direction").torch_generator,
             device=rng.device,
             noise_spec=noise_spec,
         )
         z = z / torch.clamp(torch.norm(z, dim=2, keepdim=True), min=1e-6)
-        projected_radius_rng = rng.keyed("projected_radius")
-        r = _sample_radial_ha_batch(projected_radius_rng, n=p, a=a)
+        r = _sample_radial_ha_batch(rng.keyed("projected_radius"), n=p, a=a)
         omega = z * r.unsqueeze(2)
         weights = _sample_random_weights_batch(
             rng.keyed("weights"),
@@ -544,24 +990,19 @@ def _apply_gp_batch(
             sigma_multiplier=float(noise_sigma_multiplier),
             noise_spec=noise_spec,
         )
-        alpha_rng = rng.keyed("alpha")
-        alpha = alpha_rng.log_uniform((batch_size,), low=0.5, high=10.0)
-        matrix_rng = rng.keyed("matrix")
+        alpha = rng.keyed("alpha").log_uniform((batch_size,), low=0.5, high=10.0)
         a_mat = sample_noise_from_spec(
             (batch_size, din, din),
-            generator=matrix_rng.torch_generator,
+            generator=rng.keyed("matrix").torch_generator,
             device=rng.device,
             noise_spec=noise_spec,
         )
-        matrices = alpha.view(-1, 1, 1) * (weights.unsqueeze(2) * a_mat)
-        x_proj = torch.einsum("bni,bij->bnj", x, matrices.transpose(1, 2))
+        input_projection = alpha.view(-1, 1, 1) * (weights.unsqueeze(2) * a_mat)
 
     variant = str(plan.variant)
     if variant == "multiscale":
-        multiscale_low_rng = rng.keyed("multiscale_low")
-        multiscale_high_rng = rng.keyed("multiscale_high")
-        low_scale = multiscale_low_rng.log_uniform((batch_size,), low=0.35, high=1.0)
-        high_scale = multiscale_high_rng.log_uniform((batch_size,), low=1.5, high=6.0)
+        low_scale = rng.keyed("multiscale_low").log_uniform((batch_size,), low=0.35, high=1.0)
+        high_scale = rng.keyed("multiscale_high").log_uniform((batch_size,), low=1.5, high=6.0)
         split = p // 2
         feature_scale = torch.cat(
             [
@@ -574,29 +1015,64 @@ def _apply_gp_batch(
     elif variant not in {"standard", "periodic"}:
         raise ValueError(f"Unknown GP variant: {plan.variant!r}")
 
-    phase_rng = rng.keyed("phase")
-    b = phase_rng.uniform((batch_size, p), low=0.0, high=2.0 * math.pi)
-    phase_logits = torch.einsum("bnd,bpd->bnp", x_proj, omega)
-    if variant == "periodic":
-        periodic_harmonics_rng = rng.keyed("periodic_harmonics")
-        harmonics = periodic_harmonics_rng.randint(1, 6, (batch_size, p)).to(
-            device=rng.device,
-            dtype=x.dtype,
+    return _apply_sampled_gp_batch(
+        x,
+        plan,
+        _SampledGpFunctionParams(
+            input_projection=input_projection,
+            omega=omega,
+            phase_bias=rng.keyed("phase").uniform((batch_size, p), low=0.0, high=2.0 * math.pi),
+            harmonics=(
+                None
+                if variant != "periodic"
+                else rng.keyed("periodic_harmonics")
+                .randint(1, 6, (batch_size, p))
+                .to(
+                    device=rng.device,
+                    dtype=x.dtype,
+                )
+            ),
+            output_matrix=sample_noise_from_spec(
+                (batch_size, out_dim, p),
+                generator=rng.keyed("output_matrix").torch_generator,
+                device=rng.device,
+                noise_spec=noise_spec,
+            ),
+        ),
+    )
+
+
+def _apply_sampled_gp_batch(
+    x: torch.Tensor,
+    plan: GpFunctionPlan,
+    params: _SampledGpFunctionParams,
+) -> torch.Tensor:
+    x_proj = x
+    if params.input_projection is not None:
+        x_proj = torch.einsum("bni,bij->bnj", x, params.input_projection.transpose(1, 2))
+    phase_logits = torch.einsum(
+        "bnd,bpd->bnp",
+        x_proj,
+        params.omega.to(device=x.device, dtype=x.dtype),
+    )
+    phase_bias = params.phase_bias.to(device=x.device, dtype=x.dtype)
+    if str(plan.variant) == "periodic":
+        if params.harmonics is None:
+            raise ValueError("Periodic GP params are missing harmonics.")
+        phase_logits = (
+            params.harmonics.to(device=x.device, dtype=x.dtype).unsqueeze(1) * phase_logits
         )
-        phase_logits = harmonics.unsqueeze(1) * phase_logits
         phi = (
-            torch.cos(phase_logits + b.unsqueeze(1)) + torch.sin(phase_logits - b.unsqueeze(1))
+            torch.cos(phase_logits + phase_bias.unsqueeze(1))
+            + torch.sin(phase_logits - phase_bias.unsqueeze(1))
         ) / math.sqrt(2.0)
     else:
-        phi = torch.cos(phase_logits + b.unsqueeze(1))
-    output_matrix_rng = rng.keyed("output_matrix")
-    z_out = sample_noise_from_spec(
-        (batch_size, out_dim, p),
-        generator=output_matrix_rng.torch_generator,
-        device=rng.device,
-        noise_spec=noise_spec,
-    )
-    return torch.einsum("bnp,bop->bno", phi, z_out) / math.sqrt(float(p))
+        phi = torch.cos(phase_logits + phase_bias.unsqueeze(1))
+    return torch.einsum(
+        "bnp,bop->bno",
+        phi,
+        params.output_matrix.to(device=x.device, dtype=x.dtype),
+    ) / math.sqrt(float(params.output_matrix.shape[-1]))
 
 
 def _apply_em_batch(
@@ -609,48 +1085,391 @@ def _apply_em_batch(
     noise_spec: NoiseSamplingSpec | None,
 ) -> torch.Tensor:
     m_val = max(2, int(plan.m_val))
-    base_idx = rng.keyed("base_index").randint(0, x.shape[1], (rng.batch_size, m_val))
+    return _apply_sampled_em_batch(
+        x,
+        _SampledEmFunctionParams(
+            base_index=rng.keyed("base_index").randint(0, x.shape[1], (rng.batch_size, m_val)),
+            center_noise=sample_noise_from_spec(
+                (rng.batch_size, m_val, x.shape[2]),
+                generator=rng.keyed("center_noise").torch_generator,
+                device=rng.device,
+                noise_spec=noise_spec,
+            ),
+            sigma=torch.exp(
+                sample_noise_from_spec(
+                    (rng.batch_size, m_val),
+                    generator=rng.keyed("sigma").torch_generator,
+                    device=rng.device,
+                    noise_spec=noise_spec,
+                    scale_multiplier=0.1,
+                )
+            ),
+            p_val=rng.keyed("p_val").log_uniform((rng.batch_size,), low=1.0, high=4.0),
+            q_val=rng.keyed("q_val").log_uniform((rng.batch_size,), low=1.0, high=2.0),
+            linear=_sample_linear_function_params(
+                torch.empty((x.shape[0], x.shape[1], m_val), device=x.device, dtype=x.dtype),
+                rng.keyed("linear"),
+                LinearFunctionPlan(matrix=plan.linear_matrix),
+                out_dim=out_dim,
+                noise_sigma_multiplier=noise_sigma_multiplier,
+                noise_spec=noise_spec,
+            ),
+        ),
+    )
+
+
+def _apply_sampled_em_batch(
+    x: torch.Tensor,
+    params: _SampledEmFunctionParams,
+) -> torch.Tensor:
     centers = torch.gather(
         x,
         1,
-        base_idx.unsqueeze(-1).expand(-1, -1, x.shape[2]),
+        params.base_index.to(device=x.device, dtype=torch.long)
+        .unsqueeze(-1)
+        .expand(-1, -1, x.shape[2]),
     )
-    centers = centers + sample_noise_from_spec(
-        (rng.batch_size, m_val, x.shape[2]),
-        generator=rng.keyed("center_noise").torch_generator,
-        device=rng.device,
-        noise_spec=noise_spec,
-    )
-    sigma = torch.exp(
-        sample_noise_from_spec(
-            (rng.batch_size, m_val),
-            generator=rng.keyed("sigma").torch_generator,
-            device=rng.device,
-            noise_spec=noise_spec,
-            scale_multiplier=0.1,
-        )
-    )
-    p_val = rng.keyed("p_val").log_uniform((rng.batch_size,), low=1.0, high=4.0)
-    q_val = rng.keyed("q_val").log_uniform((rng.batch_size,), low=1.0, high=2.0)
+    centers = centers + params.center_noise.to(device=x.device, dtype=x.dtype)
+    sigma = params.sigma.to(device=x.device, dtype=x.dtype)
     dist_p = _lp_distances_to_centers(
         x,
         centers,
-        p=p_val,
+        p=params.p_val.to(device=x.device, dtype=x.dtype),
         take_root=True,
     )
     logits = -0.5 * torch.log(2.0 * math.pi * sigma**2).unsqueeze(1) - torch.pow(
         dist_p / torch.clamp(sigma.unsqueeze(1), min=1e-6),
-        q_val.view(-1, 1, 1),
+        params.q_val.to(device=x.device, dtype=x.dtype).view(-1, 1, 1),
     )
     probs = torch.softmax(logits, dim=2)
-    return _apply_linear_batch(
-        probs,
-        rng.keyed("linear"),
-        LinearFunctionPlan(matrix=plan.linear_matrix),
-        out_dim=out_dim,
-        noise_sigma_multiplier=noise_sigma_multiplier,
-        noise_spec=noise_spec,
-    )
+    return _apply_sampled_linear_batch(probs, params.linear)
+
+
+def _concat_sampled_leaf_function_params(
+    params_list: list[SampledLeafFunctionParams],
+) -> SampledLeafFunctionParams:
+    if not params_list:
+        raise ValueError("params_list must be non-empty.")
+    first = params_list[0]
+    if isinstance(first, _SampledLinearFunctionParams):
+        linear_params = cast(list[_SampledLinearFunctionParams], params_list)
+        return _SampledLinearFunctionParams(
+            matrix=torch.cat([params.matrix for params in linear_params], dim=0)
+        )
+    if isinstance(first, _SampledQuadraticFunctionParams):
+        quadratic_params = cast(list[_SampledQuadraticFunctionParams], params_list)
+        return _SampledQuadraticFunctionParams(
+            feature_subset=_concat_optional_tensor(
+                [params.feature_subset for params in quadratic_params]
+            ),
+            matrix=torch.cat([params.matrix for params in quadratic_params], dim=0),
+        )
+    if isinstance(first, _SampledNeuralNetFunctionParams):
+        neural_params = cast(list[_SampledNeuralNetFunctionParams], params_list)
+        return _SampledNeuralNetFunctionParams(
+            input_activation=(
+                None
+                if first.input_activation is None
+                else _concat_activation_plan_params(
+                    [
+                        params.input_activation
+                        for params in neural_params
+                        if params.input_activation is not None
+                    ]
+                )
+            ),
+            layer_matrices=tuple(
+                torch.cat(
+                    [params.layer_matrices[layer_index] for params in neural_params],
+                    dim=0,
+                )
+                for layer_index in range(len(first.layer_matrices))
+            ),
+            hidden_activations=tuple(
+                _concat_activation_plan_params(
+                    [params.hidden_activations[layer_index] for params in neural_params]
+                )
+                for layer_index in range(len(first.hidden_activations))
+            ),
+            output_activation=(
+                None
+                if first.output_activation is None
+                else _concat_activation_plan_params(
+                    [
+                        params.output_activation
+                        for params in neural_params
+                        if params.output_activation is not None
+                    ]
+                )
+            ),
+        )
+    if isinstance(first, _SampledTreeFunctionParams):
+        tree_params = cast(list[_SampledTreeFunctionParams], params_list)
+        return _SampledTreeFunctionParams(
+            levels=tuple(
+                _SampledTreeLevelParams(
+                    split_feats=torch.cat(
+                        [params.levels[level_index].split_feats for params in tree_params],
+                        dim=0,
+                    ),
+                    thresholds=torch.cat(
+                        [params.levels[level_index].thresholds for params in tree_params],
+                        dim=0,
+                    ),
+                    leaf_values=torch.cat(
+                        [params.levels[level_index].leaf_values for params in tree_params],
+                        dim=0,
+                    ),
+                )
+                for level_index in range(len(first.levels))
+            )
+        )
+    if isinstance(first, _SampledDiscretizationFunctionParams):
+        discretization_params = cast(list[_SampledDiscretizationFunctionParams], params_list)
+        return _SampledDiscretizationFunctionParams(
+            center_index=torch.cat(
+                [params.center_index for params in discretization_params], dim=0
+            ),
+            lp_norm=torch.cat([params.lp_norm for params in discretization_params], dim=0),
+            linear=_SampledLinearFunctionParams(
+                matrix=torch.cat(
+                    [params.linear.matrix for params in discretization_params],
+                    dim=0,
+                )
+            ),
+        )
+    if isinstance(first, _SampledGpFunctionParams):
+        gp_params = cast(list[_SampledGpFunctionParams], params_list)
+        return _SampledGpFunctionParams(
+            input_projection=_concat_optional_tensor(
+                [params.input_projection for params in gp_params]
+            ),
+            omega=torch.cat([params.omega for params in gp_params], dim=0),
+            phase_bias=torch.cat([params.phase_bias for params in gp_params], dim=0),
+            harmonics=_concat_optional_tensor([params.harmonics for params in gp_params]),
+            output_matrix=torch.cat([params.output_matrix for params in gp_params], dim=0),
+        )
+    if isinstance(first, _SampledEmFunctionParams):
+        em_params = cast(list[_SampledEmFunctionParams], params_list)
+        return _SampledEmFunctionParams(
+            base_index=torch.cat([params.base_index for params in em_params], dim=0),
+            center_noise=torch.cat([params.center_noise for params in em_params], dim=0),
+            sigma=torch.cat([params.sigma for params in em_params], dim=0),
+            p_val=torch.cat([params.p_val for params in em_params], dim=0),
+            q_val=torch.cat([params.q_val for params in em_params], dim=0),
+            linear=_SampledLinearFunctionParams(
+                matrix=torch.cat([params.linear.matrix for params in em_params], dim=0)
+            ),
+        )
+    raise ValueError(f"Unsupported sampled leaf-function params type: {type(first)!r}")
+
+
+def _sample_leaf_function_params_batch(
+    x: torch.Tensor,
+    rng: FixedLayoutBatchRng,
+    plan: LinearFunctionPlan
+    | QuadraticFunctionPlan
+    | NeuralNetFunctionPlan
+    | TreeFunctionPlan
+    | DiscretizationFunctionPlan
+    | GpFunctionPlan
+    | EmFunctionPlan,
+    *,
+    out_dim: int,
+    noise_sigma_multiplier: float,
+    noise_spec: NoiseSamplingSpec | None,
+) -> SampledLeafFunctionParams:
+    if isinstance(plan, LinearFunctionPlan):
+        return _sample_linear_function_params(
+            x,
+            rng,
+            plan,
+            out_dim=out_dim,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+        )
+    if isinstance(plan, QuadraticFunctionPlan):
+        return _sample_quadratic_function_params(
+            x,
+            rng,
+            plan,
+            out_dim=out_dim,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+        )
+    if isinstance(plan, NeuralNetFunctionPlan):
+        return _sample_nn_function_params(
+            x,
+            rng,
+            plan,
+            out_dim=out_dim,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+        )
+    if isinstance(plan, TreeFunctionPlan):
+        return _sample_tree_function_params(
+            x,
+            rng,
+            plan,
+            out_dim=out_dim,
+            noise_spec=noise_spec,
+        )
+    if isinstance(plan, DiscretizationFunctionPlan):
+        return _sample_discretization_function_params(
+            x,
+            rng,
+            plan,
+            out_dim=out_dim,
+            noise_sigma_multiplier=noise_sigma_multiplier,
+            noise_spec=noise_spec,
+        )
+    if isinstance(plan, GpFunctionPlan):
+        batch_size, _, din = x.shape
+        p = 256
+        a = rng.keyed("a").log_uniform((rng.batch_size,), low=2.0, high=20.0)
+        input_projection: torch.Tensor | None = None
+        if str(plan.branch_kind) == "ha":
+            r = _sample_radial_ha_batch(rng.keyed("ha_radius"), n=p * din, a=a).view(
+                batch_size, p, din
+            )
+            signs = torch.where(
+                rng.keyed("ha_sign").uniform((batch_size, p, din), low=0.0, high=1.0) < 0.5,
+                -1.0,
+                1.0,
+            )
+            omega = r * signs
+        else:
+            z = sample_noise_from_spec(
+                (batch_size, p, din),
+                generator=rng.keyed("projected_direction").torch_generator,
+                device=rng.device,
+                noise_spec=noise_spec,
+            )
+            z = z / torch.clamp(torch.norm(z, dim=2, keepdim=True), min=1e-6)
+            r = _sample_radial_ha_batch(rng.keyed("projected_radius"), n=p, a=a)
+            omega = z * r.unsqueeze(2)
+            weights = _sample_random_weights_batch(
+                rng.keyed("weights"),
+                dim=din,
+                correlation_name="gp_projected_weights_decay",
+                sigma_multiplier=float(noise_sigma_multiplier),
+                noise_spec=noise_spec,
+            )
+            alpha = rng.keyed("alpha").log_uniform((batch_size,), low=0.5, high=10.0)
+            a_mat = sample_noise_from_spec(
+                (batch_size, din, din),
+                generator=rng.keyed("matrix").torch_generator,
+                device=rng.device,
+                noise_spec=noise_spec,
+            )
+            input_projection = alpha.view(-1, 1, 1) * (weights.unsqueeze(2) * a_mat)
+        variant = str(plan.variant)
+        if variant == "multiscale":
+            low_scale = rng.keyed("multiscale_low").log_uniform((batch_size,), low=0.35, high=1.0)
+            high_scale = rng.keyed("multiscale_high").log_uniform((batch_size,), low=1.5, high=6.0)
+            split = p // 2
+            feature_scale = torch.cat(
+                [
+                    low_scale.view(-1, 1).expand(-1, split),
+                    high_scale.view(-1, 1).expand(-1, p - split),
+                ],
+                dim=1,
+            ).to(device=rng.device, dtype=x.dtype)
+            omega = omega * feature_scale.unsqueeze(2)
+        elif variant not in {"standard", "periodic"}:
+            raise ValueError(f"Unknown GP variant: {plan.variant!r}")
+        return _SampledGpFunctionParams(
+            input_projection=input_projection,
+            omega=omega,
+            phase_bias=rng.keyed("phase").uniform((batch_size, p), low=0.0, high=2.0 * math.pi),
+            harmonics=(
+                None
+                if variant != "periodic"
+                else rng.keyed("periodic_harmonics")
+                .randint(1, 6, (batch_size, p))
+                .to(
+                    device=rng.device,
+                    dtype=x.dtype,
+                )
+            ),
+            output_matrix=sample_noise_from_spec(
+                (batch_size, out_dim, p),
+                generator=rng.keyed("output_matrix").torch_generator,
+                device=rng.device,
+                noise_spec=noise_spec,
+            ),
+        )
+    if isinstance(plan, EmFunctionPlan):
+        m_val = max(2, int(plan.m_val))
+        return _SampledEmFunctionParams(
+            base_index=rng.keyed("base_index").randint(0, x.shape[1], (rng.batch_size, m_val)),
+            center_noise=sample_noise_from_spec(
+                (rng.batch_size, m_val, x.shape[2]),
+                generator=rng.keyed("center_noise").torch_generator,
+                device=rng.device,
+                noise_spec=noise_spec,
+            ),
+            sigma=torch.exp(
+                sample_noise_from_spec(
+                    (rng.batch_size, m_val),
+                    generator=rng.keyed("sigma").torch_generator,
+                    device=rng.device,
+                    noise_spec=noise_spec,
+                    scale_multiplier=0.1,
+                )
+            ),
+            p_val=rng.keyed("p_val").log_uniform((rng.batch_size,), low=1.0, high=4.0),
+            q_val=rng.keyed("q_val").log_uniform((rng.batch_size,), low=1.0, high=2.0),
+            linear=_sample_linear_function_params(
+                torch.empty((x.shape[0], x.shape[1], m_val), device=x.device, dtype=x.dtype),
+                rng.keyed("linear"),
+                LinearFunctionPlan(matrix=plan.linear_matrix),
+                out_dim=out_dim,
+                noise_sigma_multiplier=noise_sigma_multiplier,
+                noise_spec=noise_spec,
+            ),
+        )
+    raise ValueError(f"Unsupported leaf function plan: {plan!r}")
+
+
+def _apply_sampled_leaf_function_batch(
+    x: torch.Tensor,
+    plan: LinearFunctionPlan
+    | QuadraticFunctionPlan
+    | NeuralNetFunctionPlan
+    | TreeFunctionPlan
+    | DiscretizationFunctionPlan
+    | GpFunctionPlan
+    | EmFunctionPlan,
+    params: SampledLeafFunctionParams,
+) -> torch.Tensor:
+    if isinstance(plan, LinearFunctionPlan):
+        if not isinstance(params, _SampledLinearFunctionParams):
+            raise ValueError("Linear function params type mismatch.")
+        return _apply_sampled_linear_batch(x, params)
+    if isinstance(plan, QuadraticFunctionPlan):
+        if not isinstance(params, _SampledQuadraticFunctionParams):
+            raise ValueError("Quadratic function params type mismatch.")
+        return _apply_sampled_quadratic_batch(x, params)
+    if isinstance(plan, NeuralNetFunctionPlan):
+        if not isinstance(params, _SampledNeuralNetFunctionParams):
+            raise ValueError("NN function params type mismatch.")
+        return _apply_sampled_nn_batch(x, plan, params)
+    if isinstance(plan, TreeFunctionPlan):
+        if not isinstance(params, _SampledTreeFunctionParams):
+            raise ValueError("Tree function params type mismatch.")
+        return _apply_sampled_tree_batch(x, params)
+    if isinstance(plan, DiscretizationFunctionPlan):
+        if not isinstance(params, _SampledDiscretizationFunctionParams):
+            raise ValueError("Discretization function params type mismatch.")
+        return _apply_sampled_discretization_batch(x, params)
+    if isinstance(plan, GpFunctionPlan):
+        if not isinstance(params, _SampledGpFunctionParams):
+            raise ValueError("GP function params type mismatch.")
+        return _apply_sampled_gp_batch(x, plan, params)
+    if not isinstance(params, _SampledEmFunctionParams):
+        raise ValueError("EM function params type mismatch.")
+    return _apply_sampled_em_batch(x, params)
 
 
 def _apply_linear_pair_batch_from_branch_inputs(
@@ -1039,10 +1858,13 @@ __all__ = [
     "_apply_linear_batch",
     "_apply_linear_pair_batch",
     "_apply_nn_batch",
+    "_apply_piecewise_gate_with_params",
     "_apply_quadratic_batch",
     "_apply_quadratic_pair_batch",
     "_apply_tree_batch",
     "_base_matrix_plan",
+    "_concat_piecewise_gate_params",
+    "_sample_piecewise_gate_params",
     "_sample_radial_ha_batch",
     "_sample_random_matrix_from_plan_batch",
     "_sample_random_points_batch",

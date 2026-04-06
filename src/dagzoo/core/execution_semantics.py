@@ -371,8 +371,9 @@ def sample_activation_plan(
                     kind=choice,
                     temperature=float(
                         _log_uniform(
-                            keyed_rng.keyed("gumbel_softmax_temperature").torch_rng(
-                                device=resolved_device
+                            keyed_rng.torch_rng(
+                                "gumbel_softmax_temperature",
+                                device=resolved_device,
                             ),
                             0.25,
                             4.0,
@@ -418,7 +419,7 @@ def sample_matrix_plan(
             ),
         )
     else:
-        generator = keyed_rng.keyed("kind").torch_rng(device=resolved_device)
+        generator = keyed_rng.torch_rng("kind", device=resolved_device)
         kind = _MATRIX_KIND_CHOICES[int(_randint_scalar(0, len(_MATRIX_KIND_CHOICES), generator))]
     if kind == "gaussian":
         return GaussianMatrixPlan()
@@ -441,7 +442,7 @@ def sample_matrix_plan(
             if correlated
             else float(
                 _log_uniform(
-                    keyed_rng.keyed("gamma").torch_rng(device=resolved_device),
+                    keyed_rng.torch_rng("gamma", device=resolved_device),
                     0.1,
                     10.0,
                     resolved_device,
@@ -458,7 +459,7 @@ def sample_matrix_plan(
                 )
             )
             if correlated
-            else bool(_sample_bool(keyed_rng.keyed("signed").torch_rng(device=resolved_device)))
+            else bool(_sample_bool(keyed_rng.torch_rng("signed", device=resolved_device)))
         )
         return KernelMatrixPlan(gamma=gamma, signed=signed)
     if correlated:
@@ -472,7 +473,7 @@ def sample_matrix_plan(
             ),
         )
     else:
-        base_generator = keyed_rng.keyed("base_kind").torch_rng(device=resolved_device)
+        base_generator = keyed_rng.torch_rng("base_kind", device=resolved_device)
         base_kind = _MATRIX_BASE_KIND_CHOICES[
             int(_randint_scalar(0, len(_MATRIX_BASE_KIND_CHOICES), base_generator))
         ]
@@ -570,12 +571,12 @@ def _sample_function_plan_for_family_once(
             _randint_scalar(
                 1,
                 4,
-                keyed_rng.keyed("n_layers").torch_rng(device=resolved_device),
+                keyed_rng.torch_rng("n_layers", device=resolved_device),
             )
         )
         hidden_width = int(
             _log_uniform(
-                keyed_rng.keyed("hidden_width").torch_rng(device=resolved_device),
+                keyed_rng.torch_rng("hidden_width", device=resolved_device),
                 1.0,
                 127.0,
                 resolved_device,
@@ -587,9 +588,7 @@ def _sample_function_plan_for_family_once(
                 device=resolved_device,
                 width=input_dim,
             )
-            if _sample_bool(
-                keyed_rng.keyed("input_activation_enabled").torch_rng(device=resolved_device)
-            )
+            if _sample_bool(keyed_rng.torch_rng("input_activation_enabled", device=resolved_device))
             else None
         )
         output_activation = (
@@ -599,7 +598,7 @@ def _sample_function_plan_for_family_once(
                 width=int(out_dim),
             )
             if _sample_bool(
-                keyed_rng.keyed("output_activation_enabled").torch_rng(device=resolved_device)
+                keyed_rng.torch_rng("output_activation_enabled", device=resolved_device)
             )
             else None
         )
@@ -635,7 +634,7 @@ def _sample_function_plan_for_family_once(
     if family == "tree":
         n_trees = int(
             _log_uniform(
-                keyed_rng.keyed("n_trees").torch_rng(device=resolved_device),
+                keyed_rng.torch_rng("n_trees", device=resolved_device),
                 1.0,
                 32.0,
                 resolved_device,
@@ -649,7 +648,7 @@ def _sample_function_plan_for_family_once(
                     _randint_scalar(
                         1,
                         8,
-                        keyed_rng.keyed("depth", tree_index).torch_rng(device=resolved_device),
+                        keyed_rng.torch_rng("depth", tree_index, device=resolved_device),
                     )
                 )
                 for tree_index in range(n_trees)
@@ -658,7 +657,7 @@ def _sample_function_plan_for_family_once(
     if family == "discretization":
         n_centers = int(
             _log_uniform(
-                keyed_rng.keyed("n_centers").torch_rng(device=resolved_device),
+                keyed_rng.torch_rng("n_centers", device=resolved_device),
                 2.0,
                 128.0,
                 resolved_device,
@@ -692,7 +691,7 @@ def _sample_function_plan_for_family_once(
     if family == "em":
         m_val = int(
             _log_uniform(
-                keyed_rng.keyed("m_val").torch_rng(device=resolved_device),
+                keyed_rng.torch_rng("m_val", device=resolved_device),
                 2.0,
                 float(max(16, 2 * out_dim)),
                 resolved_device,
@@ -760,13 +759,13 @@ def _sample_function_plan_for_family_once(
         )
         gate_temperature = float(
             _log_uniform(
-                keyed_rng.keyed("gate_temperature").torch_rng(device=resolved_device),
+                keyed_rng.torch_rng("gate_temperature", device=resolved_device),
                 2.0,
                 16.0,
                 resolved_device,
             )
         )
-        gate_bias_generator = keyed_rng.keyed("gate_bias").torch_rng(device=resolved_device)
+        gate_bias_generator = keyed_rng.torch_rng("gate_bias", device=resolved_device)
         gate_bias = (2.0 * _rand_scalar(gate_bias_generator)) - 1.0
         gate_bias *= 1.5
         return PiecewiseFunctionPlan(
@@ -858,7 +857,7 @@ def sample_converter_plan(
         namespace="sample_converter_plan",
     )
     if spec.kind in {"num", "target_reg"}:
-        warp_generator = keyed_rng.keyed("warp_enabled").torch_rng(device=resolved_device)
+        warp_generator = keyed_rng.torch_rng("warp_enabled", device=resolved_device)
         return NumericConverterPlan(
             kind=cast(Literal["num", "target_reg"], spec.kind),
             warp_enabled=not _sample_bool(warp_generator),
@@ -947,7 +946,7 @@ def sample_latent_plan(
         1,
         int(
             _log_uniform(
-                keyed_rng.keyed("extra_dim").torch_rng(device=resolved_device),
+                keyed_rng.torch_rng("extra_dim", device=resolved_device),
                 1.0,
                 32.0,
                 resolved_device,
@@ -990,7 +989,7 @@ def sample_root_source_plan(
             ),
         )
     else:
-        base_generator = keyed_rng.keyed("base_kind").torch_rng(device=resolved_device)
+        base_generator = keyed_rng.torch_rng("base_kind", device=resolved_device)
         base_kind = _ROOT_BASE_KIND_CHOICES[
             int(_randint_scalar(0, len(_ROOT_BASE_KIND_CHOICES), base_generator))
         ]

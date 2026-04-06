@@ -1,0 +1,1296 @@
+{
+  "heterogeneous": [
+    {
+      "X_test": [
+        [
+          0.44721361994743347,
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          -2.2360680103302,
+          3.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "X_train": [
+        [
+          0.44721361994743347,
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          -2.2360680103302,
+          4.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.44721361994743347,
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          0.44721361994743347,
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          0.44721361994743347,
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          0.44721361994743347,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "feature_types": [
+        "num",
+        "cat",
+        "cat",
+        "cat"
+      ],
+      "metadata": {
+        "attempt_used": 0,
+        "backend": "torch",
+        "compute_backend": "torch_appendix_full",
+        "config": {
+          "benchmark": {
+            "collect_memory": true,
+            "collect_reproducibility": false,
+            "fail_threshold_pct": 20.0,
+            "latency_num_samples": 20,
+            "num_datasets": 200,
+            "preset_name": "medium_cuda",
+            "presets": {
+              "cpu": {
+                "device": "cpu",
+                "num_datasets": 200,
+                "warmup_datasets": 10
+              },
+              "cuda_desktop": {
+                "device": "cuda",
+                "num_datasets": 1500,
+                "warmup_datasets": 20
+              },
+              "cuda_h100": {
+                "device": "cuda",
+                "num_datasets": 5000,
+                "warmup_datasets": 50
+              }
+            },
+            "reproducibility_num_datasets": 2,
+            "suite": "standard",
+            "warmup_datasets": 10,
+            "warn_threshold_pct": 10.0
+          },
+          "dataset": {
+            "categorical_ratio_max": 1.0,
+            "categorical_ratio_min": 0.0,
+            "max_categorical_cardinality": 9,
+            "missing_mar_logit_scale": 1.0,
+            "missing_mar_observed_fraction": 0.5,
+            "missing_mechanism": "none",
+            "missing_mnar_logit_scale": 1.0,
+            "missing_rate": 0.0,
+            "n_classes_max": 10,
+            "n_classes_min": 2,
+            "n_features_max": 4,
+            "n_features_min": 4,
+            "n_test": 2,
+            "n_train": 6,
+            "rows": null,
+            "task": "regression"
+          },
+          "diagnostics": {
+            "enabled": false,
+            "histogram_bins": 10,
+            "include_spearman": false,
+            "max_values_per_metric": 50000,
+            "meta_feature_targets": {},
+            "out_dir": null,
+            "quantiles": [
+              0.05,
+              0.25,
+              0.5,
+              0.75,
+              0.95
+            ],
+            "underrepresented_threshold": 0.5
+          },
+          "filter": {
+            "enabled": false,
+            "max_attempts": 3,
+            "min_target_indegree": 1,
+            "min_target_relevant_feature_count": 2,
+            "min_target_relevant_feature_fraction": 0.05
+          },
+          "graph": {
+            "n_nodes_max": 4,
+            "n_nodes_min": 2
+          },
+          "mechanism": {
+            "function_family_mix": null
+          },
+          "noise": {
+            "base_scale": 1.0,
+            "family": "gaussian",
+            "mixture_weights": null,
+            "student_t_df": 5.0
+          },
+          "output": {
+            "compression": "zstd",
+            "out_dir": "data/run_default",
+            "shard_size": 128
+          },
+          "runtime": {
+            "device": "cpu",
+            "layout_mode": "heterogeneous",
+            "torch_dtype": "float32"
+          },
+          "seed": 1,
+          "shift": {
+            "enabled": false,
+            "graph_scale": null,
+            "mechanism_scale": null,
+            "mode": "off",
+            "variance_scale": null
+          }
+        },
+        "dataset_id": "74ccb1dec00061940124e8192880f709",
+        "dataset_index": 0,
+        "dataset_seed": 1221118263,
+        "device": "cpu",
+        "device_fallback_reason": null,
+        "filter": {
+          "mode": "deferred",
+          "status": "not_run"
+        },
+        "generation_attempts": {
+          "filter_attempts": 0,
+          "filter_rejection_rate": null,
+          "filter_rejections": 0,
+          "retry_count": 0,
+          "total_attempts": 1
+        },
+        "graph_depth_nodes": 2,
+        "graph_edge_density": 0.6666666666666666,
+        "graph_edges": 2,
+        "graph_nodes": 3,
+        "keyed_replay": {
+          "dataset_root_path": [
+            "dataset",
+            0
+          ],
+          "execution_plan_root_path": [
+            "dataset",
+            0,
+            "plan_candidate",
+            0,
+            "execution_plan"
+          ],
+          "layout_root_path": [
+            "dataset",
+            0,
+            "plan_candidate",
+            0,
+            "layout"
+          ]
+        },
+        "layout_execution_contract": "chunk_batched_v3",
+        "layout_mode": "heterogeneous",
+        "layout_plan_schema_version": 11,
+        "layout_plan_seed": 585350828,
+        "layout_plan_signature": "658dfd7bbc426b40a8c3649d1d53e11b",
+        "layout_signature": "8988fe1e56d5201f6962aa162ee82c35",
+        "lineage": {
+          "assignments": {
+            "feature_to_node": [
+              2,
+              2,
+              2,
+              2
+            ],
+            "target_relevant_feature_count": 4,
+            "target_relevant_feature_fraction": 1.0,
+            "target_relevant_features": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "target_to_node": 2
+          },
+          "graph": {
+            "adjacency": [
+              [
+                0,
+                1,
+                1
+              ],
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                0,
+                0,
+                0
+              ]
+            ],
+            "n_nodes": 3
+          },
+          "schema_name": "dagzoo.dag_lineage",
+          "schema_version": "1.4.0"
+        },
+        "mechanism_families": {
+          "families_present": [
+            "discretization",
+            "em",
+            "gp",
+            "nn",
+            "product",
+            "tree"
+          ],
+          "sampled_family_counts": {
+            "discretization": 1,
+            "em": 1,
+            "gp": 2,
+            "nn": 1,
+            "product": 1,
+            "tree": 1
+          },
+          "sampled_variant_counts": {
+            "gp.multiscale": 2
+          },
+          "total_function_plans": 7,
+          "variants_present": [
+            "gp.multiscale"
+          ]
+        },
+        "n_categorical_features": 3,
+        "n_classes": null,
+        "n_features": 4,
+        "noise_distribution": {
+          "base_scale": 1.0,
+          "family_requested": "gaussian",
+          "family_sampled": "gaussian",
+          "mixture_weights": null,
+          "sampling_strategy": "dataset_level",
+          "student_t_df": 5.0
+        },
+        "prior": {
+          "classification_validity_policy": "retry_only",
+          "feature_generator": "latent_dag",
+          "localization_mode": "none",
+          "missingness_stage": "post_target_observation",
+          "n_adaptation": "none",
+          "target_derivation": "tabiclv2_latent_node"
+        },
+        "requested_device": "cpu",
+        "resolved_device": "cpu",
+        "run_num_datasets": 2,
+        "seed": 777,
+        "shift": {
+          "edge_logit_bias_shift": 0.0,
+          "edge_odds_multiplier": 1.0,
+          "enabled": false,
+          "graph_scale": 0.0,
+          "mechanism_logit_tilt": 0.0,
+          "mechanism_nonlinear_mass": 0.625,
+          "mechanism_scale": 0.0,
+          "mode": "off",
+          "noise_variance_multiplier": 1.0,
+          "variance_scale": 0.0,
+          "variance_sigma_multiplier": 1.0
+        },
+        "split_groups": {
+          "cohort": "326be53357ec58544abaedd71aa8b725",
+          "request_run": "a6ba733641f0da368a1e14fa30b27b2f"
+        }
+      },
+      "y_test": [
+        -0.4472135603427887,
+        2.2360680103302
+      ],
+      "y_train": [
+        -0.4472135603427887,
+        2.2360680103302,
+        -0.4472135603427887,
+        -0.4472135603427887,
+        -0.4472135603427887,
+        -0.4472135603427887
+      ]
+    },
+    {
+      "X_test": [
+        [
+          1.0,
+          1.0,
+          1.0,
+          7.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          7.0
+        ]
+      ],
+      "X_train": [
+        [
+          1.0,
+          0.0,
+          2.0,
+          2.0
+        ],
+        [
+          1.0,
+          1.0,
+          2.0,
+          4.0
+        ],
+        [
+          1.0,
+          0.0,
+          2.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          6.0
+        ],
+        [
+          0.0,
+          1.0,
+          2.0,
+          1.0
+        ],
+        [
+          1.0,
+          0.0,
+          2.0,
+          1.0
+        ]
+      ],
+      "feature_types": [
+        "cat",
+        "cat",
+        "cat",
+        "cat"
+      ],
+      "metadata": {
+        "attempt_used": 0,
+        "backend": "torch",
+        "compute_backend": "torch_appendix_full",
+        "config": {
+          "benchmark": {
+            "collect_memory": true,
+            "collect_reproducibility": false,
+            "fail_threshold_pct": 20.0,
+            "latency_num_samples": 20,
+            "num_datasets": 200,
+            "preset_name": "medium_cuda",
+            "presets": {
+              "cpu": {
+                "device": "cpu",
+                "num_datasets": 200,
+                "warmup_datasets": 10
+              },
+              "cuda_desktop": {
+                "device": "cuda",
+                "num_datasets": 1500,
+                "warmup_datasets": 20
+              },
+              "cuda_h100": {
+                "device": "cuda",
+                "num_datasets": 5000,
+                "warmup_datasets": 50
+              }
+            },
+            "reproducibility_num_datasets": 2,
+            "suite": "standard",
+            "warmup_datasets": 10,
+            "warn_threshold_pct": 10.0
+          },
+          "dataset": {
+            "categorical_ratio_max": 1.0,
+            "categorical_ratio_min": 0.0,
+            "max_categorical_cardinality": 9,
+            "missing_mar_logit_scale": 1.0,
+            "missing_mar_observed_fraction": 0.5,
+            "missing_mechanism": "none",
+            "missing_mnar_logit_scale": 1.0,
+            "missing_rate": 0.0,
+            "n_classes_max": 10,
+            "n_classes_min": 2,
+            "n_features_max": 4,
+            "n_features_min": 4,
+            "n_test": 2,
+            "n_train": 6,
+            "rows": null,
+            "task": "regression"
+          },
+          "diagnostics": {
+            "enabled": false,
+            "histogram_bins": 10,
+            "include_spearman": false,
+            "max_values_per_metric": 50000,
+            "meta_feature_targets": {},
+            "out_dir": null,
+            "quantiles": [
+              0.05,
+              0.25,
+              0.5,
+              0.75,
+              0.95
+            ],
+            "underrepresented_threshold": 0.5
+          },
+          "filter": {
+            "enabled": false,
+            "max_attempts": 3,
+            "min_target_indegree": 1,
+            "min_target_relevant_feature_count": 2,
+            "min_target_relevant_feature_fraction": 0.05
+          },
+          "graph": {
+            "n_nodes_max": 4,
+            "n_nodes_min": 2
+          },
+          "mechanism": {
+            "function_family_mix": null
+          },
+          "noise": {
+            "base_scale": 1.0,
+            "family": "gaussian",
+            "mixture_weights": null,
+            "student_t_df": 5.0
+          },
+          "output": {
+            "compression": "zstd",
+            "out_dir": "data/run_default",
+            "shard_size": 128
+          },
+          "runtime": {
+            "device": "cpu",
+            "layout_mode": "heterogeneous",
+            "torch_dtype": "float32"
+          },
+          "seed": 1,
+          "shift": {
+            "enabled": false,
+            "graph_scale": null,
+            "mechanism_scale": null,
+            "mode": "off",
+            "variance_scale": null
+          }
+        },
+        "dataset_id": "a0b927cd715b2f2a5ac27146d31a89e4",
+        "dataset_index": 1,
+        "dataset_seed": 1132178707,
+        "device": "cpu",
+        "device_fallback_reason": null,
+        "filter": {
+          "mode": "deferred",
+          "status": "not_run"
+        },
+        "generation_attempts": {
+          "filter_attempts": 0,
+          "filter_rejection_rate": null,
+          "filter_rejections": 0,
+          "retry_count": 0,
+          "total_attempts": 1
+        },
+        "graph_depth_nodes": 2,
+        "graph_edge_density": 1.0,
+        "graph_edges": 1,
+        "graph_nodes": 2,
+        "keyed_replay": {
+          "dataset_root_path": [
+            "dataset",
+            1
+          ],
+          "execution_plan_root_path": [
+            "dataset",
+            1,
+            "plan_candidate",
+            0,
+            "execution_plan"
+          ],
+          "layout_root_path": [
+            "dataset",
+            1,
+            "plan_candidate",
+            0,
+            "layout"
+          ]
+        },
+        "layout_execution_contract": "chunk_batched_v3",
+        "layout_mode": "heterogeneous",
+        "layout_plan_schema_version": 11,
+        "layout_plan_seed": 1857549614,
+        "layout_plan_signature": "9662c3ba7c86321437b8493caba27c5a",
+        "layout_signature": "b03860a72ef84de6de91439860e92193",
+        "lineage": {
+          "assignments": {
+            "feature_to_node": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "target_relevant_feature_count": 4,
+            "target_relevant_feature_fraction": 1.0,
+            "target_relevant_features": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "target_to_node": 1
+          },
+          "graph": {
+            "adjacency": [
+              [
+                0,
+                1
+              ],
+              [
+                0,
+                0
+              ]
+            ],
+            "n_nodes": 2
+          },
+          "schema_name": "dagzoo.dag_lineage",
+          "schema_version": "1.4.0"
+        },
+        "mechanism_families": {
+          "families_present": [
+            "em",
+            "nn"
+          ],
+          "sampled_family_counts": {
+            "em": 2,
+            "nn": 1
+          },
+          "sampled_variant_counts": {},
+          "total_function_plans": 3,
+          "variants_present": []
+        },
+        "n_categorical_features": 4,
+        "n_classes": null,
+        "n_features": 4,
+        "noise_distribution": {
+          "base_scale": 1.0,
+          "family_requested": "gaussian",
+          "family_sampled": "gaussian",
+          "mixture_weights": null,
+          "sampling_strategy": "dataset_level",
+          "student_t_df": 5.0
+        },
+        "prior": {
+          "classification_validity_policy": "retry_only",
+          "feature_generator": "latent_dag",
+          "localization_mode": "none",
+          "missingness_stage": "post_target_observation",
+          "n_adaptation": "none",
+          "target_derivation": "tabiclv2_latent_node"
+        },
+        "requested_device": "cpu",
+        "resolved_device": "cpu",
+        "run_num_datasets": 2,
+        "seed": 777,
+        "shift": {
+          "edge_logit_bias_shift": 0.0,
+          "edge_odds_multiplier": 1.0,
+          "enabled": false,
+          "graph_scale": 0.0,
+          "mechanism_logit_tilt": 0.0,
+          "mechanism_nonlinear_mass": 0.625,
+          "mechanism_scale": 0.0,
+          "mode": "off",
+          "noise_variance_multiplier": 1.0,
+          "variance_scale": 0.0,
+          "variance_sigma_multiplier": 1.0
+        },
+        "split_groups": {
+          "cohort": "4202722c7015cef5f9d7021e8d42df8c",
+          "request_run": "a6ba733641f0da368a1e14fa30b27b2f"
+        }
+      },
+      "y_test": [
+        0.4795844852924347,
+        0.24846836924552917
+      ],
+      "y_train": [
+        0.35383346676826477,
+        0.16445721685886383,
+        1.1279816627502441,
+        -0.8824372291564941,
+        -1.7057368755340576,
+        0.9419017434120178
+      ]
+    }
+  ],
+  "stratified": [
+    {
+      "X_test": [
+        [
+          0.44721361994743347,
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          -2.2360680103302,
+          3.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "X_train": [
+        [
+          0.44721361994743347,
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          -2.2360680103302,
+          4.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.44721361994743347,
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          0.44721361994743347,
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          0.44721361994743347,
+          0.0,
+          0.0,
+          1.0
+        ],
+        [
+          0.44721361994743347,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "feature_types": [
+        "num",
+        "cat",
+        "cat",
+        "cat"
+      ],
+      "metadata": {
+        "attempt_used": 0,
+        "backend": "torch",
+        "compute_backend": "torch_appendix_full",
+        "config": {
+          "benchmark": {
+            "collect_memory": true,
+            "collect_reproducibility": false,
+            "fail_threshold_pct": 20.0,
+            "latency_num_samples": 20,
+            "num_datasets": 200,
+            "preset_name": "medium_cuda",
+            "presets": {
+              "cpu": {
+                "device": "cpu",
+                "num_datasets": 200,
+                "warmup_datasets": 10
+              },
+              "cuda_desktop": {
+                "device": "cuda",
+                "num_datasets": 1500,
+                "warmup_datasets": 20
+              },
+              "cuda_h100": {
+                "device": "cuda",
+                "num_datasets": 5000,
+                "warmup_datasets": 50
+              }
+            },
+            "reproducibility_num_datasets": 2,
+            "suite": "standard",
+            "warmup_datasets": 10,
+            "warn_threshold_pct": 10.0
+          },
+          "dataset": {
+            "categorical_ratio_max": 1.0,
+            "categorical_ratio_min": 0.0,
+            "max_categorical_cardinality": 9,
+            "missing_mar_logit_scale": 1.0,
+            "missing_mar_observed_fraction": 0.5,
+            "missing_mechanism": "none",
+            "missing_mnar_logit_scale": 1.0,
+            "missing_rate": 0.0,
+            "n_classes_max": 10,
+            "n_classes_min": 2,
+            "n_features_max": 4,
+            "n_features_min": 4,
+            "n_test": 2,
+            "n_train": 6,
+            "rows": null,
+            "task": "regression"
+          },
+          "diagnostics": {
+            "enabled": false,
+            "histogram_bins": 10,
+            "include_spearman": false,
+            "max_values_per_metric": 50000,
+            "meta_feature_targets": {},
+            "out_dir": null,
+            "quantiles": [
+              0.05,
+              0.25,
+              0.5,
+              0.75,
+              0.95
+            ],
+            "underrepresented_threshold": 0.5
+          },
+          "filter": {
+            "enabled": false,
+            "max_attempts": 3,
+            "min_target_indegree": 1,
+            "min_target_relevant_feature_count": 2,
+            "min_target_relevant_feature_fraction": 0.05
+          },
+          "graph": {
+            "n_nodes_max": 4,
+            "n_nodes_min": 2
+          },
+          "mechanism": {
+            "function_family_mix": null
+          },
+          "noise": {
+            "base_scale": 1.0,
+            "family": "gaussian",
+            "mixture_weights": null,
+            "student_t_df": 5.0
+          },
+          "output": {
+            "compression": "zstd",
+            "out_dir": "data/run_default",
+            "shard_size": 128
+          },
+          "runtime": {
+            "device": "cpu",
+            "layout_mode": "stratified",
+            "torch_dtype": "float32"
+          },
+          "seed": 1,
+          "shift": {
+            "enabled": false,
+            "graph_scale": null,
+            "mechanism_scale": null,
+            "mode": "off",
+            "variance_scale": null
+          }
+        },
+        "dataset_id": "74ccb1dec00061940124e8192880f709",
+        "dataset_index": 0,
+        "dataset_seed": 1221118263,
+        "device": "cpu",
+        "device_fallback_reason": null,
+        "filter": {
+          "mode": "deferred",
+          "status": "not_run"
+        },
+        "generation_attempts": {
+          "filter_attempts": 0,
+          "filter_rejection_rate": null,
+          "filter_rejections": 0,
+          "retry_count": 0,
+          "total_attempts": 1
+        },
+        "graph_depth_nodes": 2,
+        "graph_edge_density": 0.6666666666666666,
+        "graph_edges": 2,
+        "graph_nodes": 3,
+        "keyed_replay": {
+          "dataset_root_path": [
+            "dataset",
+            0
+          ],
+          "execution_plan_root_path": [
+            "dataset",
+            0,
+            "plan_candidate",
+            0,
+            "execution_plan"
+          ],
+          "layout_root_path": [
+            "dataset",
+            0,
+            "plan_candidate",
+            0,
+            "layout"
+          ]
+        },
+        "layout_execution_contract": "chunk_batched_v3",
+        "layout_mode": "stratified",
+        "layout_plan_schema_version": 11,
+        "layout_plan_seed": 585350828,
+        "layout_plan_signature": "658dfd7bbc426b40a8c3649d1d53e11b",
+        "layout_signature": "8988fe1e56d5201f6962aa162ee82c35",
+        "lineage": {
+          "assignments": {
+            "feature_to_node": [
+              2,
+              2,
+              2,
+              2
+            ],
+            "target_relevant_feature_count": 4,
+            "target_relevant_feature_fraction": 1.0,
+            "target_relevant_features": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "target_to_node": 2
+          },
+          "graph": {
+            "adjacency": [
+              [
+                0,
+                1,
+                1
+              ],
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                0,
+                0,
+                0
+              ]
+            ],
+            "n_nodes": 3
+          },
+          "schema_name": "dagzoo.dag_lineage",
+          "schema_version": "1.4.0"
+        },
+        "mechanism_families": {
+          "families_present": [
+            "discretization",
+            "em",
+            "gp",
+            "nn",
+            "product",
+            "tree"
+          ],
+          "sampled_family_counts": {
+            "discretization": 1,
+            "em": 1,
+            "gp": 2,
+            "nn": 1,
+            "product": 1,
+            "tree": 1
+          },
+          "sampled_variant_counts": {
+            "gp.multiscale": 2
+          },
+          "total_function_plans": 7,
+          "variants_present": [
+            "gp.multiscale"
+          ]
+        },
+        "n_categorical_features": 3,
+        "n_classes": null,
+        "n_features": 4,
+        "noise_distribution": {
+          "base_scale": 1.0,
+          "family_requested": "gaussian",
+          "family_sampled": "gaussian",
+          "mixture_weights": null,
+          "sampling_strategy": "dataset_level",
+          "student_t_df": 5.0
+        },
+        "prior": {
+          "classification_validity_policy": "retry_only",
+          "feature_generator": "latent_dag",
+          "localization_mode": "none",
+          "missingness_stage": "post_target_observation",
+          "n_adaptation": "none",
+          "target_derivation": "tabiclv2_latent_node"
+        },
+        "requested_device": "cpu",
+        "resolved_device": "cpu",
+        "run_num_datasets": 2,
+        "seed": 777,
+        "shift": {
+          "edge_logit_bias_shift": 0.0,
+          "edge_odds_multiplier": 1.0,
+          "enabled": false,
+          "graph_scale": 0.0,
+          "mechanism_logit_tilt": 0.0,
+          "mechanism_nonlinear_mass": 0.625,
+          "mechanism_scale": 0.0,
+          "mode": "off",
+          "noise_variance_multiplier": 1.0,
+          "variance_scale": 0.0,
+          "variance_sigma_multiplier": 1.0
+        },
+        "split_groups": {
+          "cohort": "326be53357ec58544abaedd71aa8b725",
+          "request_run": "a6ba733641f0da368a1e14fa30b27b2f"
+        }
+      },
+      "y_test": [
+        -0.4472135603427887,
+        2.2360680103302
+      ],
+      "y_train": [
+        -0.4472135603427887,
+        2.2360680103302,
+        -0.4472135603427887,
+        -0.4472135603427887,
+        -0.4472135603427887,
+        -0.4472135603427887
+      ]
+    },
+    {
+      "X_test": [
+        [
+          1.0,
+          1.0,
+          1.0,
+          7.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          7.0
+        ]
+      ],
+      "X_train": [
+        [
+          1.0,
+          0.0,
+          2.0,
+          2.0
+        ],
+        [
+          1.0,
+          1.0,
+          2.0,
+          4.0
+        ],
+        [
+          1.0,
+          0.0,
+          2.0,
+          0.0
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          6.0
+        ],
+        [
+          0.0,
+          1.0,
+          2.0,
+          1.0
+        ],
+        [
+          1.0,
+          0.0,
+          2.0,
+          1.0
+        ]
+      ],
+      "feature_types": [
+        "cat",
+        "cat",
+        "cat",
+        "cat"
+      ],
+      "metadata": {
+        "attempt_used": 0,
+        "backend": "torch",
+        "compute_backend": "torch_appendix_full",
+        "config": {
+          "benchmark": {
+            "collect_memory": true,
+            "collect_reproducibility": false,
+            "fail_threshold_pct": 20.0,
+            "latency_num_samples": 20,
+            "num_datasets": 200,
+            "preset_name": "medium_cuda",
+            "presets": {
+              "cpu": {
+                "device": "cpu",
+                "num_datasets": 200,
+                "warmup_datasets": 10
+              },
+              "cuda_desktop": {
+                "device": "cuda",
+                "num_datasets": 1500,
+                "warmup_datasets": 20
+              },
+              "cuda_h100": {
+                "device": "cuda",
+                "num_datasets": 5000,
+                "warmup_datasets": 50
+              }
+            },
+            "reproducibility_num_datasets": 2,
+            "suite": "standard",
+            "warmup_datasets": 10,
+            "warn_threshold_pct": 10.0
+          },
+          "dataset": {
+            "categorical_ratio_max": 1.0,
+            "categorical_ratio_min": 0.0,
+            "max_categorical_cardinality": 9,
+            "missing_mar_logit_scale": 1.0,
+            "missing_mar_observed_fraction": 0.5,
+            "missing_mechanism": "none",
+            "missing_mnar_logit_scale": 1.0,
+            "missing_rate": 0.0,
+            "n_classes_max": 10,
+            "n_classes_min": 2,
+            "n_features_max": 4,
+            "n_features_min": 4,
+            "n_test": 2,
+            "n_train": 6,
+            "rows": null,
+            "task": "regression"
+          },
+          "diagnostics": {
+            "enabled": false,
+            "histogram_bins": 10,
+            "include_spearman": false,
+            "max_values_per_metric": 50000,
+            "meta_feature_targets": {},
+            "out_dir": null,
+            "quantiles": [
+              0.05,
+              0.25,
+              0.5,
+              0.75,
+              0.95
+            ],
+            "underrepresented_threshold": 0.5
+          },
+          "filter": {
+            "enabled": false,
+            "max_attempts": 3,
+            "min_target_indegree": 1,
+            "min_target_relevant_feature_count": 2,
+            "min_target_relevant_feature_fraction": 0.05
+          },
+          "graph": {
+            "n_nodes_max": 4,
+            "n_nodes_min": 2
+          },
+          "mechanism": {
+            "function_family_mix": null
+          },
+          "noise": {
+            "base_scale": 1.0,
+            "family": "gaussian",
+            "mixture_weights": null,
+            "student_t_df": 5.0
+          },
+          "output": {
+            "compression": "zstd",
+            "out_dir": "data/run_default",
+            "shard_size": 128
+          },
+          "runtime": {
+            "device": "cpu",
+            "layout_mode": "stratified",
+            "torch_dtype": "float32"
+          },
+          "seed": 1,
+          "shift": {
+            "enabled": false,
+            "graph_scale": null,
+            "mechanism_scale": null,
+            "mode": "off",
+            "variance_scale": null
+          }
+        },
+        "dataset_id": "a0b927cd715b2f2a5ac27146d31a89e4",
+        "dataset_index": 1,
+        "dataset_seed": 1132178707,
+        "device": "cpu",
+        "device_fallback_reason": null,
+        "filter": {
+          "mode": "deferred",
+          "status": "not_run"
+        },
+        "generation_attempts": {
+          "filter_attempts": 0,
+          "filter_rejection_rate": null,
+          "filter_rejections": 0,
+          "retry_count": 0,
+          "total_attempts": 1
+        },
+        "graph_depth_nodes": 2,
+        "graph_edge_density": 1.0,
+        "graph_edges": 1,
+        "graph_nodes": 2,
+        "keyed_replay": {
+          "dataset_root_path": [
+            "dataset",
+            1
+          ],
+          "execution_plan_root_path": [
+            "dataset",
+            1,
+            "plan_candidate",
+            0,
+            "execution_plan"
+          ],
+          "layout_root_path": [
+            "dataset",
+            1,
+            "plan_candidate",
+            0,
+            "layout"
+          ]
+        },
+        "layout_execution_contract": "chunk_batched_v3",
+        "layout_mode": "stratified",
+        "layout_plan_schema_version": 11,
+        "layout_plan_seed": 1857549614,
+        "layout_plan_signature": "9662c3ba7c86321437b8493caba27c5a",
+        "layout_signature": "b03860a72ef84de6de91439860e92193",
+        "lineage": {
+          "assignments": {
+            "feature_to_node": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "target_relevant_feature_count": 4,
+            "target_relevant_feature_fraction": 1.0,
+            "target_relevant_features": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "target_to_node": 1
+          },
+          "graph": {
+            "adjacency": [
+              [
+                0,
+                1
+              ],
+              [
+                0,
+                0
+              ]
+            ],
+            "n_nodes": 2
+          },
+          "schema_name": "dagzoo.dag_lineage",
+          "schema_version": "1.4.0"
+        },
+        "mechanism_families": {
+          "families_present": [
+            "em",
+            "nn"
+          ],
+          "sampled_family_counts": {
+            "em": 2,
+            "nn": 1
+          },
+          "sampled_variant_counts": {},
+          "total_function_plans": 3,
+          "variants_present": []
+        },
+        "n_categorical_features": 4,
+        "n_classes": null,
+        "n_features": 4,
+        "noise_distribution": {
+          "base_scale": 1.0,
+          "family_requested": "gaussian",
+          "family_sampled": "gaussian",
+          "mixture_weights": null,
+          "sampling_strategy": "dataset_level",
+          "student_t_df": 5.0
+        },
+        "prior": {
+          "classification_validity_policy": "retry_only",
+          "feature_generator": "latent_dag",
+          "localization_mode": "none",
+          "missingness_stage": "post_target_observation",
+          "n_adaptation": "none",
+          "target_derivation": "tabiclv2_latent_node"
+        },
+        "requested_device": "cpu",
+        "resolved_device": "cpu",
+        "run_num_datasets": 2,
+        "seed": 777,
+        "shift": {
+          "edge_logit_bias_shift": 0.0,
+          "edge_odds_multiplier": 1.0,
+          "enabled": false,
+          "graph_scale": 0.0,
+          "mechanism_logit_tilt": 0.0,
+          "mechanism_nonlinear_mass": 0.625,
+          "mechanism_scale": 0.0,
+          "mode": "off",
+          "noise_variance_multiplier": 1.0,
+          "variance_scale": 0.0,
+          "variance_sigma_multiplier": 1.0
+        },
+        "split_groups": {
+          "cohort": "4202722c7015cef5f9d7021e8d42df8c",
+          "request_run": "a6ba733641f0da368a1e14fa30b27b2f"
+        }
+      },
+      "y_test": [
+        0.4795844852924347,
+        0.24846836924552917
+      ],
+      "y_train": [
+        0.35383346676826477,
+        0.16445721685886383,
+        1.1279816627502441,
+        -0.8824372291564941,
+        -1.7057368755340576,
+        0.9419017434120178
+      ]
+    }
+  ]
+}

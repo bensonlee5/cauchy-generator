@@ -34,6 +34,22 @@ _BENCH_SMOKE_ARGS = (
     "benchmarks/results/dev_smoke",
 )
 
+_BENCH_PUBLIC_SMOKE_ARGS = (
+    "-m",
+    "dagzoo.bench.public_throughput_smoke",
+    "--config",
+    "configs/benchmark_cpu.yaml",
+    "--baseline",
+    "benchmarks/baselines/cpu_public_smoke.json",
+    "--warn-threshold-pct",
+    "10",
+    "--fail-threshold-pct",
+    "20",
+    "--fail-on-regression",
+    "--out-dir",
+    "benchmarks/results/dev_public_smoke",
+)
+
 
 def _run_quick_checks(session: nox.Session) -> None:
     session.run(str(_PYTHON), "-m", "ruff", "check", "src", "tests", "scripts")
@@ -75,6 +91,11 @@ def docs(session: nox.Session) -> None:
 @nox.session(venv_backend="none", name="bench_smoke")
 def bench_smoke(session: nox.Session) -> None:
     session.run(str(_DAGZOO), *_BENCH_SMOKE_ARGS[1:])
+
+
+@nox.session(venv_backend="none", name="bench_public_smoke")
+def bench_public_smoke(session: nox.Session) -> None:
+    session.run(str(_PYTHON), *_BENCH_PUBLIC_SMOKE_ARGS)
 
 
 @nox.session(venv_backend="none")

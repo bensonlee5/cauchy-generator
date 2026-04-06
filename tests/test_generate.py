@@ -1,5 +1,9 @@
+import json
 import math
+import threading
+from collections.abc import Callable
 from copy import deepcopy
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -9,6 +13,7 @@ from conftest import load_repo_config
 
 import dagzoo
 import dagzoo.core
+import dagzoo.core.fixed_layout.runtime as fixed_layout_runtime
 from dagzoo.config import (
     INTERVENTION_MODE_HARD_INTERVENTIONAL,
     NOISE_FAMILY_GAUSSIAN,
@@ -26,12 +31,21 @@ from dagzoo.core.fixed_layout.metadata import (
     _FixedLayoutPlan,
     _layout_signature,
 )
-from dagzoo.core.fixed_layout.plan_types import FixedLayoutExecutionPlan
+from dagzoo.core.fixed_layout.plan_types import (
+    ConcatNodeSource,
+    FixedLayoutExecutionPlan,
+    PiecewiseFunctionPlan,
+    ProductFunctionPlan,
+    RandomPointsNodeSource,
+    StackedNodeSource,
+)
 from dagzoo.core.fixed_layout.runtime import (
+    _execute_heterogeneous_descriptor_chunk,
     _fixed_layout_plan_classification_attempt_plan,
     _fixed_layout_plan_supports_classification_run,
     _generate_batch_with_heterogeneous_layout_iter,
     _generate_batch_with_plan_iter,
+    _generate_batch_with_stratified_layout_iter,
     _generate_fixed_layout_bundle_with_retries,
     _replay_emitted_fixed_layout_plan,
     _resolve_fixed_layout_batch_size,
@@ -72,6 +86,7 @@ from dagzoo.io.lineage_schema import (
     validate_lineage_payload,
     validate_metadata_lineage,
 )
+from dagzoo.math import sanitize_json
 from dagzoo.rng import KeyedRng
 from dagzoo.types import DatasetBundle
 
@@ -127,6 +142,169 @@ def _tiny_stratified_regression_config() -> GeneratorConfig:
     return cfg
 
 
+def _mixed_executor_runtime_config() -> GeneratorConfig:
+    cfg = _tiny_heterogeneous_regression_config()
+    cfg.dataset.n_train = 8
+    cfg.dataset.n_test = 4
+    cfg.dataset.n_features_min = 5
+    cfg.dataset.n_features_max = 5
+    cfg.graph.n_nodes_min = 4
+    cfg.graph.n_nodes_max = 4
+    cfg.noise.family = NOISE_FAMILY_GAUSSIAN
+    cfg.mechanism.function_family_mix = {
+        "linear": 1.0,
+        "quadratic": 1.0,
+        "nn": 1.0,
+        "tree": 1.0,
+        "discretization": 1.0,
+        "gp": 1.0,
+        "em": 1.0,
+    }
+    return cfg
+
+
+def _higher_order_mixed_executor_runtime_config() -> GeneratorConfig:
+    cfg = _mixed_executor_runtime_config()
+    cfg.mechanism.function_family_mix = {
+        "product": 10.0,
+        "piecewise": 10.0,
+        "linear": 1.0,
+        "quadratic": 1.0,
+        "tree": 1.0,
+        "discretization": 1.0,
+        "gp": 1.0,
+    }
+    return cfg
+
+
+def _function_plan_has_higher_order(plan) -> bool:
+    if isinstance(plan, ProductFunctionPlan):
+        return True
+    if isinstance(plan, PiecewiseFunctionPlan):
+        return True
+    return False
+
+
+def _source_has_higher_order(source) -> bool:
+    if isinstance(source, RandomPointsNodeSource):
+        return _function_plan_has_higher_order(source.function)
+    if isinstance(source, ConcatNodeSource):
+        return _function_plan_has_higher_order(source.function)
+    if isinstance(source, StackedNodeSource):
+        return any(_function_plan_has_higher_order(plan) for plan in source.parent_functions)
+    return False
+
+
+def _execution_plan_has_higher_order_source(execution_plan: FixedLayoutExecutionPlan) -> bool:
+    return any(
+        _source_has_higher_order(node_plan.source) for node_plan in execution_plan.node_plans
+    )
+
+
+def _runtime_metric_totals(metric_payloads: list[dict[str, float]]) -> dict[str, float]:
+    totals: dict[str, float] = {}
+    for payload in metric_payloads:
+        for key, value in payload.items():
+            totals[key] = float(totals.get(key, 0.0)) + float(value)
+    return totals
+
+
+def _packing_test_descriptor(
+    *,
+    dataset_index: int,
+    graph_nodes: int,
+    n_rows: int = 12,
+    n_features: int = 5,
+) -> object:
+    cfg = _mixed_executor_runtime_config()
+    n_train = max(1, int(n_rows) - 2)
+    n_test = max(1, int(n_rows) - n_train)
+    return SimpleNamespace(
+        dataset_index=int(dataset_index),
+        dataset_root=KeyedRng(10_000 + int(dataset_index)).keyed("dataset", int(dataset_index)),
+        effective_config=cfg,
+        effective_plan=SimpleNamespace(
+            n_train=int(n_train),
+            n_test=int(n_test),
+            layout=SimpleNamespace(
+                n_features=int(n_features),
+                graph_nodes=int(graph_nodes),
+            ),
+            execution_plan=FixedLayoutExecutionPlan(),
+            prepared_execution_context=object(),
+            plan_seed=int(dataset_index),
+        ),
+        effective_shift=SimpleNamespace(variance_sigma_multiplier=1.0),
+        finalization_context=None,
+    )
+
+
+def _packing_test_cohort(
+    *,
+    dataset_index: int,
+    graph_nodes: int,
+    chunk_offset: int | None = None,
+) -> object:
+    descriptor = _packing_test_descriptor(
+        dataset_index=dataset_index,
+        graph_nodes=graph_nodes,
+    )
+    return fixed_layout_runtime._LogicalRawGenerationCohort(
+        chunk_offsets=[int(dataset_index if chunk_offset is None else chunk_offset)],
+        descriptors=[descriptor],
+        selection=NoiseRuntimeSelection(
+            family_requested="gaussian",
+            family_sampled="gaussian",
+            sampling_strategy="dataset_level",
+            base_scale=1.0,
+            student_t_df=5.0,
+            mixture_weights=None,
+        ),
+        attempt=0,
+        generation_seeds=(int(20_000 + dataset_index),),
+    )
+
+
+def _resolve_distinct_mixed_executor_descriptors(
+    cfg: GeneratorConfig,
+    *,
+    run_seed: int,
+    count: int,
+    search_limit: int = 64,
+    descriptor_filter: Callable[[object], bool] | None = None,
+) -> tuple[int, list[object]]:
+    run_root = KeyedRng(run_seed)
+    rows_seed = run_root.child_seed("rows")
+    descriptors = []
+    seen_signatures: set[str] = set()
+    for dataset_index in range(search_limit):
+        descriptor = _resolve_heterogeneous_dataset_descriptor(
+            cfg,
+            requested_device="cpu",
+            resolved_device="cpu",
+            rows_seed=rows_seed,
+            plan_candidate_attempt=0,
+            dataset_index=dataset_index,
+            num_datasets=search_limit,
+            dataset_root=run_root.keyed("dataset", dataset_index),
+        )
+        if descriptor_filter is not None and not descriptor_filter(descriptor):
+            continue
+        signature = str(descriptor.effective_plan.plan_signature)
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+        descriptors.append(descriptor)
+        if len(descriptors) == count:
+            return rows_seed, descriptors
+    raise AssertionError(f"Expected {count} distinct heterogeneous descriptors.")
+
+
+_PUBLIC_BATCH_CORPUS_FIXTURE = (
+    Path(__file__).resolve().parent / "fixtures" / "public_batch_corpus.json"
+)
+
+
 def _layout_stub(
     *,
     feature_types: list[str],
@@ -157,6 +335,21 @@ def _layout_stub(
         feature_node_assignment=list(feature_node_assignment),
         target_to_node=0 if target_node_assignment is None else int(target_node_assignment),
     )
+
+
+def _bundle_corpus_payload(bundle: DatasetBundle) -> dict[str, object]:
+    return {
+        "X_train": bundle.X_train.detach().cpu().tolist(),
+        "y_train": bundle.y_train.detach().cpu().tolist(),
+        "X_test": bundle.X_test.detach().cpu().tolist(),
+        "y_test": bundle.y_test.detach().cpu().tolist(),
+        "feature_types": list(bundle.feature_types),
+        "metadata": sanitize_json(bundle.metadata),
+    }
+
+
+def _batch_corpus_payload(bundles: list[DatasetBundle]) -> list[dict[str, object]]:
+    return [_bundle_corpus_payload(bundle) for bundle in bundles]
 
 
 def test_generate_one_shapes() -> None:
@@ -253,6 +446,31 @@ def test_generate_batch_stratified_matches_heterogeneous_outputs_for_same_seed()
         assert torch.equal(heterogeneous_bundle.y_train, stratified_bundle.y_train)
         assert torch.equal(heterogeneous_bundle.X_test, stratified_bundle.X_test)
         assert torch.equal(heterogeneous_bundle.y_test, stratified_bundle.y_test)
+
+
+def test_public_heterogeneous_and_stratified_batches_match_committed_corpus_fixture() -> None:
+    heterogeneous = _tiny_heterogeneous_regression_config()
+    heterogeneous.dataset.n_train = 6
+    heterogeneous.dataset.n_test = 2
+    heterogeneous.dataset.n_features_min = 4
+    heterogeneous.dataset.n_features_max = 4
+    heterogeneous.graph.n_nodes_min = 2
+    heterogeneous.graph.n_nodes_max = 4
+
+    stratified = deepcopy(heterogeneous)
+    stratified.runtime.layout_mode = "stratified"
+
+    observed_payload = {
+        "heterogeneous": _batch_corpus_payload(
+            generate_batch(heterogeneous, num_datasets=2, seed=777, device="cpu")
+        ),
+        "stratified": _batch_corpus_payload(
+            generate_batch(stratified, num_datasets=2, seed=777, device="cpu")
+        ),
+    }
+    expected_payload = json.loads(_PUBLIC_BATCH_CORPUS_FIXTURE.read_text(encoding="utf-8"))
+
+    assert observed_payload == expected_payload
 
 
 def test_generate_batch_rejects_removed_public_fixed_layout_mode() -> None:
@@ -5064,6 +5282,57 @@ def test_resolve_heterogeneous_dataset_descriptor_skips_structurally_invalid_pla
     ]
 
 
+def test_resolve_heterogeneous_dataset_descriptor_skips_steering_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_regression_config()
+    cfg.runtime.layout_mode = "heterogeneous"
+    cfg.steering.enabled = False
+    plan = _FixedLayoutPlan(
+        layout=_layout_stub(
+            feature_types=["num"] * 8,
+            graph_nodes=3,
+            adjacency=torch.zeros((3, 3), dtype=torch.bool),
+            feature_node_assignment=[0, 1, 2, 0, 1, 2, 0, 1],
+            target_node_assignment=2,
+        ),
+        requested_device="cpu",
+        resolved_device="cpu",
+        plan_seed=411,
+        n_train=cfg.dataset.n_train,
+        n_test=cfg.dataset.n_test,
+        layout_signature="layout_sig",
+        execution_plan=FixedLayoutExecutionPlan(),
+        plan_signature="plan_sig",
+        candidate_attempt=0,
+    )
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime.resolve_steering",
+        lambda *_args, **_kwargs: pytest.fail(
+            "steering resolution should not run when steering is disabled"
+        ),
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._sample_fixed_layout_once",
+        lambda *_args, **_kwargs: plan,
+    )
+
+    descriptor = _resolve_heterogeneous_dataset_descriptor(
+        cfg,
+        requested_device="cpu",
+        resolved_device="cpu",
+        rows_seed=KeyedRng(55).child_seed("rows"),
+        plan_candidate_attempt=0,
+        dataset_index=0,
+        num_datasets=2,
+        dataset_root=KeyedRng(55).keyed("dataset", 0),
+    )
+
+    assert descriptor.effective_config is cfg
+    assert descriptor.effective_plan is plan
+
+
 def test_zero_num_datasets_does_not_resolve_device(monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = _tiny_config()
 
@@ -5414,6 +5683,712 @@ def test_generate_fixed_layout_bundle_with_retries_retries_same_plan_on_constant
     assert bundle.X_train.shape == (cfg.dataset.n_train, 2)
     assert finalize_calls == 2
     assert graph_batch_calls == [1, 1]
+
+
+def test_heterogeneous_runtime_prefetches_next_descriptor_window_while_executing_current_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_heterogeneous_regression_config()
+    cfg.dataset.n_train = 4
+    cfg.dataset.n_test = 2
+    resolved_windows: list[int] = []
+    next_window_started = threading.Event()
+
+    def _make_bundle(dataset_index: int) -> DatasetBundle:
+        return DatasetBundle(
+            X_train=torch.full((cfg.dataset.n_train, 1), float(dataset_index), dtype=torch.float32),
+            y_train=torch.zeros(cfg.dataset.n_train, dtype=torch.float32),
+            X_test=torch.full((cfg.dataset.n_test, 1), float(dataset_index), dtype=torch.float32),
+            y_test=torch.zeros(cfg.dataset.n_test, dtype=torch.float32),
+            feature_types=["num"],
+            metadata={"dataset_index": int(dataset_index)},
+            runtime_metrics={},
+        )
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._resolve_heterogeneous_batch_size",
+        lambda *_args, **_kwargs: 1,
+    )
+
+    def _stub_resolve_descriptor_window(
+        _config: GeneratorConfig,
+        *,
+        requested_device: str,
+        resolved_device: str,
+        rows_seed: int,
+        dataset_index: int,
+        window_size: int,
+        num_datasets: int,
+        run_root: KeyedRng,
+        stress_profile_name: str | None = None,
+    ) -> tuple[list[SimpleNamespace], dict[str, float]]:
+        _ = (
+            requested_device,
+            resolved_device,
+            rows_seed,
+            window_size,
+            num_datasets,
+            run_root,
+            stress_profile_name,
+        )
+        resolved_windows.append(int(dataset_index))
+        if int(dataset_index) == 1:
+            next_window_started.set()
+        return [SimpleNamespace(dataset_index=int(dataset_index))], {}
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._resolve_heterogeneous_descriptor_window",
+        _stub_resolve_descriptor_window,
+    )
+
+    def _stub_execute_chunk(
+        _config: GeneratorConfig,
+        *,
+        descriptors: list[SimpleNamespace],
+        requested_device: str,
+        resolved_device: str,
+        rows_seed: int,
+        num_datasets: int,
+        dtype: torch.dtype,
+        layout_mode: str,
+        on_raw_batch_metrics=None,
+    ) -> list[tuple[SimpleNamespace, DatasetBundle]]:
+        _ = (
+            requested_device,
+            resolved_device,
+            rows_seed,
+            num_datasets,
+            dtype,
+            layout_mode,
+            on_raw_batch_metrics,
+        )
+        dataset_index = int(descriptors[0].dataset_index)
+        if dataset_index == 0:
+            assert next_window_started.wait(timeout=2.0)
+        return [(descriptors[0], _make_bundle(dataset_index))]
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._execute_heterogeneous_descriptor_chunk",
+        _stub_execute_chunk,
+    )
+
+    bundles = list(
+        _generate_batch_with_heterogeneous_layout_iter(
+            cfg,
+            num_datasets=3,
+            seed=321,
+            device="cpu",
+            batch_size=1,
+        )
+    )
+
+    assert [int(bundle.metadata["dataset_index"]) for bundle in bundles] == [0, 1, 2]
+    assert resolved_windows == [0, 1, 2]
+
+
+def test_heterogeneous_runtime_surfaces_prefetched_descriptor_failure_at_next_dataset_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_heterogeneous_regression_config()
+    resolved_windows: list[int] = []
+
+    def _make_bundle(dataset_index: int) -> DatasetBundle:
+        return DatasetBundle(
+            X_train=torch.zeros((cfg.dataset.n_train, 1), dtype=torch.float32),
+            y_train=torch.zeros(cfg.dataset.n_train, dtype=torch.float32),
+            X_test=torch.zeros((cfg.dataset.n_test, 1), dtype=torch.float32),
+            y_test=torch.zeros(cfg.dataset.n_test, dtype=torch.float32),
+            feature_types=["num"],
+            metadata={"dataset_index": int(dataset_index)},
+            runtime_metrics={},
+        )
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._resolve_heterogeneous_batch_size",
+        lambda *_args, **_kwargs: 1,
+    )
+
+    def _stub_resolve_descriptor_window(
+        _config: GeneratorConfig,
+        *,
+        requested_device: str,
+        resolved_device: str,
+        rows_seed: int,
+        dataset_index: int,
+        window_size: int,
+        num_datasets: int,
+        run_root: KeyedRng,
+        stress_profile_name: str | None = None,
+    ) -> tuple[list[SimpleNamespace], dict[str, float]]:
+        _ = (
+            requested_device,
+            resolved_device,
+            rows_seed,
+            window_size,
+            num_datasets,
+            run_root,
+            stress_profile_name,
+        )
+        resolved_windows.append(int(dataset_index))
+        if int(dataset_index) == 1:
+            raise RuntimeError("descriptor boom")
+        return [
+            SimpleNamespace(
+                dataset_index=int(dataset_index),
+                effective_plan=SimpleNamespace(
+                    n_train=cfg.dataset.n_train,
+                    n_test=cfg.dataset.n_test,
+                    layout=SimpleNamespace(n_features=1),
+                ),
+            )
+        ], {}
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._resolve_heterogeneous_descriptor_window",
+        _stub_resolve_descriptor_window,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._execute_heterogeneous_descriptor_chunk",
+        lambda _config, **kwargs: [
+            (
+                kwargs["descriptors"][0],
+                _make_bundle(int(kwargs["descriptors"][0].dataset_index)),
+            )
+        ],
+    )
+
+    stream = _generate_batch_with_heterogeneous_layout_iter(
+        cfg,
+        num_datasets=2,
+        seed=654,
+        device="cpu",
+        batch_size=1,
+    )
+
+    first = next(stream)
+
+    assert int(first.metadata["dataset_index"]) == 0
+    with pytest.raises(RuntimeError, match="descriptor boom"):
+        next(stream)
+    assert resolved_windows == [0, 1]
+
+
+def test_stratified_runtime_surfaces_prefetched_descriptor_failure_at_next_dataset_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _tiny_stratified_regression_config()
+    resolved_windows: list[int] = []
+
+    def _make_bundle(dataset_index: int) -> DatasetBundle:
+        return DatasetBundle(
+            X_train=torch.zeros((cfg.dataset.n_train, 1), dtype=torch.float32),
+            y_train=torch.zeros(cfg.dataset.n_train, dtype=torch.float32),
+            X_test=torch.zeros((cfg.dataset.n_test, 1), dtype=torch.float32),
+            y_test=torch.zeros(cfg.dataset.n_test, dtype=torch.float32),
+            feature_types=["num"],
+            metadata={"dataset_index": int(dataset_index)},
+            runtime_metrics={},
+        )
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._resolve_stratified_lookahead_size",
+        lambda *_args, **_kwargs: 1,
+    )
+
+    def _stub_resolve_descriptor_window(
+        _config: GeneratorConfig,
+        *,
+        requested_device: str,
+        resolved_device: str,
+        rows_seed: int,
+        dataset_index: int,
+        window_size: int,
+        num_datasets: int,
+        run_root: KeyedRng,
+        stress_profile_name: str | None = None,
+    ) -> tuple[list[SimpleNamespace], dict[str, float]]:
+        _ = (
+            requested_device,
+            resolved_device,
+            rows_seed,
+            window_size,
+            num_datasets,
+            run_root,
+            stress_profile_name,
+        )
+        resolved_windows.append(int(dataset_index))
+        if int(dataset_index) == 1:
+            raise RuntimeError("descriptor boom")
+        return [
+            SimpleNamespace(
+                dataset_index=int(dataset_index),
+                effective_plan=SimpleNamespace(
+                    n_train=cfg.dataset.n_train,
+                    n_test=cfg.dataset.n_test,
+                    layout=SimpleNamespace(n_features=1),
+                ),
+            )
+        ], {}
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._resolve_heterogeneous_descriptor_window",
+        _stub_resolve_descriptor_window,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._execute_heterogeneous_descriptor_chunk",
+        lambda _config, **kwargs: [
+            (
+                kwargs["descriptors"][0],
+                _make_bundle(int(kwargs["descriptors"][0].dataset_index)),
+            )
+        ],
+    )
+
+    stream = _generate_batch_with_stratified_layout_iter(
+        cfg,
+        num_datasets=2,
+        seed=655,
+        device="cpu",
+        batch_size=1,
+    )
+
+    first = next(stream)
+
+    assert int(first.metadata["dataset_index"]) == 0
+    with pytest.raises(RuntimeError, match="descriptor boom"):
+        next(stream)
+    assert resolved_windows == [0, 1]
+
+
+def test_execute_heterogeneous_descriptor_chunk_routes_supported_multi_cohort_groups_through_mixed_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _mixed_executor_runtime_config()
+    rows_seed, descriptors = _resolve_distinct_mixed_executor_descriptors(
+        cfg,
+        run_seed=733,
+        count=2,
+    )
+    metric_payloads: list[dict[str, float]] = []
+    mixed_calls: list[int] = []
+    real_mixed_executor = fixed_layout_runtime._generate_mixed_fixed_layout_graph_batch_prepared
+
+    def _record_mixed_executor(*args, **kwargs):
+        cohorts = args[0] if args else kwargs["cohorts"]
+        mixed_calls.append(len(cohorts))
+        return real_mixed_executor(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_mixed_fixed_layout_graph_batch_prepared",
+        _record_mixed_executor,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._logical_raw_generation_compatibility_key",
+        lambda _cohort: ("compatible",),
+    )
+
+    completed = _execute_heterogeneous_descriptor_chunk(
+        cfg,
+        descriptors=descriptors,
+        requested_device="cpu",
+        resolved_device="cpu",
+        rows_seed=rows_seed,
+        num_datasets=64,
+        dtype=torch.float32,
+        layout_mode="heterogeneous",
+        on_raw_batch_metrics=metric_payloads.append,
+    )
+
+    totals = _runtime_metric_totals(metric_payloads)
+
+    assert len(completed) == 2
+    assert mixed_calls == [2]
+    assert totals["heterogeneous_physical_microbatch_count"] == pytest.approx(1.0)
+    assert totals.get("heterogeneous_executor_fallback_dataset_count", 0.0) == pytest.approx(0.0)
+    for descriptor, bundle in completed:
+        assert int(bundle.metadata["layout_plan_seed"]) == int(descriptor.effective_plan.plan_seed)
+        assert bundle.metadata["layout_mode"] == "heterogeneous"
+
+
+def test_pack_logical_raw_generation_stratum_is_deterministic_and_respects_utilization_floor() -> (
+    None
+):
+    cohorts = [
+        _packing_test_cohort(dataset_index=0, graph_nodes=6, chunk_offset=0),
+        _packing_test_cohort(dataset_index=1, graph_nodes=2, chunk_offset=1),
+        _packing_test_cohort(dataset_index=2, graph_nodes=11, chunk_offset=2),
+        _packing_test_cohort(dataset_index=3, graph_nodes=3, chunk_offset=3),
+        _packing_test_cohort(dataset_index=4, graph_nodes=2, chunk_offset=4),
+        _packing_test_cohort(dataset_index=5, graph_nodes=3, chunk_offset=5),
+        _packing_test_cohort(dataset_index=6, graph_nodes=2, chunk_offset=6),
+    ]
+
+    packed = fixed_layout_runtime._pack_logical_raw_generation_stratum(cohorts)
+
+    assert [[entry.chunk_offsets[0] for entry in group] for group in packed] == [
+        [1, 4, 6, 3, 5],
+        [0, 2],
+    ]
+    for group in packed:
+        assert fixed_layout_runtime._physical_microbatch_predicted_utilization(group) >= 0.75 - 1e-9
+
+
+def test_pack_logical_raw_generation_stratum_keeps_singletons_when_neighbor_would_violate_floor() -> (
+    None
+):
+    cohorts = [
+        _packing_test_cohort(dataset_index=0, graph_nodes=2),
+        _packing_test_cohort(dataset_index=1, graph_nodes=5),
+        _packing_test_cohort(dataset_index=2, graph_nodes=14),
+        _packing_test_cohort(dataset_index=3, graph_nodes=22),
+    ]
+
+    packed = fixed_layout_runtime._pack_logical_raw_generation_stratum(cohorts)
+
+    assert [[entry.chunk_offsets[0] for entry in group] for group in packed] == [
+        [0],
+        [1],
+        [2, 3],
+    ]
+    assert fixed_layout_runtime._physical_microbatch_predicted_utilization(
+        packed[0]
+    ) == pytest.approx(1.0)
+    assert fixed_layout_runtime._physical_microbatch_predicted_utilization(
+        packed[1]
+    ) == pytest.approx(1.0)
+    assert fixed_layout_runtime._physical_microbatch_predicted_utilization(packed[2]) >= 0.75 - 1e-9
+
+
+@pytest.mark.parametrize("layout_mode", ["heterogeneous", "stratified"])
+def test_execute_heterogeneous_descriptor_chunk_uses_utilization_aware_packing_for_supported_cohorts(
+    monkeypatch: pytest.MonkeyPatch,
+    layout_mode: str,
+) -> None:
+    descriptors = [
+        _packing_test_descriptor(dataset_index=index, graph_nodes=graph_nodes)
+        for index, graph_nodes in enumerate([6, 2, 11, 3, 2, 3, 2])
+    ]
+    logical_cohorts = [
+        _packing_test_cohort(dataset_index=index, graph_nodes=graph_nodes)
+        for index, graph_nodes in enumerate([6, 2, 11, 3, 2, 3, 2])
+    ]
+    metric_payloads: list[dict[str, float]] = []
+    mixed_calls: list[int] = []
+    exact_calls: list[list[int]] = []
+
+    def _stub_mixed_executor(*args, **kwargs):
+        cohorts = args[0] if args else kwargs["cohorts"]
+        mixed_calls.append(len(cohorts))
+        total = sum(len(cohort.dataset_seeds) for cohort in cohorts)
+        return (
+            torch.zeros((total, 12, 5), dtype=torch.float32),
+            torch.zeros((total, 12), dtype=torch.float32),
+            [{} for _ in range(total)],
+        )
+
+    def _stub_finalize(
+        cohort,
+        *,
+        raw_batch_by_offset,
+        recoverable_failure_by_offset,
+        **_kwargs,
+    ):
+        for offset in cohort.chunk_offsets:
+            raw_batch_by_offset[offset] = DatasetBundle(
+                X_train=torch.zeros((1, 1), dtype=torch.float32),
+                y_train=torch.zeros(1, dtype=torch.float32),
+                X_test=torch.zeros((1, 1), dtype=torch.float32),
+                y_test=torch.zeros(1, dtype=torch.float32),
+                feature_types=["num"],
+                metadata={"filter": {"mode": "deferred", "status": "not_run"}},
+                runtime_metrics={},
+            )
+            recoverable_failure_by_offset[offset] = None
+
+    def _stub_exact(
+        cohort,
+        *,
+        raw_batch_by_offset,
+        recoverable_failure_by_offset,
+        **_kwargs,
+    ):
+        exact_calls.append(list(cohort.chunk_offsets))
+        _stub_finalize(
+            cohort,
+            raw_batch_by_offset=raw_batch_by_offset,
+            recoverable_failure_by_offset=recoverable_failure_by_offset,
+        )
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._build_heterogeneous_logical_raw_generation_cohorts",
+        lambda _descriptors: logical_cohorts,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._logical_raw_generation_cohort_supports_mixed_execution",
+        lambda _cohort: True,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_mixed_fixed_layout_graph_batch_prepared",
+        _stub_mixed_executor,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._finalize_logical_raw_generation_cohort_batch",
+        _stub_finalize,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._execute_exact_logical_raw_generation_cohort",
+        _stub_exact,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._annotate_fixed_layout_metadata",
+        lambda *_args, **_kwargs: None,
+    )
+
+    completed = _execute_heterogeneous_descriptor_chunk(
+        _mixed_executor_runtime_config(),
+        descriptors=descriptors,
+        requested_device="cpu",
+        resolved_device="cpu",
+        rows_seed=0,
+        num_datasets=len(descriptors),
+        dtype=torch.float32,
+        layout_mode=layout_mode,
+        on_raw_batch_metrics=metric_payloads.append,
+    )
+
+    totals = _runtime_metric_totals(metric_payloads)
+
+    assert len(completed) == len(descriptors)
+    assert mixed_calls == [5, 2]
+    assert exact_calls == []
+    assert totals["heterogeneous_physical_microbatch_count"] == pytest.approx(2.0)
+    assert totals["heterogeneous_physical_microbatch_size_sum"] == pytest.approx(7.0)
+    assert totals.get("heterogeneous_supported_singleton_dataset_count", 0.0) == pytest.approx(0.0)
+    assert totals.get("heterogeneous_executor_fallback_dataset_count", 0.0) == pytest.approx(0.0)
+    assert totals["heterogeneous_physical_microbatch_predicted_utilization_sum"] == pytest.approx(
+        0.8 + (17.0 / 22.0)
+    )
+
+
+def test_execute_heterogeneous_descriptor_chunk_orders_supported_cohorts_by_compatibility_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    descriptors = [
+        _packing_test_descriptor(dataset_index=index, graph_nodes=4) for index in range(4)
+    ]
+    logical_cohorts = [
+        _packing_test_cohort(dataset_index=index, graph_nodes=4) for index in range(4)
+    ]
+    metric_payloads: list[dict[str, float]] = []
+    mixed_calls: list[list[int]] = []
+
+    def _stub_mixed_executor(*args, **kwargs):
+        cohorts = args[0] if args else kwargs["cohorts"]
+        mixed_calls.append([int(cohort.dataset_seeds[0]) for cohort in cohorts])
+        total = sum(len(cohort.dataset_seeds) for cohort in cohorts)
+        return (
+            torch.zeros((total, 12, 5), dtype=torch.float32),
+            torch.zeros((total, 12), dtype=torch.float32),
+            [{} for _ in range(total)],
+        )
+
+    def _stub_finalize(
+        cohort,
+        *,
+        raw_batch_by_offset,
+        recoverable_failure_by_offset,
+        **_kwargs,
+    ):
+        for offset in cohort.chunk_offsets:
+            raw_batch_by_offset[offset] = DatasetBundle(
+                X_train=torch.zeros((1, 1), dtype=torch.float32),
+                y_train=torch.zeros(1, dtype=torch.float32),
+                X_test=torch.zeros((1, 1), dtype=torch.float32),
+                y_test=torch.zeros(1, dtype=torch.float32),
+                feature_types=["num"],
+                metadata={"filter": {"mode": "deferred", "status": "not_run"}},
+                runtime_metrics={},
+            )
+            recoverable_failure_by_offset[offset] = None
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._build_heterogeneous_logical_raw_generation_cohorts",
+        lambda _descriptors: logical_cohorts,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._logical_raw_generation_cohort_supports_mixed_execution",
+        lambda _cohort: True,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._logical_raw_generation_compatibility_key",
+        lambda cohort: ("group_a",) if (cohort.chunk_offsets[0] % 2) == 0 else ("group_b",),
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_mixed_fixed_layout_graph_batch_prepared",
+        _stub_mixed_executor,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._finalize_logical_raw_generation_cohort_batch",
+        _stub_finalize,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._annotate_fixed_layout_metadata",
+        lambda *_args, **_kwargs: None,
+    )
+
+    completed = _execute_heterogeneous_descriptor_chunk(
+        _mixed_executor_runtime_config(),
+        descriptors=descriptors,
+        requested_device="cpu",
+        resolved_device="cpu",
+        rows_seed=0,
+        num_datasets=len(descriptors),
+        dtype=torch.float32,
+        layout_mode="heterogeneous",
+        on_raw_batch_metrics=metric_payloads.append,
+    )
+
+    totals = _runtime_metric_totals(metric_payloads)
+
+    assert len(completed) == len(descriptors)
+    assert mixed_calls == [[20000, 20002, 20001, 20003]]
+    assert totals["heterogeneous_physical_microbatch_count"] == pytest.approx(1.0)
+    assert totals["heterogeneous_physical_microbatch_size_sum"] == pytest.approx(4.0)
+    assert totals.get("heterogeneous_supported_singleton_dataset_count", 0.0) == pytest.approx(0.0)
+    assert totals.get("heterogeneous_executor_fallback_dataset_count", 0.0) == pytest.approx(0.0)
+
+
+def test_execute_heterogeneous_descriptor_chunk_routes_higher_order_multi_cohort_groups_through_mixed_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _higher_order_mixed_executor_runtime_config()
+    rows_seed, descriptors = _resolve_distinct_mixed_executor_descriptors(
+        cfg,
+        run_seed=1733,
+        count=2,
+        search_limit=256,
+        descriptor_filter=lambda descriptor: _execution_plan_has_higher_order_source(
+            descriptor.effective_plan.execution_plan
+        ),
+    )
+    metric_payloads: list[dict[str, float]] = []
+    mixed_calls: list[int] = []
+    real_mixed_executor = fixed_layout_runtime._generate_mixed_fixed_layout_graph_batch_prepared
+
+    def _record_mixed_executor(*args, **kwargs):
+        cohorts = args[0] if args else kwargs["cohorts"]
+        mixed_calls.append(len(cohorts))
+        return real_mixed_executor(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_mixed_fixed_layout_graph_batch_prepared",
+        _record_mixed_executor,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._logical_raw_generation_compatibility_key",
+        lambda _cohort: ("compatible",),
+    )
+
+    completed = _execute_heterogeneous_descriptor_chunk(
+        cfg,
+        descriptors=descriptors,
+        requested_device="cpu",
+        resolved_device="cpu",
+        rows_seed=rows_seed,
+        num_datasets=256,
+        dtype=torch.float32,
+        layout_mode="heterogeneous",
+        on_raw_batch_metrics=metric_payloads.append,
+    )
+
+    totals = _runtime_metric_totals(metric_payloads)
+
+    assert len(completed) == 2
+    assert mixed_calls == [2]
+    assert totals["heterogeneous_physical_microbatch_count"] == pytest.approx(1.0)
+    assert totals.get("heterogeneous_executor_fallback_dataset_count", 0.0) == pytest.approx(0.0)
+
+
+def test_execute_heterogeneous_descriptor_chunk_records_supported_singletons_separately_from_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _higher_order_mixed_executor_runtime_config()
+    rows_seed, descriptors = _resolve_distinct_mixed_executor_descriptors(
+        cfg,
+        run_seed=1734,
+        count=1,
+        search_limit=256,
+        descriptor_filter=lambda descriptor: _execution_plan_has_higher_order_source(
+            descriptor.effective_plan.execution_plan
+        ),
+    )
+    metric_payloads: list[dict[str, float]] = []
+    mixed_calls: list[int] = []
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_mixed_fixed_layout_graph_batch_prepared",
+        lambda *_args, **_kwargs: mixed_calls.append(1),
+    )
+
+    completed = _execute_heterogeneous_descriptor_chunk(
+        cfg,
+        descriptors=descriptors,
+        requested_device="cpu",
+        resolved_device="cpu",
+        rows_seed=rows_seed,
+        num_datasets=256,
+        dtype=torch.float32,
+        layout_mode="heterogeneous",
+        on_raw_batch_metrics=metric_payloads.append,
+    )
+
+    totals = _runtime_metric_totals(metric_payloads)
+
+    assert len(completed) == 1
+    assert mixed_calls == []
+    assert totals.get("heterogeneous_supported_singleton_dataset_count", 0.0) == pytest.approx(1.0)
+    assert totals.get("heterogeneous_executor_fallback_dataset_count", 0.0) == pytest.approx(0.0)
+
+
+def test_execute_heterogeneous_descriptor_chunk_records_executor_fallback_for_unsupported_cohorts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _mixed_executor_runtime_config()
+    rows_seed, descriptors = _resolve_distinct_mixed_executor_descriptors(
+        cfg,
+        run_seed=734,
+        count=2,
+    )
+    metric_payloads: list[dict[str, float]] = []
+    mixed_calls: list[int] = []
+
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._source_supports_mixed_execution",
+        lambda _source: False,
+    )
+    monkeypatch.setattr(
+        "dagzoo.core.fixed_layout.runtime._generate_mixed_fixed_layout_graph_batch_prepared",
+        lambda *_args, **_kwargs: mixed_calls.append(1),
+    )
+
+    completed = _execute_heterogeneous_descriptor_chunk(
+        cfg,
+        descriptors=descriptors,
+        requested_device="cpu",
+        resolved_device="cpu",
+        rows_seed=rows_seed,
+        num_datasets=64,
+        dtype=torch.float32,
+        layout_mode="heterogeneous",
+        on_raw_batch_metrics=metric_payloads.append,
+    )
+
+    totals = _runtime_metric_totals(metric_payloads)
+
+    assert len(completed) == 2
+    assert mixed_calls == []
+    assert totals["heterogeneous_executor_fallback_dataset_count"] == pytest.approx(2.0)
+    assert totals.get("heterogeneous_physical_microbatch_count", 0.0) == pytest.approx(0.0)
 
 
 def test_heterogeneous_runtime_skips_to_next_candidate_on_all_constant_features(

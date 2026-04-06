@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 import torch
 
@@ -33,12 +34,22 @@ def validate_seed32(seed: int, *, field_name: str = "seed") -> int:
 def derive_seed(base_seed: int, *components: str | int) -> int:
     """Derive a deterministic 32-bit seed from a base seed and components."""
 
-    h = hashlib.blake2s(digest_size=8)
-    h.update(str(base_seed).encode("utf-8"))
-    for comp in components:
-        h.update(b"|")
-        h.update(str(comp).encode("utf-8"))
+    h = _seed_hasher_with_components(base_seed, components)
     return int.from_bytes(h.digest(), "little") % SEED32_MAX
+
+
+def _seed_hasher_with_components(
+    base_seed: int,
+    components: tuple[str | int, ...],
+) -> Any:
+    """Return one seeded blake2s hasher initialized for `components`."""
+
+    hasher = hashlib.blake2s(digest_size=8)
+    hasher.update(str(base_seed).encode("utf-8"))
+    for component in components:
+        hasher.update(b"|")
+        hasher.update(str(component).encode("utf-8"))
+    return hasher
 
 
 @dataclass(slots=True, frozen=True)
@@ -63,6 +74,11 @@ class KeyedRng:
         repr=False,
         compare=False,
     )
+    _seed_hasher_template: Any | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         """Normalize public path input to an immutable tuple."""
@@ -75,6 +91,18 @@ class KeyedRng:
             "_ambient_nonce",
             tuple(int(component) for component in self._ambient_nonce),
         )
+        if self._seed_hasher_template is None:
+            ambient_components: tuple[str | int, ...] = ()
+            if self._ambient_nonce:
+                ambient_components = (_AMBIENT_NONCE_MARKER, *self._ambient_nonce)
+            object.__setattr__(
+                self,
+                "_seed_hasher_template",
+                _seed_hasher_with_components(
+                    self.seed,
+                    ambient_components + self.path,
+                ),
+            )
 
     def keyed(self, *components: str | int) -> "KeyedRng":
         """Return a child namespace with the provided semantic path appended."""
@@ -85,10 +113,18 @@ class KeyedRng:
         cached = self._child_cache.get(normalized)
         if cached is not None:
             return cached
+        template = self._seed_hasher_template
+        if template is None:
+            raise RuntimeError("KeyedRng seed hasher template was not initialized.")
+        child_template = template.copy()
+        for component in normalized:
+            child_template.update(b"|")
+            child_template.update(str(component).encode("utf-8"))
         child = KeyedRng(
             seed=self.seed,
             path=self.path + normalized,
             _ambient_nonce=self._ambient_nonce,
+            _seed_hasher_template=child_template,
         )
         self._child_cache[normalized] = child
         return child
@@ -100,10 +136,14 @@ class KeyedRng:
         cached = self._child_seed_cache.get(normalized)
         if cached is not None:
             return cached
-        ambient_components: tuple[str | int, ...] = ()
-        if self._ambient_nonce:
-            ambient_components = (_AMBIENT_NONCE_MARKER, *self._ambient_nonce)
-        derived = derive_seed(self.seed, *ambient_components, *self.path, *normalized)
+        template = self._seed_hasher_template
+        if template is None:
+            raise RuntimeError("KeyedRng seed hasher template was not initialized.")
+        hasher = template.copy()
+        for component in normalized:
+            hasher.update(b"|")
+            hasher.update(str(component).encode("utf-8"))
+        derived = int.from_bytes(hasher.digest(), "little") % SEED32_MAX
         self._child_seed_cache[normalized] = derived
         return derived
 

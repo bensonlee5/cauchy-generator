@@ -20,7 +20,9 @@ from dagzoo.core.fixed_layout.batched import (
     _generate_fixed_layout_graph_batch_prepared,
     _generate_fixed_layout_raw_batch,
     _generate_fixed_layout_validation_label_batch,
+    _generate_mixed_fixed_layout_graph_batch_prepared,
     _lp_distances_to_centers,
+    _MixedPreparedLogicalCohort,
     _nearest_lp_center_indices,
     _prepare_fixed_layout_execution_context,
     _sample_random_matrix_from_plan_batch,
@@ -29,12 +31,14 @@ from dagzoo.core.fixed_layout.batched import (
     build_fixed_layout_execution_plan,
     generate_fixed_layout_graph_batch,
     generate_fixed_layout_label_batch,
+    mixed_execution_cohort_compatibility_sketch,
 )
 from dagzoo.core.fixed_layout.plan_types import (
     ActivationMatrixPlan,
     CategoricalConverterGroup,
     CategoricalConverterPlan,
     ConcatNodeSource,
+    DiscretizationFunctionPlan,
     FixedActivationPlan,
     FixedLayoutExecutionPlan,
     FixedLayoutLatentPlan,
@@ -51,6 +55,7 @@ from dagzoo.core.fixed_layout.plan_types import (
     QuadraticFunctionPlan,
     RandomPointsNodeSource,
     SingularValuesMatrixPlan,
+    StackedNodeSource,
     WeightsMatrixPlan,
     fixed_layout_converter_groups,
 )
@@ -66,6 +71,326 @@ class ConverterSpec:
     kind: str
     dim: int
     cardinality: int | None = None
+
+
+def _mixed_executor_test_config():
+    cfg = load_repo_config()
+    cfg.dataset.task = "regression"
+    cfg.filter.enabled = False
+    cfg.dataset.n_train = 8
+    cfg.dataset.n_test = 4
+    cfg.dataset.n_features_min = 5
+    cfg.dataset.n_features_max = 5
+    cfg.graph.n_nodes_min = 4
+    cfg.graph.n_nodes_max = 4
+    cfg.mechanism.function_family_mix = {
+        "linear": 1.0,
+        "quadratic": 1.0,
+        "nn": 1.0,
+        "tree": 1.0,
+        "discretization": 1.0,
+        "gp": 1.0,
+        "em": 1.0,
+    }
+    return cfg
+
+
+def _distinct_leaf_only_plans(cfg, *, count: int) -> list:
+    plans = []
+    seen_signatures: set[str] = set()
+    for seed in range(100, 4096):
+        plan = _sample_fixed_layout(cfg, seed=seed, device="cpu")
+        signature = str(plan.plan_signature)
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+        plans.append(plan)
+        if len(plans) == count:
+            return plans
+    raise AssertionError(f"Expected {count} distinct fixed-layout plans for mixed executor test.")
+
+
+def _layout_stub(
+    *,
+    feature_types: list[str],
+    graph_nodes: int,
+    adjacency: torch.Tensor,
+    feature_node_assignment: list[int],
+    target_node_assignment: int,
+) -> LayoutPlan:
+    graph_edges = int(adjacency.to(dtype=torch.int64).sum().item())
+    density_denominator = graph_nodes * max(graph_nodes - 1, 1)
+    graph_edge_density = float(graph_edges) / float(density_denominator) if graph_nodes > 1 else 0.0
+    return LayoutPlan(
+        n_features=len(feature_types),
+        n_cat=0,
+        cat_idx=[],
+        cardinalities=[],
+        card_by_feature={},
+        n_classes=3,
+        feature_types=list(feature_types),
+        graph_nodes=int(graph_nodes),
+        graph_edges=graph_edges,
+        graph_depth_nodes=int(graph_nodes),
+        graph_edge_density=graph_edge_density,
+        adjacency=adjacency,
+        feature_node_assignment=list(feature_node_assignment),
+        target_to_node=int(target_node_assignment),
+    )
+
+
+def _product_function_variant(variant_index: int) -> ProductFunctionPlan:
+    variants = (
+        ProductFunctionPlan(
+            lhs=LinearFunctionPlan(matrix=GaussianMatrixPlan()),
+            rhs=QuadraticFunctionPlan(matrix=SingularValuesMatrixPlan()),
+        ),
+        ProductFunctionPlan(
+            lhs=GpFunctionPlan(branch_kind="projected", variant="periodic"),
+            rhs=LinearFunctionPlan(matrix=WeightsMatrixPlan()),
+        ),
+        ProductFunctionPlan(
+            lhs=DiscretizationFunctionPlan(
+                n_centers=4,
+                linear_matrix=GaussianMatrixPlan(),
+            ),
+            rhs=QuadraticFunctionPlan(matrix=WeightsMatrixPlan()),
+        ),
+    )
+    return variants[int(variant_index) % len(variants)]
+
+
+def _piecewise_function_variant(variant_index: int) -> PiecewiseFunctionPlan:
+    variants = (
+        PiecewiseFunctionPlan(
+            gate_matrix=GaussianMatrixPlan(),
+            gate_bias=0.15,
+            gate_temperature=1.2,
+            lhs=LinearFunctionPlan(matrix=GaussianMatrixPlan()),
+            rhs=LinearFunctionPlan(matrix=SingularValuesMatrixPlan()),
+        ),
+        PiecewiseFunctionPlan(
+            gate_matrix=WeightsMatrixPlan(),
+            gate_bias=-0.25,
+            gate_temperature=1.6,
+            lhs=GpFunctionPlan(branch_kind="projected", variant="periodic"),
+            rhs=QuadraticFunctionPlan(matrix=GaussianMatrixPlan()),
+        ),
+        PiecewiseFunctionPlan(
+            gate_matrix=GaussianMatrixPlan(),
+            gate_bias=0.4,
+            gate_temperature=0.9,
+            lhs=DiscretizationFunctionPlan(
+                n_centers=3,
+                linear_matrix=WeightsMatrixPlan(),
+            ),
+            rhs=GpFunctionPlan(branch_kind="ha", variant="multiscale"),
+        ),
+    )
+    return variants[int(variant_index) % len(variants)]
+
+
+def _nested_piecewise_product_variant(variant_index: int) -> PiecewiseFunctionPlan:
+    return PiecewiseFunctionPlan(
+        gate_matrix=GaussianMatrixPlan() if int(variant_index) % 2 == 0 else WeightsMatrixPlan(),
+        gate_bias=(-0.2 if int(variant_index) % 2 == 0 else 0.35),
+        gate_temperature=(1.4 if int(variant_index) % 2 == 0 else 0.85),
+        lhs=_product_function_variant(int(variant_index)),
+        rhs=_product_function_variant(int(variant_index) + 1),
+    )
+
+
+def _kernel_compatible_piecewise_variant(variant_index: int) -> PiecewiseFunctionPlan:
+    return PiecewiseFunctionPlan(
+        gate_matrix=GaussianMatrixPlan()
+        if int(variant_index) % 2 == 0
+        else KernelMatrixPlan(
+            gamma=0.75 + 0.1 * int(variant_index), signed=bool(variant_index % 2)
+        ),
+        gate_bias=0.2,
+        gate_temperature=1.1,
+        lhs=LinearFunctionPlan(
+            matrix=GaussianMatrixPlan() if int(variant_index) % 2 == 0 else WeightsMatrixPlan()
+        ),
+        rhs=QuadraticFunctionPlan(
+            matrix=SingularValuesMatrixPlan()
+            if int(variant_index) % 2 == 0
+            else KernelMatrixPlan(gamma=1.3, signed=False)
+        ),
+    )
+
+
+def _numeric_node_plan(
+    node_index: int,
+    *,
+    parent_indices: tuple[int, ...],
+    source,
+    feature_key: str | None,
+    target_key: str | None,
+    latent_total_dim: int,
+) -> FixedLayoutNodePlan:
+    spec_defs: list[ConverterSpec] = []
+    converter_plans = []
+    if feature_key is not None:
+        spec_defs.append(ConverterSpec(key=feature_key, kind="num", dim=1))
+        converter_plans.append(NumericConverterPlan(kind="num", warp_enabled=False))
+    if target_key is not None:
+        spec_defs.append(ConverterSpec(key=target_key, kind="target_reg", dim=1))
+        converter_plans.append(NumericConverterPlan(kind="target_reg", warp_enabled=False))
+    converter_specs = typed_converter_specs(spec_defs)
+    converter_plan_tuple = tuple(converter_plans)
+    required_dim = sum(int(spec.dim) for spec in converter_specs)
+    return FixedLayoutNodePlan(
+        node_index=int(node_index),
+        parent_indices=tuple(int(parent_index) for parent_index in parent_indices),
+        converter_specs=converter_specs,
+        converter_plans=converter_plan_tuple,
+        converter_groups=fixed_layout_converter_groups(converter_specs, converter_plan_tuple),
+        latent=FixedLayoutLatentPlan(
+            required_dim=int(required_dim),
+            extra_dim=max(0, int(latent_total_dim) - int(required_dim)),
+            total_dim=int(latent_total_dim),
+        ),
+        source=source,
+    )
+
+
+def _random_points_execution_plan(
+    function_plan,
+    *,
+    latent_total_dim: int = 3,
+) -> tuple[LayoutPlan, FixedLayoutExecutionPlan]:
+    layout = _layout_stub(
+        feature_types=["num"],
+        graph_nodes=1,
+        adjacency=torch.zeros((1, 1), dtype=torch.bool),
+        feature_node_assignment=[0],
+        target_node_assignment=0,
+    )
+    node_plan = _numeric_node_plan(
+        0,
+        parent_indices=(),
+        source=RandomPointsNodeSource(
+            base_kind="normal",
+            function=function_plan,
+        ),
+        feature_key="feature_0",
+        target_key="target",
+        latent_total_dim=latent_total_dim,
+    )
+    return layout, FixedLayoutExecutionPlan(node_plans=(node_plan,))
+
+
+def _multi_input_execution_plan(
+    *,
+    source_kind: str,
+    function_plan=None,
+    parent_functions: tuple | None = None,
+    latent_total_dim: int = 3,
+) -> tuple[LayoutPlan, FixedLayoutExecutionPlan]:
+    layout = _layout_stub(
+        feature_types=["num", "num", "num"],
+        graph_nodes=3,
+        adjacency=torch.tensor(
+            [
+                [False, False, True],
+                [False, False, True],
+                [False, False, False],
+            ],
+            dtype=torch.bool,
+        ),
+        feature_node_assignment=[0, 1, 2],
+        target_node_assignment=2,
+    )
+    root_a = _numeric_node_plan(
+        0,
+        parent_indices=(),
+        source=RandomPointsNodeSource(
+            base_kind="normal",
+            function=LinearFunctionPlan(matrix=GaussianMatrixPlan()),
+        ),
+        feature_key="feature_0",
+        target_key=None,
+        latent_total_dim=2,
+    )
+    root_b = _numeric_node_plan(
+        1,
+        parent_indices=(),
+        source=RandomPointsNodeSource(
+            base_kind="uniform",
+            function=QuadraticFunctionPlan(matrix=WeightsMatrixPlan()),
+        ),
+        feature_key="feature_1",
+        target_key=None,
+        latent_total_dim=2,
+    )
+    if source_kind == "concat":
+        source = ConcatNodeSource(function=function_plan)
+    elif source_kind == "stacked":
+        if parent_functions is None:
+            raise ValueError("stacked execution plans require parent_functions.")
+        source = StackedNodeSource(
+            aggregation_kind="sum",
+            parent_functions=parent_functions,
+        )
+    else:
+        raise ValueError(f"Unsupported multi-input source kind: {source_kind!r}")
+    target_node = _numeric_node_plan(
+        2,
+        parent_indices=(0, 1),
+        source=source,
+        feature_key="feature_2",
+        target_key="target",
+        latent_total_dim=latent_total_dim,
+    )
+    return layout, FixedLayoutExecutionPlan(node_plans=(root_a, root_b, target_node))
+
+
+def _assert_mixed_prepared_matches_exact_cohort_batches(
+    cfg,
+    cohort_specs: list[tuple[LayoutPlan, FixedLayoutExecutionPlan, tuple[int, ...]]],
+) -> None:
+    expected_x_batches: list[torch.Tensor] = []
+    expected_y_batches: list[torch.Tensor] = []
+    expected_aux_meta: list[dict[str, object]] = []
+    mixed_cohorts: list[_MixedPreparedLogicalCohort] = []
+    for layout, execution_plan, dataset_seeds in cohort_specs:
+        prepared = _prepare_fixed_layout_execution_context(layout, execution_plan)
+        x_batch, y_batch, aux_meta_batch = _generate_fixed_layout_graph_batch_prepared(
+            cfg,
+            layout,
+            execution_plan=execution_plan,
+            prepared_execution_context=prepared,
+            dataset_seeds=list(dataset_seeds),
+            device="cpu",
+            noise_sigma_multiplier=1.0,
+            noise_spec=None,
+        )
+        expected_x_batches.append(x_batch)
+        expected_y_batches.append(y_batch)
+        expected_aux_meta.extend(aux_meta_batch)
+        mixed_cohorts.append(
+            _MixedPreparedLogicalCohort(
+                layout=layout,
+                execution_plan=execution_plan,
+                prepared_execution_context=prepared,
+                dataset_seeds=tuple(int(seed) for seed in dataset_seeds),
+                noise_spec=None,
+                task="regression",
+                n_rows=int(cfg.dataset.n_train + cfg.dataset.n_test),
+            )
+        )
+
+    observed_x, observed_y, observed_aux_meta = _generate_mixed_fixed_layout_graph_batch_prepared(
+        mixed_cohorts,
+        device="cpu",
+        noise_sigma_multiplier=1.0,
+        runtime_metrics_out={},
+    )
+
+    torch.testing.assert_close(observed_x, torch.cat(expected_x_batches, dim=0))
+    torch.testing.assert_close(observed_y, torch.cat(expected_y_batches, dim=0))
+    assert observed_aux_meta == expected_aux_meta
 
 
 @pytest.mark.parametrize(
@@ -1282,6 +1607,228 @@ def test_generate_fixed_layout_graph_batch_prepared_matches_public_graph_batch()
 
     torch.testing.assert_close(observed_x, expected_x)
     torch.testing.assert_close(observed_y, expected_y)
+
+
+def test_mixed_execution_cohort_compatibility_sketch_collapses_matrix_only_variants() -> None:
+    layout_a, execution_plan_a = _random_points_execution_plan(
+        LinearFunctionPlan(matrix=GaussianMatrixPlan())
+    )
+    layout_b, execution_plan_b = _random_points_execution_plan(
+        LinearFunctionPlan(matrix=KernelMatrixPlan(gamma=2.5, signed=False))
+    )
+
+    sketch_a = mixed_execution_cohort_compatibility_sketch(
+        execution_plan_a,
+        _prepare_fixed_layout_execution_context(layout_a, execution_plan_a),
+    )
+    sketch_b = mixed_execution_cohort_compatibility_sketch(
+        execution_plan_b,
+        _prepare_fixed_layout_execution_context(layout_b, execution_plan_b),
+    )
+
+    assert sketch_a == sketch_b
+
+
+def test_generate_mixed_fixed_layout_graph_batch_prepared_matches_exact_cohort_batches() -> None:
+    cfg = _mixed_executor_test_config()
+    plans = _distinct_leaf_only_plans(cfg, count=3)
+    cohort_specs = [
+        (plans[0], (1501, 1502)),
+        (plans[1], (2501,)),
+        (plans[2], (3501,)),
+    ]
+
+    expected_x_batches: list[torch.Tensor] = []
+    expected_y_batches: list[torch.Tensor] = []
+    expected_aux_meta: list[dict[str, object]] = []
+    mixed_cohorts: list[_MixedPreparedLogicalCohort] = []
+    for plan, dataset_seeds in cohort_specs:
+        assert plan.prepared_execution_context is not None
+        x_batch, y_batch, aux_meta_batch = _generate_fixed_layout_graph_batch_prepared(
+            cfg,
+            plan.layout,
+            execution_plan=plan.execution_plan,
+            prepared_execution_context=plan.prepared_execution_context,
+            dataset_seeds=list(dataset_seeds),
+            device="cpu",
+            noise_sigma_multiplier=1.0,
+            noise_spec=None,
+        )
+        expected_x_batches.append(x_batch)
+        expected_y_batches.append(y_batch)
+        expected_aux_meta.extend(aux_meta_batch)
+        mixed_cohorts.append(
+            _MixedPreparedLogicalCohort(
+                layout=plan.layout,
+                execution_plan=plan.execution_plan,
+                prepared_execution_context=plan.prepared_execution_context,
+                dataset_seeds=tuple(int(seed) for seed in dataset_seeds),
+                noise_spec=None,
+                task="regression",
+                n_rows=int(cfg.dataset.n_train + cfg.dataset.n_test),
+            )
+        )
+
+    observed_x, observed_y, observed_aux_meta = _generate_mixed_fixed_layout_graph_batch_prepared(
+        mixed_cohorts,
+        device="cpu",
+        noise_sigma_multiplier=1.0,
+        runtime_metrics_out={},
+    )
+
+    torch.testing.assert_close(observed_x, torch.cat(expected_x_batches, dim=0))
+    torch.testing.assert_close(observed_y, torch.cat(expected_y_batches, dim=0))
+    assert observed_aux_meta == expected_aux_meta
+
+
+def test_generate_mixed_fixed_layout_graph_batch_prepared_matches_exact_for_kernel_compatible_linear_sources() -> (
+    None
+):
+    cfg = _mixed_executor_test_config()
+    _assert_mixed_prepared_matches_exact_cohort_batches(
+        cfg,
+        [
+            (
+                *_random_points_execution_plan(LinearFunctionPlan(matrix=GaussianMatrixPlan())),
+                (3601, 3602),
+            ),
+            (
+                *_random_points_execution_plan(
+                    LinearFunctionPlan(matrix=KernelMatrixPlan(gamma=1.7, signed=False))
+                ),
+                (3701,),
+            ),
+            (
+                *_random_points_execution_plan(
+                    LinearFunctionPlan(
+                        matrix=ActivationMatrixPlan(
+                            base_kind="weights",
+                            activation=FixedActivationPlan(name="tanh"),
+                        )
+                    )
+                ),
+                (3801,),
+            ),
+        ],
+    )
+
+
+def test_generate_mixed_fixed_layout_graph_batch_prepared_matches_exact_for_product_sources() -> (
+    None
+):
+    cfg = _mixed_executor_test_config()
+    _assert_mixed_prepared_matches_exact_cohort_batches(
+        cfg,
+        [
+            (*_random_points_execution_plan(_product_function_variant(0)), (4101, 4102)),
+            (*_random_points_execution_plan(_product_function_variant(1)), (4201,)),
+            (*_random_points_execution_plan(_product_function_variant(2)), (4301,)),
+        ],
+    )
+
+
+def test_generate_mixed_fixed_layout_graph_batch_prepared_matches_exact_for_piecewise_sources() -> (
+    None
+):
+    cfg = _mixed_executor_test_config()
+    _assert_mixed_prepared_matches_exact_cohort_batches(
+        cfg,
+        [
+            (*_random_points_execution_plan(_piecewise_function_variant(0)), (5101, 5102)),
+            (*_random_points_execution_plan(_piecewise_function_variant(1)), (5201,)),
+            (*_random_points_execution_plan(_piecewise_function_variant(2)), (5301,)),
+        ],
+    )
+
+
+def test_generate_mixed_fixed_layout_graph_batch_prepared_matches_exact_for_kernel_compatible_piecewise_sources() -> (
+    None
+):
+    cfg = _mixed_executor_test_config()
+    _assert_mixed_prepared_matches_exact_cohort_batches(
+        cfg,
+        [
+            (*_random_points_execution_plan(_kernel_compatible_piecewise_variant(0)), (5601, 5602)),
+            (*_random_points_execution_plan(_kernel_compatible_piecewise_variant(1)), (5701,)),
+            (*_random_points_execution_plan(_kernel_compatible_piecewise_variant(2)), (5801,)),
+        ],
+    )
+
+
+def test_generate_mixed_fixed_layout_graph_batch_prepared_matches_exact_for_nested_piecewise_product_sources() -> (
+    None
+):
+    cfg = _mixed_executor_test_config()
+    _assert_mixed_prepared_matches_exact_cohort_batches(
+        cfg,
+        [
+            (*_random_points_execution_plan(_nested_piecewise_product_variant(0)), (6101, 6102)),
+            (*_random_points_execution_plan(_nested_piecewise_product_variant(1)), (6201,)),
+            (*_random_points_execution_plan(_nested_piecewise_product_variant(2)), (6301,)),
+        ],
+    )
+
+
+@pytest.mark.parametrize("source_kind", ["concat", "stacked"])
+def test_generate_mixed_fixed_layout_graph_batch_prepared_matches_exact_for_higher_order_multi_input_sources(
+    source_kind: str,
+) -> None:
+    cfg = _mixed_executor_test_config()
+    if source_kind == "concat":
+        cohort_specs = [
+            (
+                *_multi_input_execution_plan(
+                    source_kind="concat", function_plan=_nested_piecewise_product_variant(0)
+                ),
+                (7101, 7102),
+            ),
+            (
+                *_multi_input_execution_plan(
+                    source_kind="concat", function_plan=_nested_piecewise_product_variant(1)
+                ),
+                (7201,),
+            ),
+            (
+                *_multi_input_execution_plan(
+                    source_kind="concat", function_plan=_nested_piecewise_product_variant(2)
+                ),
+                (7301,),
+            ),
+        ]
+    else:
+        cohort_specs = [
+            (
+                *_multi_input_execution_plan(
+                    source_kind="stacked",
+                    parent_functions=(
+                        _product_function_variant(0),
+                        _piecewise_function_variant(0),
+                    ),
+                ),
+                (8101, 8102),
+            ),
+            (
+                *_multi_input_execution_plan(
+                    source_kind="stacked",
+                    parent_functions=(
+                        _nested_piecewise_product_variant(1),
+                        _product_function_variant(1),
+                    ),
+                ),
+                (8201,),
+            ),
+            (
+                *_multi_input_execution_plan(
+                    source_kind="stacked",
+                    parent_functions=(
+                        _piecewise_function_variant(2),
+                        _nested_piecewise_product_variant(2),
+                    ),
+                ),
+                (8301,),
+            ),
+        ]
+    _assert_mixed_prepared_matches_exact_cohort_batches(cfg, cohort_specs)
 
 
 def test_generate_fixed_layout_validation_label_batch_matches_public_label_batch() -> None:

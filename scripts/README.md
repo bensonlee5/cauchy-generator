@@ -14,6 +14,8 @@ docs helpers, and maintenance utilities rather than convenience wrappers.
   - Runs the docs sync, docs link, and built-site verification workflow.
 - `.venv/bin/nox -s bench_smoke`
   - Runs the supported smoke benchmark regression workflow.
+- `.venv/bin/nox -s bench_public_smoke`
+  - Runs the repo-internal public heterogeneous throughput smoke workflow against the committed CPU baseline.
 - `./scripts/dev bootstrap`
   - Creates or syncs `.venv/` via `uv sync --group dev`, installs the Hugo site Node deps with `npm ci --prefix site`, and installs the repo pre-commit hook.
 - `./scripts/dev impact [--source working-tree|staged|base] [--base <git-ref>] [--files ...] [--format text|json]`
@@ -47,6 +49,7 @@ docs helpers, and maintenance utilities rather than convenience wrappers.
 .venv/bin/nox -s full
 .venv/bin/nox -s docs
 .venv/bin/nox -s bench_smoke
+.venv/bin/nox -s bench_public_smoke
 ./scripts/dev bootstrap
 ./scripts/dev review-base
 ./scripts/dev impact
