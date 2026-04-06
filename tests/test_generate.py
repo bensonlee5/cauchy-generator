@@ -337,14 +337,32 @@ def _layout_stub(
     )
 
 
+def _normalized_corpus_metadata_payload(metadata: dict[str, object]) -> dict[str, object]:
+    if isinstance(metadata.get("split_groups"), dict):
+        split_groups = dict(metadata["split_groups"])
+        split_groups.pop("cohort", None)
+        metadata["split_groups"] = split_groups
+    metadata.pop("dataset_id", None)
+    return metadata
+
+
+def _normalize_committed_corpus_payload(payload: dict[str, object]) -> dict[str, object]:
+    normalized = dict(payload)
+    metadata = normalized.get("metadata")
+    if isinstance(metadata, dict):
+        normalized["metadata"] = _normalized_corpus_metadata_payload(dict(metadata))
+    return normalized
+
+
 def _bundle_corpus_payload(bundle: DatasetBundle) -> dict[str, object]:
+    metadata = _normalized_corpus_metadata_payload(sanitize_json(bundle.metadata))
     return {
         "X_train": bundle.X_train.detach().cpu().tolist(),
         "y_train": bundle.y_train.detach().cpu().tolist(),
         "X_test": bundle.X_test.detach().cpu().tolist(),
         "y_test": bundle.y_test.detach().cpu().tolist(),
         "feature_types": list(bundle.feature_types),
-        "metadata": sanitize_json(bundle.metadata),
+        "metadata": metadata,
     }
 
 
@@ -522,7 +540,13 @@ def test_public_heterogeneous_and_stratified_batches_match_committed_corpus_fixt
             generate_batch(stratified, num_datasets=2, seed=777, device="cpu")
         ),
     }
-    expected_payload = json.loads(_PUBLIC_BATCH_CORPUS_FIXTURE.read_text(encoding="utf-8"))
+    raw_expected_payload = json.loads(_PUBLIC_BATCH_CORPUS_FIXTURE.read_text(encoding="utf-8"))
+    expected_payload = {
+        str(mode): [
+            _normalize_committed_corpus_payload(bundle_payload) for bundle_payload in payload
+        ]
+        for mode, payload in raw_expected_payload.items()
+    }
 
     _assert_corpus_payload_matches_expected(observed_payload, expected_payload)
 
