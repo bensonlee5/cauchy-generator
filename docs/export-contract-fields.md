@@ -17,7 +17,7 @@ One minimal per-dataset record written under each generated shard.
 | `feature_types[]` | `string` | when feature count > 0 | `stable` | `dagzoo.io.shard_contract.build_dataset_catalog_record` | `keep` | per-column emitted feature type |
 | `group_ids` | `object` | when run grouping ids are available | `stable` | `dagzoo.io.shard_contract.build_dataset_catalog_record` | `keep` | stable downstream grouping keys |
 | `group_ids.cohort` | `string` | when heterogeneous cohort grouping ids are available | `stable` | `dagzoo.io.shard_contract.build_dataset_catalog_record` | `keep` | shared heterogeneous raw-generation cohort key |
-| `group_ids.layout_plan` | `string` | when execution-plan grouping ids are available | `stable` | `dagzoo.io.shard_contract.build_dataset_catalog_record` | `keep` | shared execution-plan grouping key |
+| `group_ids.layout_plan` | `string` | when fixed-layout grouping ids are available | `stable` | `dagzoo.io.shard_contract.build_dataset_catalog_record` | `keep` | shared layout-plan grouping key |
 | `group_ids.request_run` | `string` | when group_ids present | `stable` | `dagzoo.io.shard_contract.build_dataset_catalog_record` | `keep` | request-run grouping key |
 | `intervention` | `object` | when hard-intervention metadata is available | `stable` | `dagzoo.io.shard_contract.build_dataset_catalog_record` | `keep` | summary-only intervention contract for downstream consumers |
 | `intervention.mode` | `string` | when intervention present | `stable` | `dagzoo.io.shard_contract.build_dataset_catalog_record` | `keep` | emitted intervention regime |
