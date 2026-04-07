@@ -3,9 +3,9 @@
 This is the fastest path from install to usable synthetic tabular data.
 
 The public entrypoint is the curated recipe catalog. Start with `recipe:<name>`
-references when you want something reproducible, discoverable, and easy to cite.
-Move to repo-local `configs/` only when you need custom authoring beyond the
-published recipes.
+when you want something reproducible, discoverable, and easy to cite. Move to
+repo-local `configs/` only when you need custom authoring beyond the published
+recipes.
 
 ______________________________________________________________________
 
@@ -33,10 +33,11 @@ dagzoo recipe list
 ```
 
 That command prints the stable recipe names and the regime each one is meant to
-approximate or stress. All shipped recipes use the default latent-node prior:
-sample a latent DAG, emit features from node-assigned converters, emit `y` from
-one selected target node, then optionally apply missingness as a separate
-observation process over the emitted features.
+approximate or stress. The catalog is the default adoption layer for `dagzoo`.
+All shipped recipes use the same public prior shape: sample a latent DAG, emit
+features from node-assigned converters, emit `y` from one selected latent node,
+then optionally apply missingness as a separate observation process over the
+emitted features.
 
 ______________________________________________________________________
 
@@ -59,11 +60,9 @@ Every generate run writes:
 - `effective_config.yaml`
 - `effective_config_trace.yaml`
 
-`dagzoo generate` now only generates. If you want accept/reject decisions, run
+`dagzoo generate` only generates. If you want accept/reject decisions, run
 `dagzoo filter` as a separate replay stage over the emitted shards.
-`filter.enabled` controls deferred replay and benchmark filter measurement, but
-generation still uses `filter.min_target_*` plus `filter.max_attempts` when it
-resamples layouts for structural validity.
+The same filter thresholds also guide generation-time structural retries.
 Observational generation is the default. Hard interventions are opt-in through
 `intervention.mode: hard_interventional`; when that section is absent, public
 artifacts omit intervention metadata entirely.

@@ -6,7 +6,6 @@ under `site/.generated/`:
 
 - Markdown user guides -> `site/.generated/content/docs/**`
 - Hugo-rendered reference docs -> `site/.generated/content/docs/**`
-- Development links page -> `site/.generated/content/docs/development.md`
 
 Use `--check` in CI to fail when generated site inputs are out of date.
 """
@@ -32,9 +31,8 @@ GENERATED_ROOT = SITE_ROOT / ".generated"
 CONTENT_DOCS_ROOT = GENERATED_ROOT / "content" / "docs"
 LEGACY_GENERATED_PATHS = [
     GENERATED_ROOT / "static" / "canonical",
+    CONTENT_DOCS_ROOT / "development.md",
 ]
-
-GITHUB_DEV_DOCS_BASE = "https://github.com/bensonlee5/dagzoo/blob/main/docs/development"
 
 USER_MD_SOURCES = [
     "start.md",
@@ -72,7 +70,7 @@ PAGE_METADATA: dict[str, PageMeta] = {
     ),
     "reference-packs.md": PageMeta(
         weight=20,
-        description="Published dagzoo recipe packs, confidence tiers, and citation-oriented usage.",
+        description="Named dagzoo recipe packs, confidence tiers, and citation guidance.",
     ),
     "how-it-works.md": PageMeta(
         weight=30,
@@ -82,7 +80,7 @@ PAGE_METADATA: dict[str, PageMeta] = {
     ),
     "transforms.md": PageMeta(
         weight=40,
-        description="Mathematical reference for generation transforms.",
+        description="Formal transform equations, notation, and operator definitions.",
         aliases=("/canonical/transforms.html",),
         params={"math": True},
     ),
@@ -100,7 +98,7 @@ PAGE_METADATA: dict[str, PageMeta] = {
     ),
     "features/diagnostics.md": PageMeta(
         weight=60,
-        description="Runtime observability metrics and diagnostic outputs.",
+        description="Coverage summaries and diagnostics artifacts for generated corpora.",
     ),
     "features/interventions.md": PageMeta(
         weight=61,
@@ -120,7 +118,7 @@ PAGE_METADATA: dict[str, PageMeta] = {
     ),
     "features/steering.md": PageMeta(
         weight=65,
-        description="Meta-feature steering presets for auditable harder-front workflows.",
+        description="Preset-driven steering workflows and diagnostics outputs.",
     ),
     "features/noise.md": PageMeta(
         weight=66,
@@ -128,7 +126,7 @@ PAGE_METADATA: dict[str, PageMeta] = {
     ),
     "features/stress-profiles.md": PageMeta(
         weight=67,
-        description="Opt-in robustness stress-profile slices for anti-memorization and structure stress testing.",
+        description="Named harder-generation profiles for robustness and anti-memorization tests.",
     ),
     "features/benchmark-guardrails.md": PageMeta(
         weight=68,
@@ -136,7 +134,7 @@ PAGE_METADATA: dict[str, PageMeta] = {
     ),
     "features/mechanism-diversity.md": PageMeta(
         weight=69,
-        description="Opt-in mechanism-family rollout workflows and diagnostics checks.",
+        description="Mechanism-family controls, presets, and diagnostics checks.",
     ),
 }
 
@@ -232,9 +230,6 @@ def _rewrite_markdown_links(content: str, source_rel: str, route_map: dict[str, 
         normalized = _normalize_link(source_rel, path)
 
         new_target = route_map.get(normalized)
-        if new_target is None and normalized.startswith("development/"):
-            new_target = f"{GITHUB_DEV_DOCS_BASE}/{normalized.removeprefix('development/')}"
-
         if new_target is None:
             return match.group(0)
 
@@ -313,42 +308,12 @@ def _sync_user_markdown(route_map: dict[str, str], check: bool, changed: list[Pa
         _sync_text(dest, out_text, check=check, changed=changed)
 
 
-def _humanize_dev_name(filename: str) -> str:
-    return filename.replace("_", " ").replace("-", " ").replace(".md", "").title()
-
-
-def _sync_development_links_page(check: bool, changed: list[Path]) -> None:
-    dev_dir = DOCS_ROOT / "development"
-    dev_docs = sorted(p.name for p in dev_dir.glob("*.md"))
-    if not dev_docs:
-        raise FileNotFoundError(f"No development docs found in: {dev_dir}")
-
-    lines: list[str] = [
-        _front_matter(
-            title="Development References",
-            meta=PageMeta(weight=90),
-            extra_params={"hide_repo_links": True},
-        ),
-        "Phase 1 keeps development docs canonical in repo Markdown and links them directly from the docs site.\n",
-        "",
-    ]
-    for filename in dev_docs:
-        label = _humanize_dev_name(filename)
-        url = f"{GITHUB_DEV_DOCS_BASE}/{filename}"
-        lines.append(f"- [{label}]({url})")
-
-    lines.append("")
-    text = "\n".join(lines)
-    _sync_text(CONTENT_DOCS_ROOT / "development.md", text, check=check, changed=changed)
-
-
 def sync(check: bool) -> list[Path]:
     changed: list[Path] = []
     base_path = _read_base_path()
     route_map = _build_route_map(base_path)
 
     _sync_user_markdown(route_map=route_map, check=check, changed=changed)
-    _sync_development_links_page(check=check, changed=changed)
     for path in LEGACY_GENERATED_PATHS:
         _remove_stale_path(path, check=check, changed=changed)
 

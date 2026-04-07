@@ -6,8 +6,8 @@ Security fixes are targeted at the current release line.
 
 | Version    | Supported |
 | ---------- | --------- |
-| `0.14.x`   | yes       |
-| `< 0.14.0` | no        |
+| `0.19.x`   | yes       |
+| `< 0.19.0` | no        |
 
 ## Reporting a vulnerability
 

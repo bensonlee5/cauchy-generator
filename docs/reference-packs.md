@@ -2,29 +2,27 @@
 
 Reference packs are the public, named generation configs for `dagzoo`.
 
-They exist to make the tool usable without reverse-engineering the internal
-config surface from scratch. A paper or benchmark can point to one of these
-named packs directly, and a new user can run it immediately with:
+They let you start from a named recipe instead of authoring a full YAML config.
+A paper, benchmark, or downstream workflow can point to one of these packs
+directly, and a new user can run one immediately with:
 
 ```bash
 dagzoo generate --config recipe:<name> --num-datasets 25 --out data/<run_name>
 ```
 
-The same YAML files are also checked into the repo under `recipes/`.
+The same YAML files are checked into the repo under `recipes/` so you can
+inspect, pin, and cite the exact config behind a public recipe name.
 
 ______________________________________________________________________
 
 ## Stability model
 
 - Stable adoption layer: `recipe:<name>` references and documented artifact contracts
-- Faster-moving authoring layer: repo-local `configs/*.yaml`
+- Advanced authoring layer: repo-local `configs/*.yaml`
 - Confidence tiers:
   - `baseline`: maintained default starting point
   - `paper-backed approximation`: intended to approximate a published prior without overclaiming exact equivalence
   - `stress profile`: reproducible stress regime rather than a paper-prior claim
-- Developer note: these curated recipe labels are not the RD-005 carried-slice
-  selector contract; the first fixed-slice selector lives under
-  `stress.profile=anti_memorization_piecewise_classification_slice_v1`.
 
 ______________________________________________________________________
 
@@ -88,7 +86,7 @@ dagzoo generate --config recipe:default-baseline --num-datasets 25 --out data/de
 dagzoo generate --config recipe:high-cardinality-stress --num-datasets 25 --out data/high_cardinality
 ```
 
-You can also reference the same configs by path inside a repo checkout:
+Inside a repo checkout, you can also reference the same configs by path:
 
 ```bash
 dagzoo generate --config recipes/default-baseline.yaml --num-datasets 25 --out data/default_baseline

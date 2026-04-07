@@ -1,15 +1,15 @@
 # Interventions
 
-`dagzoo` now supports two generation regimes on the canonical path:
+`dagzoo` supports two intervention regimes on the public generation path:
 
 - `observational`: the safe default; generation behaves exactly like the
   baseline prior and public artifacts omit intervention metadata
 - `hard_interventional`: fixed interventions overwrite one or more resolved
   targets during generation and emit a stable summary identity downstream
 
-This is intentionally narrower than a full causal-effects toolbox. The shipped
-surface covers observational generation plus fixed hard interventions. It does
-not imply paired factual/counterfactual export support.
+This page covers the shipped intervention surface: standard observational
+generation plus fixed hard interventions that produce stable summary metadata in
+the emitted artifacts.
 
 ______________________________________________________________________
 
@@ -30,9 +30,9 @@ ______________________________________________________________________
 
 - `target`: directly overwrites emitted `y` after postprocess
 - `feature_node`: resolves an emitted feature index back to its latent node,
-  then clamps that node and descendants during fixed-layout execution
+  then clamps that node and descendants during generation execution
 - `latent_node`: directly clamps a latent DAG node and descendants during
-  fixed-layout execution
+  generation execution
 
 Multiple targets are allowed when they resolve cleanly. Colliding selectors are
 rejected instead of silently picking one.
@@ -96,8 +96,6 @@ ______________________________________________________________________
   `metadata.intervention = {mode, signature}` summary for hard-interventional
   runs
 - public `dataset_catalog.ndjson` records expose only that summary object
-- internal `replay_catalog.ndjson` entries inherit the same summary via the
-  full `metadata` payload
 - `handoff_manifest.json` aggregates one optional
   `provenance.intervention = {mode, signature}` summary per generated corpus
 - observational runs omit intervention fields from public artifacts entirely
@@ -116,8 +114,6 @@ ______________________________________________________________________
 - `target_kind: latent_node` requires `index < graph.n_nodes_min`.
 - Classification target interventions coerce the authored value modulo the
   realized class count.
-- `intervention.mode: counterfactual` is unsupported and rejected; paired
-  counterfactual exports remain deferred until there is a separate contract.
 
 ______________________________________________________________________
 

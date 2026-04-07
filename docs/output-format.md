@@ -3,6 +3,10 @@
 Consumer-facing specification for generated data. This is a contract document:
 downstream users can rely on the guarantees described here.
 
+If you are new to `dagzoo`, start with [start.md](start.md) and
+[reference-packs.md](reference-packs.md) first. Come back here when you need to
+rely on what the public CLI or PyTorch bridge writes and returns.
+
 Public config references accepted by the main user-facing surfaces are:
 
 - a YAML path
@@ -11,8 +15,9 @@ Public config references accepted by the main user-facing surfaces are:
 That contract applies to `dagzoo generate`, `dagzoo benchmark --preset custom`,
 `dagzoo diversity-audit`, and `build_dataloader(...)`.
 
-This page is the readable overview. The exhaustive field-by-field catalog lives
-in [export-contract-fields.md](export-contract-fields.md) and is generated from
+This page is the readable overview of that contract. The exhaustive
+field-by-field catalog lives in
+[export-contract-fields.md](export-contract-fields.md) and is generated from
 `reference/export_contract_inventory.yaml`.
 
 ______________________________________________________________________
@@ -171,7 +176,7 @@ Present when public grouping ids are available.
 | ------------- | ---- | -------------------------------------------------------------- |
 | `request_run` | str  | Stable grouping key for one requested public run               |
 | `cohort`      | str  | Stable grouping key for heterogeneous raw-generation cohorts   |
-| `layout_plan` | str  | Stable grouping key for datasets sharing one fixed-layout plan |
+| `layout_plan` | str  | Stable grouping key for datasets sharing one reused execution plan |
 
 ### `intervention` sub-object
 
@@ -277,8 +282,7 @@ ______________________________________________________________________
 
 Schema name: `dagzoo.dag_lineage`
 
-Older lineage payloads that used target-head or target-parent assignment fields
-are intentionally unsupported. The current contract is:
+This page documents the current lineage contract:
 
 ### Version 1.4.0 (dense, in-memory)
 
@@ -344,7 +348,7 @@ Used in persisted replay metadata when lineage artifacts are written to disk.
 
 Each shard also contains `lineage/adjacency.index.json` with schema identifiers,
 the encoding name, and the per-dataset offset/length/checksum entries. Those
-artifacts live under the corresponding internal shard directory.
+artifacts live in the shard's `lineage/` directory.
 
 ______________________________________________________________________
 
