@@ -202,7 +202,7 @@ ______________________________________________________________________
 ## Generate Handoff Layout (`dagzoo generate --handoff-root`)
 
 Generate handoff runs use the supplied handoff root as a stable downstream
-entrypoint:
+entrypoint. This is the public layout consumed by `dagzoo publish hub`:
 
 ```text
 handoff_root/
@@ -228,6 +228,16 @@ handoff_root/
 `internal/` remains dagzoo-only. `replay_catalog.ndjson` stores the full
 per-dataset metadata payload, including the same summary-only `intervention`
 object when present.
+
+When you publish a handoff root to Hugging Face Hub, `dagzoo` uploads only the
+public handoff artifacts:
+
+- `generated/`
+- `curated/` when present
+- `handoff_manifest.json`
+- a generated root `README.md` dataset card
+
+`internal/` stays local and is never uploaded.
 
 ### `handoff_manifest.json`
 

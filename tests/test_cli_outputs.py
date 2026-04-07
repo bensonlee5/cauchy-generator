@@ -102,6 +102,40 @@ def test_filter_cli_prints_curated_output_summary(
     assert "Wrote curated accepted-only shards:" in captured.out
 
 
+def test_publish_hub_cli_prints_repo_summary(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.publish.publish_handoff_to_hub",
+        lambda **_kwargs: SimpleNamespace(
+            repo_id="bensonlee/default-baseline-corpus",
+            repo_url="https://huggingface.co/datasets/bensonlee/default-baseline-corpus",
+            generated_datasets=25,
+            curated_datasets=20,
+        ),
+    )
+
+    code = main(
+        [
+            "publish",
+            "hub",
+            "--handoff-root",
+            "handoffs/default-baseline",
+            "--repo-id",
+            "bensonlee/default-baseline-corpus",
+            "--private",
+            "--license",
+            "apache-2.0",
+        ]
+    )
+
+    assert code == 0
+    captured = capsys.readouterr()
+    assert "Published dataset repo:" in captured.out
+    assert "Published generated datasets: 25" in captured.out
+    assert "Published curated accepted datasets: 20" in captured.out
+
+
 def test_generate_cli_prints_handoff_execution_summary(
     tmp_path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

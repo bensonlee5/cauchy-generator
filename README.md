@@ -10,6 +10,8 @@ structure.
 - Generate datasets from sampled latent DAGs instead of treating each column as
   independent noise.
 - Use the same recipe surface from the packaged CLI and the PyTorch bridge.
+- Publish portable handoff roots directly to Hugging Face Hub without exposing
+  dagzoo-only sidecars.
 - Reproduce runs with `effective_config.yaml`,
   `effective_config_trace.yaml`, and stable dataset metadata.
 
@@ -26,6 +28,11 @@ dagzoo recipe list
 
 # Generate a general-purpose baseline run under data/default_baseline/.
 dagzoo generate --config recipe:default-baseline --num-datasets 25 --out data/default_baseline
+
+# Generate a portable handoff root and publish it to Hugging Face Hub.
+dagzoo generate --config recipe:default-baseline --num-datasets 25 --handoff-root handoffs/default_baseline
+hf auth login
+dagzoo publish hub --handoff-root handoffs/default_baseline --repo-id your-name/default-baseline-corpus
 ```
 
 Use a repo checkout when you want to edit configs, run docs tooling, or work on
@@ -141,6 +148,8 @@ purpose:
 - `dagzoo recipe list` shows the curated recipe catalog.
 - `dagzoo generate --config recipe:<name>` generates datasets from one of those
   published recipes.
+- `dagzoo publish hub --handoff-root ... --repo-id ...` publishes a portable
+  handoff root to a Hugging Face dataset repo.
 - `build_dataloader("recipe:<name>", ...)` gives you the same recipe surface
   inside Python.
 
@@ -191,6 +200,7 @@ The exhaustive field catalog lives in `docs/export-contract-fields.md`.
 - Published docs site: [bensonlee5.github.io/dagzoo](https://bensonlee5.github.io/dagzoo/)
 - [Start](docs/start.md)
 - [Reference Packs](docs/reference-packs.md)
+- [Publish to Hugging Face Hub](docs/publish-hub.md)
 - [Advanced Controls](docs/usage-guide.md)
 - [Artifacts & API](docs/output-format.md)
 - [Export Contract Fields](docs/export-contract-fields.md)

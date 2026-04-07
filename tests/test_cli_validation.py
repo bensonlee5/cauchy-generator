@@ -147,6 +147,36 @@ def test_generate_cli_rejects_unknown_recipe(capsys: pytest.CaptureFixture[str])
     assert "dagzoo recipe list" in captured.err
 
 
+def test_publish_hub_cli_surfaces_auth_guidance(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "dagzoo.cli.commands.publish.publish_handoff_to_hub",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError(
+                "Hugging Face authentication is required. Run `hf auth login` or set `HF_TOKEN`, then retry `dagzoo publish hub`."
+            )
+        ),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        main(
+            [
+                "publish",
+                "hub",
+                "--handoff-root",
+                "handoffs/default-baseline",
+                "--repo-id",
+                "bensonlee/default-baseline-corpus",
+            ]
+        )
+
+    assert int(exc.value.code) == 2
+    captured = capsys.readouterr()
+    assert "hf auth login" in captured.err
+    assert "HF_TOKEN" in captured.err
+
+
 def test_generate_cli_rejects_rows_override_for_stress_profile(
     tmp_path, capsys: pytest.CaptureFixture[str]
 ) -> None:

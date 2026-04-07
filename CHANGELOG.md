@@ -10,6 +10,25 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.19.10] - 2026-04-07
+
+### Added
+
+- Added first-class Hugging Face Hub publishing through `dagzoo publish hub`,
+  including dataset-repo creation, republish-safe managed artifact replacement,
+  and generated dataset-card README output from handoff-root corpora.
+- Added a public publishing guide and surfaced the handoff-root-to-Hub workflow
+  across the README, start guide, output-format contract, and docs landing
+  pages.
+
+### Changed
+
+- Promoted `dagzoo generate --handoff-root ...` from a portable downstream
+  handoff layout to the documented stable publish surface for public dataset
+  repositories, while keeping `internal/` sidecars local-only.
+- Added `huggingface_hub` to the packaged runtime dependencies so Hub
+  publishing works in the default CLI install.
+
 ## [0.19.9] - 2026-04-06
 
 ### Added
