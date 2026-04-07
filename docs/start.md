@@ -5,7 +5,9 @@ This is the fastest path from install to usable synthetic tabular data.
 The public entrypoint is the curated recipe catalog. Start with `recipe:<name>`
 when you want something reproducible, discoverable, and easy to cite. Move to
 repo-local `configs/` only when you need custom authoring beyond the published
-recipes.
+recipes. When you want to share a generated corpus, prefer `--handoff-root`
+over a plain `--out` directory because the handoff layout is the stable
+downstream publish surface.
 
 ______________________________________________________________________
 
@@ -94,9 +96,34 @@ backend.
 
 ______________________________________________________________________
 
-## 5. Where to go next
+## 5. Publish to Hugging Face Hub
+
+Generate a handoff root when you want a portable corpus layout that can be
+published directly to Hugging Face Hub:
+
+```bash
+dagzoo generate \
+  --config recipe:default-baseline \
+  --num-datasets 25 \
+  --handoff-root handoffs/default_baseline
+
+hf auth login
+dagzoo publish hub \
+  --handoff-root handoffs/default_baseline \
+  --repo-id your-name/default-baseline-corpus
+```
+
+Only the public handoff artifacts are uploaded. Local `internal/` sidecars stay
+on disk.
+
+Detailed guide: [publish-hub.md](publish-hub.md)
+
+______________________________________________________________________
+
+## 6. Where to go next
 
 - Want the published catalog and citations: [reference-packs.md](reference-packs.md)
+- Want the full publish workflow: [publish-hub.md](publish-hub.md)
 - Need custom generation controls: [usage-guide.md](usage-guide.md)
 - Need observational vs hard-interventional workflows: [features/interventions.md](features/interventions.md)
 - Need artifact and API contracts: [output-format.md](output-format.md)

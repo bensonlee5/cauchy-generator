@@ -86,7 +86,23 @@ shards themselves still start with `metadata.filter.status=not_run`.
 
 ______________________________________________________________________
 
-## 3. Total-row control (`dataset.rows` / `--rows`)
+## 3. Handoff roots and Hub publishing
+
+Use `--handoff-root` when you want one portable corpus layout for downstream
+sharing. A handoff root keeps public shard outputs under `generated/`, keeps
+dagzoo-only sidecars under `internal/`, and can later pick up `curated/`
+outputs from `dagzoo filter`.
+
+```bash
+dagzoo generate --config recipe:default-baseline --num-datasets 25 --handoff-root handoffs/default_baseline
+dagzoo publish hub --handoff-root handoffs/default_baseline --repo-id your-name/default-baseline-corpus
+```
+
+Detailed guide: [publish-hub.md](publish-hub.md)
+
+______________________________________________________________________
+
+## 4. Total-row control (`dataset.rows` / `--rows`)
 
 Use `dataset.rows` (or CLI `--rows`) to control total rows with one field:
 
@@ -108,7 +124,7 @@ To migrate prior train-row stages:
 
 ______________________________________________________________________
 
-## 4. Diagnostics
+## 5. Diagnostics
 
 Use diagnostics to emit per-dataset observability artifacts.
 
@@ -126,7 +142,7 @@ Detailed guides:
 
 ______________________________________________________________________
 
-## 5. Generation modes
+## 6. Generation modes
 
 Use `dagzoo generate`, `generate_one`, `generate_batch`, or
 `generate_batch_iter`; those entrypoints share the same public generation
@@ -197,7 +213,7 @@ itself.
 
 ______________________________________________________________________
 
-## 6. Intervention workflows
+## 7. Intervention workflows
 
 Use interventions when you need opt-in hard interventions on the canonical
 generation path while keeping observational generation as the default.
@@ -213,7 +229,7 @@ Detailed guide: [Interventions](features/interventions.md)
 
 ______________________________________________________________________
 
-## 7. Missingness workflows
+## 8. Missingness workflows
 
 Use missingness workflows for MCAR/MAR/MNAR robustness regimes:
 
@@ -225,7 +241,7 @@ Detailed guide: [Missingness](features/missingness.md)
 
 ______________________________________________________________________
 
-## 8. Many-class workflows
+## 9. Many-class workflows
 
 Use many-class workflows to exercise the rollout envelope (`n_classes_max <= 32`).
 
@@ -255,7 +271,7 @@ Detailed guide: [Many-class](features/many-class.md)
 
 ______________________________________________________________________
 
-## 9. Shift workflows
+## 10. Shift workflows
 
 Use shift profiles for controlled graph/mechanism/noise drift:
 
@@ -267,7 +283,7 @@ Detailed guide: [Shift / Drift](features/shift.md)
 
 ______________________________________________________________________
 
-## 10. Steering workflows
+## 11. Steering workflows
 
 Use steering workflows when you want one opt-in harder-front preset that
 reuses existing missingness, shift, and noise levers:
@@ -291,7 +307,7 @@ Detailed guide: [Meta-Feature Coverage Steering](features/steering.md)
 
 ______________________________________________________________________
 
-## 11. Stress-profile workflows
+## 12. Stress-profile workflows
 
 Use robustness stress profiles when you want one named stress profile rather
 than a hand-authored harder config:
@@ -315,7 +331,7 @@ Detailed guide: [Robustness Stress Profiles](features/stress-profiles.md)
 
 ______________________________________________________________________
 
-## 12. Noise workflows
+## 13. Noise workflows
 
 Use noise workflows for explicit Gaussian/Laplace/Student-t/mixture regimes:
 
@@ -327,7 +343,7 @@ Detailed guide: [Noise Diversification](features/noise.md)
 
 ______________________________________________________________________
 
-## 13. Mechanism-diversity workflows
+## 14. Mechanism-diversity workflows
 
 Use mechanism-diversity workflows when you want to compare the current
 baseline sampler against the shipped `piecewise` and `gp` controls available
@@ -368,7 +384,7 @@ Detailed guide: [Mechanism Diversity](features/mechanism-diversity.md)
 
 ______________________________________________________________________
 
-## 14. Benchmark workflows and guardrails
+## 15. Benchmark workflows and guardrails
 
 Use benchmark workflows for smoke checks, feature guardrails, and regression
 gating.
@@ -404,7 +420,7 @@ with per-variant diversity status and throughput deltas.
 
 ______________________________________________________________________
 
-## 15. Generate handoff workflows
+## 16. Generate handoff workflows
 
 Use `dagzoo generate --handoff-root` when a downstream consumer needs a stable
 handoff root. The handoff workflow uses the same config and CLI overrides as a

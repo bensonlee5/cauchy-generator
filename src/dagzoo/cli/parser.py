@@ -13,6 +13,7 @@ from .commands.diagnostics import run_diversity_audit_command
 from .commands.filter import run_filter_command
 from .commands.generate import run_generate_command
 from .commands.hardware import run_hardware_command
+from .commands.publish import run_publish_hub_command
 from .commands.recipe import run_recipe_list_command
 from .parsing import (
     DEVICE_CHOICES,
@@ -498,6 +499,59 @@ def hardware_command(*, device: str | None) -> int:
 
 
 @click.group(
+    "publish",
+    context_settings=CONTEXT_SETTINGS,
+    help="Publish generated corpora to supported dataset repositories.",
+)
+def publish_group() -> None:
+    """Publish subcommands."""
+
+
+@click.command(
+    "hub",
+    context_settings=CONTEXT_SETTINGS,
+    help="Publish a handoff-root corpus to a Hugging Face Hub dataset repo.",
+)
+@click.option(
+    "--handoff-root",
+    required=True,
+    type=click.Path(path_type=Path),
+    help="Handoff root produced by `dagzoo generate --handoff-root ...`.",
+)
+@click.option(
+    "--repo-id",
+    required=True,
+    help="Target Hugging Face dataset repo id in `namespace/name` form.",
+)
+@click.option(
+    "--private",
+    is_flag=True,
+    help="Create the dataset repo as private if it does not already exist.",
+)
+@click.option(
+    "--license",
+    "license_id",
+    default=None,
+    help="Optional Hugging Face dataset-card license identifier.",
+)
+def publish_hub_command(
+    *,
+    handoff_root: Path,
+    repo_id: str,
+    private: bool,
+    license_id: str | None,
+) -> int:
+    """Execute the publish hub command."""
+
+    return run_publish_hub_command(
+        handoff_root=str(handoff_root),
+        repo_id=repo_id,
+        private=private,
+        license_id=license_id,
+    )
+
+
+@click.group(
     "recipe",
     context_settings=CONTEXT_SETTINGS,
     help="Inspect the curated public recipe catalog.",
@@ -522,6 +576,8 @@ cli.add_command(filter_command)
 cli.add_command(benchmark_command)
 cli.add_command(diversity_audit_command)
 cli.add_command(hardware_command)
+publish_group.add_command(publish_hub_command)
+cli.add_command(publish_group)
 recipe_group.add_command(recipe_list_command)
 cli.add_command(recipe_group)
 

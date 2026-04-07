@@ -117,6 +117,7 @@ def test_cli_exposes_only_supported_top_level_commands() -> None:
         "filter",
         "generate",
         "hardware",
+        "publish",
         "recipe",
     }
 
@@ -150,3 +151,18 @@ def test_recipe_help_exposes_list_subcommand(runner: CliRunner) -> None:
 
     assert result.exit_code == 0
     assert "list" in result.output
+
+
+def test_publish_help_exposes_hub_subcommand(runner: CliRunner) -> None:
+    result = runner.invoke(build_cli(), ["publish", "--help"])
+
+    assert result.exit_code == 0
+    assert "hub" in result.output
+
+
+def test_publish_hub_help_mentions_handoff_and_repo_id(runner: CliRunner) -> None:
+    result = runner.invoke(build_cli(), ["publish", "hub", "--help"])
+
+    assert result.exit_code == 0
+    assert "--handoff-root" in result.output
+    assert "--repo-id" in result.output

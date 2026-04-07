@@ -37,6 +37,7 @@ LEGACY_GENERATED_PATHS = [
 USER_MD_SOURCES = [
     "start.md",
     "reference-packs.md",
+    "publish-hub.md",
     "how-it-works.md",
     "transforms.md",
     "usage-guide.md",
@@ -71,6 +72,10 @@ PAGE_METADATA: dict[str, PageMeta] = {
     "reference-packs.md": PageMeta(
         weight=20,
         description="Named dagzoo recipe packs, confidence tiers, and citation guidance.",
+    ),
+    "publish-hub.md": PageMeta(
+        weight=25,
+        description="Generate a handoff root, authenticate with Hugging Face, and publish a public or private dataset repo.",
     ),
     "how-it-works.md": PageMeta(
         weight=30,

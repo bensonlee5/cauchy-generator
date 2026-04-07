@@ -13,6 +13,7 @@ them.
 
 - [Start]({{< relref "/docs/start.md" >}}): install, list recipes, generate a first run, and use the PyTorch bridge.
 - [Reference Packs]({{< relref "/docs/reference-packs.md" >}}): curated recipe catalog, confidence tiers, and citation guidance.
+- [Publish to Hugging Face Hub]({{< relref "/docs/publish-hub.md" >}}): generate a handoff root, authenticate, and publish the public corpus.
 
 ## Go Deeper
 
