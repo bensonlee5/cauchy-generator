@@ -1,18 +1,17 @@
 # Robustness Stress Profiles
 
-`stress.profile` is the carried-slice selector for RD-005 robustness regimes.
-It lets you materialize one named stress envelope onto the normal generator
-config without creating a second generator subsystem or hand-authoring a large
-custom YAML every time.
+`stress.profile` selects named harder-generation regimes that resolve onto the
+normal generator config. Use it when you want a reproducible stress envelope
+without hand-authoring a large custom YAML for each run.
 
 This surface is different from the curated recipe catalog:
 
 - `recipe:<name>` remains the stable public adoption layer for named reference
   packs under `recipes/`.
-- `stress.profile=<name>` is the internal carried-slice selector that resolves
-  onto the existing config surface during config resolution.
-- Recipe entries labeled `stress profile` are examples; they are not the
-  RD-005 carried-slice contract for downstream fixed-regime comparisons.
+- `stress.profile=<name>` is the advanced YAML control for selecting one named
+  stress regime inside a repo-local config.
+- Recipe entries labeled `stress profile` are ready-made examples of the same
+  kind of harder-generation workflow.
 
 Use robustness stress profiles when you want reproducible harder-task or
 anti-memorization slices while keeping the current missingness, shift, noise,
@@ -44,7 +43,7 @@ ______________________________________________________________________
 
 ### `anti_memorization_piecewise_classification_slice_v1`
 
-- Intended regime: baseline carried classification slice with the
+- Intended regime: default classification envelope with the
   `anti_memorization_piecewise_v1` steering preset turned on.
 - Main lever composition:
   - default classification envelope
@@ -126,12 +125,11 @@ Inspect first:
 - Main lever composition:
   - softened but still non-default mechanism family mix centered on
     `piecewise`, `product`, `gp`, and `tree`
-  - broader feature and categorical-cardinality envelope than the carried
-    baseline
+  - broader feature and categorical-cardinality envelope than the baseline
   - raised graph floor plus a light target relevance floor instead of the
     stricter structural gating used by the graph-breadth slice
-  - tuned fixed-layout batch target of `8_000_000` cells for better CPU
-    throughput on this heavier compositional regime
+  - tuned grouped batch target of `8_000_000` cells for better CPU throughput
+    on this heavier compositional regime
 
 Generate smoke run:
 
@@ -199,8 +197,6 @@ ______________________________________________________________________
 - Benchmark summaries stay on the current contract. Steering and
   stress-profile evidence lives in diagnostics artifacts and in
   `dagzoo diversity-audit`, not in a new benchmark-only field family.
-- The maintainer-only Pareto loop remains documented in
-  [docs/development/rd005_handoff_evaluation.md](../development/rd005_handoff_evaluation.md).
 
 ______________________________________________________________________
 

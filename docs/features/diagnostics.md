@@ -1,27 +1,20 @@
 # Diagnostics
 
-Effective diversity -- the breadth of meta-feature space actually covered by a
-generated corpus -- is the central quality metric for a synthetic tabular prior.
-A corpus might contain millions of datasets, but if they all cluster in a narrow
-region of meta-feature space (similar feature counts, similar class counts,
-similar functional complexity), the foundation model sees a narrow prior and
-generalizes poorly to tasks outside that region. Diagnostics provides the
-observability layer that makes effective diversity measurable. Without it,
-researchers cannot determine whether a config change actually broadened the
-prior or merely produced more of the same.
+Diagnostics adds run-level coverage summaries to a generated corpus so you can
+see what the run actually produced. When enabled, `dagzoo` writes
+`coverage_summary.json` and `coverage_summary.md` alongside the generated data,
+making it easier to inspect feature counts, class counts, mechanism mix, noise,
+missingness, and other realized properties.
 
-Recent work has shown that meta-feature coverage of weak regimes improves
-model reliability -- directly motivating the ability to measure which
-meta-feature regions a corpus covers and which it misses. Synthetic prior
-quality and scale are central to tabular foundation model performance, making
-corpus-level observability a prerequisite for principled prior engineering.
-
-Use diagnostics when you want per-dataset observability artifacts to verify
-coverage, spot drift, and debug generation behavior.
+Use diagnostics when you want to compare recipes, confirm that a preset landed
+in the range you expected, or explain why one run behaves differently from
+another. Start with the coverage summaries, then drill into
+`dataset_catalog.ndjson` or in-process metadata when you need per-dataset
+detail.
 
 ______________________________________________________________________
 
-## Effective diversity: what it means and why it matters
+## Meta-feature coverage and effective diversity
 
 Effective diversity is **not** the same as the number of datasets or the number
 of unique seeds. A corpus of 1 million datasets that all have 10 features,
@@ -44,7 +37,7 @@ ______________________________________________________________________
 ### Why it matters for your prior
 
 - You are iterating on your prior configuration and need to measure whether
-  changes actually improve effective diversity, not just throughput.
+  changes actually broaden coverage, not just throughput.
 - You want to identify specific meta-feature coverage gaps in your corpus --
   for example, finding that your prior undercovers low-feature-count
   high-class-count regimes.
@@ -58,7 +51,7 @@ ______________________________________________________________________
 
 - You need the stable public `dataset_catalog.ndjson` plus summary-level metric coverage.
 - You are validating whether presets or CLI overrides hit expected ranges.
-- You want benchmark runs to include richer context for guardrail triage.
+- You want benchmark runs to include richer context for guardrail review.
 
 ______________________________________________________________________
 

@@ -18,13 +18,10 @@ Prior with all 9 families:
   ✓ all of the above — the foundation model sees the full functional spectrum
 ```
 
-Mechanism diversity is one of the most direct levers for effective diversity —
-the breadth of meta-feature space covered by the corpus. If all datasets have
-the same functional complexity profile, the model sees a narrow prior and
-generalizes poorly to tasks with different functional character. dagzoo uses
-9 families specifically because each contributes qualitatively different latent
-structure. Prior realism — including functional diversity — materially affects
-downstream performance.
+Mechanism diversity is one of the most direct levers for corpus diversity. If
+all datasets have the same functional complexity profile, the resulting corpus
+covers a narrow slice of tabular behavior. `dagzoo` uses 9 families because
+each contributes a different kind of latent structure.
 
 Use mechanism-diversity workflows when you want to exercise the existing
 family-mix surface, compare candidate mechanism behavior against the current
@@ -56,8 +53,7 @@ ______________________________________________________________________
   `piecewise` control or the widened `gp` candidate path.
 - You need realized mechanism-family and mechanism-variant counts in bundle
   metadata and audit reports.
-- You want diversity-audit evidence before treating a new mechanism path as
-  stable. Deferred filter calibration is temporarily unsupported.
+- You want diversity-audit evidence before adopting a new mechanism mix.
 
 ______________________________________________________________________
 
@@ -110,8 +106,8 @@ This workflow intentionally keeps the config surface narrow:
 - No family-specific scalar knobs.
 - No new CLI flags.
 - The public surface remains `mechanism.function_family_mix`; the widened `gp`
-  behavior is an internal variant expansion behind the existing `gp` family
-  label, while `piecewise` remains an explicit mix-controlled family.
+  behavior stays behind the existing `gp` family label, while `piecewise`
+  remains an explicit mix-controlled family.
 - `mechanism.function_family_mix.piecewise` must still be paired with at least
   one explicit branch family from `tree`, `discretization`, `gp`, `linear`, or
   `quadratic`.

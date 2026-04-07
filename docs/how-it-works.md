@@ -28,7 +28,7 @@ quality and realism controls.
 1. Emit `DatasetBundle` outputs; optionally persist shards and
    diagnostics.
 1. Persist shard outputs and effective-config artifacts; when needed,
-   replay deferred acceptance with `dagzoo filter` as a separate stage.
+   run `dagzoo filter` later as a separate post-generation stage.
 
 ## Core Concepts
 
@@ -92,7 +92,7 @@ named semantic subtrees.
 - Public metadata exposes stable replay identifiers such as `seed`,
   `dataset_index`, `run_num_datasets`, and `dataset_seed`.
 - Some canonical outputs also include detailed replay metadata such as
-  `metadata.keyed_replay` when exact internal replay is needed.
+  `metadata.keyed_replay` when exact run reconstruction matters.
 - Changing one component path should not perturb unrelated component
   randomness.
 
@@ -109,7 +109,7 @@ KeyedRng(run_seed)
   -> keyed("dataset", i, "attempt", attempt, "missingness")
 ```
 
-### 3. Split validity retries and reserved deferred-filter metadata {#3-split-validity-retries-and-deferred-filter-stage}
+### 3. Split validity retries and post-generation filtering {#3-split-validity-retries-and-filter-stage}
 
 Generation retries cover split-validity and generation exceptions only.
 
@@ -118,12 +118,12 @@ Generation retries cover split-validity and generation exceptions only.
   resamples layouts for structural validity regardless of `filter.enabled`.
 - Emitted metadata records `attempt_used` and generation-attempt
   counters.
-- Generated outputs mark `metadata.filter.mode=deferred` and
-  `metadata.filter.status=not_run`.
+- Generated outputs record `metadata.filter.mode=deferred` and
+  `metadata.filter.status=not_run` so later filter runs can be traced back to
+  the original generated corpus.
 
-Data-quality acceptance is a separate deferred stage:
+Acceptance is a separate post-generation stage:
 
-- Generated outputs still carry deferred-filter metadata for traceability.
 - `dagzoo filter` replays structural lineage-validity checks over emitted
   shards and writes accepted/rejected outcomes after generation.
 - Request-driven handoff currently publishes generated shards only.
@@ -344,8 +344,8 @@ Current public postprocess behavior:
 
 ### 5) Metadata and output emission {#5-metadata-and-output-emission}
 
-Each bundle includes runtime metadata for lineage, deferred-filter
-status, shift, noise distribution, and resolved config snapshot.
+Each bundle includes runtime metadata for lineage, filter status, shift, noise
+distribution, and resolved config snapshot.
 
 - `lineage` aligns emitted feature columns with DAG node assignments and
   records the selected latent target node plus emitted target-relevance summary.
@@ -391,7 +391,7 @@ flowchart TB
     Assemble --> PostX[feature postprocess]
     PostX --> TargetNode[convert selected target node]
     TargetNode --> Missing[apply optional observation missingness]
-    Missing --> Out[[return emitted X + raw y + deferred filter metadata]]
+    Missing --> Out[[return emitted X + raw y + filter status metadata]]
 
     %% Assign Classes
     class Setup setup
@@ -400,12 +400,14 @@ flowchart TB
     class Emit,Assemble,Out out
 ```
 
-## Diagnostics, fixed layout, and benchmark guardrails
+## Diagnostics, heterogeneous generation, and benchmark guardrails
 
 These are related but distinct runtime surfaces.
 
-- Canonical fixed-layout generation controls structural consistency
-  across emitted datasets.
+- Public generation now defaults to heterogeneous per-dataset layout and plan
+  sampling.
+- Stratified mode still keeps per-dataset layout semantics, but batches
+  compatible exact strata for throughput-sensitive large runs.
 - Diagnostics aggregates observability metrics across emitted bundles.
 - Benchmark guardrails evaluate runtime/metadata regressions in suite
   runs.
@@ -417,7 +419,7 @@ These are related but distinct runtime surfaces.
 - **node pipeline**: per-node transform and converter execution path.
 - **converter spec**: instruction for extracting observable feature slices.
 - **target node**: the latent DAG node selected to emit the raw target column.
-- **deferred filter**: structural post-generation gate that replays lineage
+- **filter stage**: optional post-generation gate that replays lineage
   reachability and target-validity checks over emitted shards.
 - **filter rejection reason**: explicit structural reject code such as
   `target_root` or `no_feature_target_path` recorded in filter manifests and
@@ -425,8 +427,8 @@ These are related but distinct runtime surfaces.
 - **shift runtime params**: resolved graph/mechanism/noise drift
   controls.
 - **noise runtime selection**: per-dataset resolved noise family/params.
-- **fixed-layout plan**: internal sampled layout/execution payload reused
-  within one canonical run.
+- **execution plan**: resolved layout-and-execution payload prepared for one
+  dataset or one compatible batched stratum.
 - **layout signature**: deterministic hash fingerprint of a sampled
   layout.
 - **DatasetBundle**: in-memory output container with tensors + metadata.

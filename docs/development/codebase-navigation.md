@@ -19,9 +19,9 @@ runtime.
 
 - [`src/dagzoo/cli/`](../../src/dagzoo/cli/__init__.py): Maps CLI flags to `GeneratorConfig` and handles command dispatch.
 - [`src/dagzoo/core/dataset.py`](../../src/dagzoo/core/dataset.py): Public generation facade. Resolves canonical runs, annotates replay metadata, and streams emitted bundles.
-- [`src/dagzoo/core/generation_runtime.py`](../../src/dagzoo/core/generation_runtime.py): Shared split/finalization helpers used by canonical fixed-layout generation.
-- [`src/dagzoo/core/fixed_layout/runtime.py`](../../src/dagzoo/core/fixed_layout/runtime.py): Canonical fixed-layout run preparation, classification replay validation, and batched execution orchestration.
-- [`src/dagzoo/core/fixed_layout/metadata.py`](../../src/dagzoo/core/fixed_layout/metadata.py): Shared fixed-layout metadata helpers and layout signatures.
+- [`src/dagzoo/core/generation_runtime.py`](../../src/dagzoo/core/generation_runtime.py): Shared split/finalization helpers used by public generation and benchmark flows.
+- [`src/dagzoo/core/fixed_layout/runtime.py`](../../src/dagzoo/core/fixed_layout/runtime.py): Shared run preparation, classification replay validation, and grouped execution orchestration behind the current public runtime.
+- [`src/dagzoo/core/fixed_layout/metadata.py`](../../src/dagzoo/core/fixed_layout/metadata.py): Shared metadata helpers and layout signatures for that runtime module family.
 - [`src/dagzoo/core/config_resolution.py`](../../src/dagzoo/core/config_resolution.py): Layered config resolution, produces `effective_config_trace.yaml`.
 
 ## 2. The Generation Pipeline (The "Assembly Line")

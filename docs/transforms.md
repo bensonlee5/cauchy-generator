@@ -1,16 +1,16 @@
-# Dagzoo Functional Transforms (Math Reference)
+# Dagzoo Transform Reference
 
-<p>This document is the mathematical reference for the
-generation transforms used by <code>dagzoo</code>. Equations are
-implementation-faithful to the current runtime in
+<p>This document is the formal reference for the generation transforms used by
+<code>dagzoo</code>. The equations are written to match the current runtime in
 <code>src/dagzoo</code>.</p>
 
-<h2 id="purpose-and-research-context">Purpose and Research Context</h2>
+<h2 id="purpose-and-research-context">Using This Reference</h2>
 
-<p>The generation pipeline is designed to produce synthetic tabular data with
-high <strong>effective diversity</strong> — the breadth of meta-feature space
-covered by the generated corpus.  Each section below corresponds to an
-independent axis of prior diversity:</p>
+<p>Use this page when you want the mathematical definitions behind the
+generator. Each section covers one part of the runtime: DAG sampling, shift,
+mechanism families, node execution, converters, and noise. Together they
+describe how <code>dagzoo</code> maps a latent DAG into emitted tabular
+features, targets, and metadata.</p>
 
 <ul>
 <li><strong>Section 1 (DAG structure)</strong> — topology of causal dependencies</li>
@@ -22,16 +22,10 @@ independent axis of prior diversity:</p>
 <li><strong>Section 7 (Noise)</strong> — stochastic variation character</li>
 </ul>
 
-<p>For researchers working to improve effective diversity, the key question for
-each section is: <em>What variation does this transform axis contribute, and
-how does adjusting its parameters change the region of meta-feature space the
-prior covers?</em>  Broadening coverage across all axes simultaneously is the
-path to high effective diversity — broader meta-feature coverage has been shown
-to improve model reliability, and synthetic prior quality is central to tabular
-foundation model performance.  The formal specification matters because
-the parameterization determines what prior regions are reachable — if a
-transform's math restricts certain behaviors, no config change can produce
-datasets in those regions.</p>
+<p>The sections are organized so you can either read end to end or jump
+directly to the transform family you need. When you are checking a config or a
+runtime behavior, the practical question is: <em>which transform changes, and
+how does that change show up in the emitted dataset?</em></p>
 <h2 id="notation-and-symbols">Notation and Symbols</h2>
 <p><strong>Primary Variable:</strong> Symbol map (this section's
 notation table).<br> <strong>Dependency Map:</strong> all symbols used

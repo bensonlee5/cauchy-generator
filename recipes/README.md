@@ -2,7 +2,7 @@
 
 This directory holds the curated public recipe catalog for `dagzoo`.
 
-These YAML files are the researcher-facing entrypoint. They are intended to be:
+These YAML files are the public recipe catalog. They are intended to be:
 
 - discoverable
 - reproducible

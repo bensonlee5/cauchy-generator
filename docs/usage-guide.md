@@ -8,9 +8,10 @@ The default public path is:
 - `dagzoo generate --config recipe:<name>`
 - `build_dataloader("recipe:<name>", ...)`
 
-This guide covers the custom controls you reach for when the curated recipe
-catalog is not enough and you want to author or modify repo-local configs under
-`configs/`.
+This guide covers the controls you reach for when the curated recipe catalog is
+not enough and you want to author or modify repo-local configs under
+`configs/`. Those repo-local configs are the advanced authoring layer, not the
+default public entrypoint.
 
 ______________________________________________________________________
 
@@ -21,7 +22,7 @@ Examples on this page use repo-local configs under `configs/`.
 For a repo checkout:
 
 ```bash
-uv sync --group dev
+./scripts/dev bootstrap
 source .venv/bin/activate
 ```
 
@@ -36,15 +37,15 @@ ______________________________________________________________________
 
 ## 1. Custom generation from YAML
 
-Use this when you want to author a YAML config directly instead of starting from
-`recipe:<name>`.
+Use this when you want to author a YAML config directly instead of starting
+from `recipe:<name>`.
 
 ```bash
 dagzoo generate --config configs/default.yaml --num-datasets 10 --out data/run1
 ```
 
-Each generate run writes `effective_config.yaml` and `effective_config_trace.yaml`
-under the resolved output directory.
+Each generate run writes `effective_config.yaml` and
+`effective_config_trace.yaml` under the resolved output directory.
 `dagzoo generate` defaults to fully heterogeneous per-dataset plan sampling, so
 datasets in the same run may differ in feature schema, lineage assignments, and
 target node choice. Set `runtime.layout_mode: stratified` when you want the
@@ -64,10 +65,12 @@ Generate configs must not include `runtime.worker_count` or
 
 ______________________________________________________________________
 
-## 2. Deferred filtering (`dagzoo filter`)
+## 2. Optional filtering (`dagzoo filter`)
 
-Deferred filtering replays structural lineage-validity checks from shard
-metadata and lineage artifacts. The public tuning knobs are
+`dagzoo filter` is the post-generation acceptance stage. It replays structural
+lineage-validity checks from shard metadata and lineage artifacts, then writes
+accepted and rejected outputs as a separate curated run. The public tuning
+knobs are
 `min_target_indegree`, `min_target_relevant_feature_count`, and
 `min_target_relevant_feature_fraction`. `dagzoo filter --set` only accepts
 `filter.<field>` overrides for those thresholds plus `filter.enabled` and
@@ -152,8 +155,8 @@ When you persist shards, the public dataset catalog projects those in-memory
 
 Use the PyTorch bridge when you want the same public generation semantics in an
 in-process training loop instead of persisted shard outputs. The bridge follows
-`runtime.layout_mode`, so it defaults to heterogeneous runs and can be pinned to
-stratified mode for large throughput-sensitive heterogeneous corpora.
+`runtime.layout_mode`, so it defaults to heterogeneous runs and can be pinned
+to stratified mode for large throughput-sensitive heterogeneous corpora.
 
 `build_dataloader(...)` is the recommended public entrypoint for most users.
 `DagzooDataset` is the lower-level iterable dataset when you need direct
@@ -205,8 +208,6 @@ dagzoo generate --config configs/preset_intervention_target_generate_smoke.yaml 
 
 Public artifacts expose only `intervention.mode` and `intervention.signature`;
 the authored selector/value payload stays in `effective_config.yaml`.
-`counterfactual` remains deferred and unsupported in the current public
-surface.
 
 Detailed guide: [Interventions](features/interventions.md)
 
@@ -292,7 +293,7 @@ ______________________________________________________________________
 
 ## 11. Stress-profile workflows
 
-Use robustness stress profiles when you want one named carried slice rather
+Use robustness stress profiles when you want one named stress profile rather
 than a hand-authored harder config:
 
 ```bash
@@ -329,9 +330,9 @@ ______________________________________________________________________
 ## 13. Mechanism-diversity workflows
 
 Use mechanism-diversity workflows when you want to compare the current
-baseline sampler against the shipped `piecewise` control and the widened `gp`
-candidate path through the existing `mechanism.function_family_mix` surface.
-Inspect realized family and variant uptake together with diversity shift,
+baseline sampler against the shipped `piecewise` and `gp` controls available
+through `mechanism.function_family_mix`. Inspect realized family and variant
+uptake together with diversity shift,
 throughput, and filter yield before deciding whether a candidate is worth
 keeping.
 
@@ -388,11 +389,11 @@ dagzoo benchmark \
 values in one command, set device selection in each preset/config instead of
 passing a shared CLI device override.
 
-Artifact-producing deferred filtering is disabled, but filter-enabled benchmark
-configs and `dagzoo diversity-audit` runs still replay structural filter
-metrics analytically. The canonical `preset_filter_benchmark_smoke` run uses
-the same structural replay path as `dagzoo filter`, so throughput and
-acceptance yield reflect lineage-based acceptance directly.
+Filter-focused benchmark configs and `dagzoo diversity-audit` runs measure the
+same structural acceptance rules used by `dagzoo filter`. The canonical
+`preset_filter_benchmark_smoke` run uses that same replay path, so throughput
+and acceptance yield stay comparable across benchmark and post-generation
+filter workflows.
 
 Detailed guide: [Benchmark Workflows and Guardrails](features/benchmark-guardrails.md)
 
@@ -406,9 +407,8 @@ ______________________________________________________________________
 ## 15. Generate handoff workflows
 
 Use `dagzoo generate --handoff-root` when a downstream consumer needs a stable
-handoff root. There is no separate request-file
-contract now; the handoff workflow uses the normal internal config plus CLI
-overrides.
+handoff root. The handoff workflow uses the same config and CLI overrides as a
+standard generate run.
 
 Example one-way handoff run:
 

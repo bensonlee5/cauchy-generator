@@ -1,14 +1,12 @@
 # Meta-Feature Coverage Steering
 
-Meta-feature coverage steering is the RD-008 delivery that turns existing
-missingness, shift/drift, and noise levers into one opt-in harder-front
-curriculum. Instead of reviving the retired RD-006 feature/node/graph shell,
-steering resolves onto the same missingness, shift, and noise surfaces that
-already drive canonical generation.
+Meta-feature coverage steering combines existing missingness, shift/drift, and
+noise controls into one preset-driven workflow. Use it when you want a
+reproducible progression through harder regions of the dataset space and a
+clear diagnostics trail showing what the run actually realized.
 
-The goal is not a second generator subsystem. The goal is a reproducible way to
-progress a corpus through harder regions of meta-feature space and then audit
-whether the emitted bundles actually followed that authored path.
+Steering resolves onto the same generation surface used by the rest of
+`dagzoo`. It is a way to author a staged run, not a separate generator.
 
 ______________________________________________________________________
 
@@ -47,9 +45,9 @@ Those stages progressively move the run from light missingness into graph drift,
 then a graph-to-noise handoff, and finally a mixture-noise ramp. The preset is
 resolved per dataset with fixed-seed determinism.
 
-This is intentionally built on top of existing missingness, shift, and noise
-config. It does **not** reintroduce RD-006 stagewise feature/node/graph
-controls or a second curriculum runtime.
+This preset is built on top of the existing missingness, shift, and noise
+controls. The diagnostics output shows the requested stages alongside the
+realized run summaries.
 
 ______________________________________________________________________
 
