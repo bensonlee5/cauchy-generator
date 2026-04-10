@@ -336,6 +336,25 @@ def test_effective_diversity_artifact_writer(tmp_path) -> None:
                 "dataset_presence_rate_by_variant": {},
                 "mean_total_function_plans": 3.0,
             },
+            "parity_surface_summary": {
+                "metadata_coverage_rate": 1.0,
+                "bundles_with_metadata": 25,
+                "converter_method_counts": {"numeric": 25},
+                "converter_variant_counts": {"numeric.standard": 25},
+                "converter_method_variant_counts": {"numeric.standard": 25},
+                "gp_variant_counts": {"gp.standard": 25},
+                "kernel_signed_counts": {"signed": 25},
+                "matrix_kind_counts": {"dense": 25},
+                "activation_base_kind_counts": {"piecewise": 25},
+                "root_base_kind_counts": {"piecewise": 25},
+                "source_kind_counts": {"latent": 25},
+                "combine_kind_counts": {"concat": 25},
+                "aggregation_kind_counts": {"sum": 25},
+                "parent_arity_counts": {"single_parent": 25},
+                "source_shape_policy_counts": {"default": 25},
+                "kernel_gamma": {"count": 25, "min": 0.2, "max": 0.8, "mean": 0.5},
+                "categorical_cardinality": {"count": 25, "min": 4, "max": 16, "mean": 8.0},
+            },
         },
         "variants": [
             {
@@ -348,6 +367,25 @@ def test_effective_diversity_artifact_writer(tmp_path) -> None:
                     "sampled_variant_counts": {"gp.periodic": 25},
                     "dataset_presence_rate_by_variant": {"gp.periodic": 1.0},
                     "mean_total_function_plans": 6.0,
+                },
+                "parity_surface_summary": {
+                    "metadata_coverage_rate": 1.0,
+                    "bundles_with_metadata": 25,
+                    "converter_method_counts": {"categorical": 10, "numeric": 15},
+                    "converter_variant_counts": {"categorical.quantile": 10},
+                    "converter_method_variant_counts": {"categorical.quantile": 10},
+                    "gp_variant_counts": {"gp.periodic": 25},
+                    "kernel_signed_counts": {"signed": 15, "unsigned": 10},
+                    "matrix_kind_counts": {"dense": 20, "triangular": 5},
+                    "activation_base_kind_counts": {"piecewise": 15, "tree": 10},
+                    "root_base_kind_counts": {"piecewise": 15, "tree": 10},
+                    "source_kind_counts": {"latent": 25},
+                    "combine_kind_counts": {"concat": 15, "stack": 10},
+                    "aggregation_kind_counts": {"sum": 15, "mean": 10},
+                    "parent_arity_counts": {"single_parent": 18, "multi_parent": 7},
+                    "source_shape_policy_counts": {"parent_arity_reuse": 25},
+                    "kernel_gamma": {"count": 25, "min": 0.1, "max": 1.1, "mean": 0.6},
+                    "categorical_cardinality": {"count": 25, "min": 6, "max": 32, "mean": 14.0},
                 },
             }
         ],
@@ -378,7 +416,9 @@ def test_effective_diversity_artifact_writer(tmp_path) -> None:
     assert "summary.json` / `summary.md` are the canonical persisted artifacts" in markdown
     assert "Probe num datasets" in markdown
     assert "## Mechanism Families" in markdown
+    assert "## Parity Surface" in markdown
     assert "gp.periodic" in markdown
+    assert "parent_arity_reuse" in markdown
 
 
 def test_run_effective_diversity_audit_smoke_filter_disabled(tmp_path) -> None:

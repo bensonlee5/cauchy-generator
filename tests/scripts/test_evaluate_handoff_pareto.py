@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from conftest import load_script_module
 
 
@@ -103,6 +104,53 @@ def test_pareto_frontier_uses_structural_diversity_and_throughput() -> None:
     )
 
     assert frontier == ["baseline", "v1", "v2"]
+
+
+def test_build_variant_specs_uses_explicit_variant_labels(tmp_path: Path) -> None:
+    module = _load_module()
+    variant_path = tmp_path / "variant.yaml"
+    variant_path.write_text("dataset:\n  task: classification\n", encoding="utf-8")
+    args = module._CliArgs(
+        baseline_config="configs/default.yaml",
+        out_root=str(tmp_path / "out"),
+        variant_config=(str(variant_path),),
+        variant_label=("hybrid",),
+        stress_profile=(),
+        num_datasets=8,
+        seed=0,
+        device="cpu",
+        hardware_policy="none",
+        rows=None,
+        warn_threshold_pct=2.5,
+        fail_threshold_pct=5.0,
+        reuse_existing=False,
+    )
+
+    specs = module._build_variant_specs(args, temp_dir=tmp_path)
+
+    assert [spec.label for spec in specs] == ["baseline", "hybrid"]
+
+
+def test_build_variant_specs_rejects_mismatched_variant_labels(tmp_path: Path) -> None:
+    module = _load_module()
+    args = module._CliArgs(
+        baseline_config="configs/default.yaml",
+        out_root=str(tmp_path / "out"),
+        variant_config=(str(tmp_path / "a.yaml"),),
+        variant_label=("one", "two"),
+        stress_profile=(),
+        num_datasets=8,
+        seed=0,
+        device="cpu",
+        hardware_policy="none",
+        rows=None,
+        warn_threshold_pct=2.5,
+        fail_threshold_pct=5.0,
+        reuse_existing=False,
+    )
+
+    with pytest.raises(ValueError, match="--variant-label count must match --variant-config"):
+        module._build_variant_specs(args, temp_dir=tmp_path)
 
 
 def test_write_markdown_report_includes_structural_priority_fields(tmp_path: Path) -> None:

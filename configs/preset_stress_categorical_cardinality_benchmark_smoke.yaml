@@ -1,0 +1,32 @@
+seed: 88
+
+stress:
+  profile: anti_memorization_piecewise_classification_categorical_cardinality_slice_v1
+
+runtime:
+  device: cpu
+
+output:
+  out_dir: benchmarks/results/smoke_stress_categorical_cardinality
+  shard_size: 16
+  compression: zstd
+
+diagnostics:
+  enabled: false
+
+benchmark:
+  preset_name: stress_categorical_cardinality_smoke
+  suite: smoke
+  num_datasets: 20
+  warmup_datasets: 0
+  warn_threshold_pct: 10.0
+  fail_threshold_pct: 20.0
+  collect_memory: false
+  collect_reproducibility: false
+  reproducibility_num_datasets: 1
+  latency_num_samples: 5
+  presets:
+    stress_categorical_cardinality_smoke:
+      device: cpu
+      num_datasets: 20
+      warmup_datasets: 0

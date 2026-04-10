@@ -37,6 +37,13 @@ _TOTAL_ROWS_CAP_STRATEGY = st.integers(
 _STRESS_PROFILE = "anti_memorization_piecewise_classification_slice_v1"
 _GRAPH_BREADTH_STRESS_PROFILE = "anti_memorization_piecewise_classification_graph_breadth_slice_v1"
 _COMPOSITIONAL_STRESS_PROFILE = "anti_memorization_piecewise_classification_compositional_slice_v1"
+_CATEGORICAL_CARDINALITY_STRESS_PROFILE = (
+    "anti_memorization_piecewise_classification_categorical_cardinality_slice_v1"
+)
+_HYBRID_STRESS_PROFILE = "anti_memorization_piecewise_classification_hybrid_slice_v1"
+_ROBUSTNESS_COMPOSITION_STRESS_PROFILE = (
+    "anti_memorization_piecewise_classification_robustness_composition_slice_v1"
+)
 
 
 @st.composite
@@ -241,6 +248,63 @@ def test_resolve_generate_config_materializes_compositional_stress_profile() -> 
     assert mix["piecewise"] > mix["linear"]
     assert mix["product"] > mix["quadratic"]
     assert sum(float(value) for value in mix.values()) == pytest.approx(1.0)
+
+
+def test_resolve_generate_config_materializes_categorical_cardinality_stress_profile() -> None:
+    cfg = GeneratorConfig.from_dict(
+        {"stress": {"profile": _CATEGORICAL_CARDINALITY_STRESS_PROFILE}}
+    )
+
+    resolved = resolve_generate_config(
+        cfg,
+        device_override="cpu",
+        rows=None,
+        hardware_policy="none",
+        diagnostics_enabled=False,
+    )
+
+    assert resolved["config"].stress.profile is None
+    assert resolved["carried_stress_profile"] == _CATEGORICAL_CARDINALITY_STRESS_PROFILE
+    assert resolved["config"].dataset.categorical_ratio_min == pytest.approx(0.45)
+    assert resolved["config"].dataset.max_categorical_cardinality == 64
+    assert resolved["config"].runtime.fixed_layout_target_cells == 6_000_000
+
+
+def test_resolve_generate_config_materializes_hybrid_stress_profile() -> None:
+    cfg = GeneratorConfig.from_dict({"stress": {"profile": _HYBRID_STRESS_PROFILE}})
+
+    resolved = resolve_generate_config(
+        cfg,
+        device_override="cpu",
+        rows=None,
+        hardware_policy="none",
+        diagnostics_enabled=False,
+    )
+
+    assert resolved["config"].stress.profile is None
+    assert resolved["carried_stress_profile"] == _HYBRID_STRESS_PROFILE
+    assert resolved["config"].graph.n_nodes_min == 12
+    assert resolved["config"].filter.min_target_indegree == 2
+    assert resolved["config"].runtime.fixed_layout_target_cells == 6_000_000
+
+
+def test_resolve_generate_config_materializes_robustness_composition_stress_profile() -> None:
+    cfg = GeneratorConfig.from_dict({"stress": {"profile": _ROBUSTNESS_COMPOSITION_STRESS_PROFILE}})
+
+    resolved = resolve_generate_config(
+        cfg,
+        device_override="cpu",
+        rows=None,
+        hardware_policy="none",
+        diagnostics_enabled=False,
+    )
+
+    assert resolved["config"].stress.profile is None
+    assert resolved["carried_stress_profile"] == _ROBUSTNESS_COMPOSITION_STRESS_PROFILE
+    assert resolved["config"].dataset.missing_mechanism == "mnar"
+    assert resolved["config"].shift.enabled is True
+    assert resolved["config"].shift.mode == "mixed"
+    assert resolved["config"].noise.family == "mixture"
 
 
 def test_resolve_generate_config_leaves_sideband_unset_without_stress_profile() -> None:

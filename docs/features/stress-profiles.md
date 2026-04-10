@@ -36,10 +36,16 @@ ______________________________________________________________________
 - You need one graph-breadth-heavy slice for relationship-structure audits.
 - You want a compositional mechanism slice that pushes family mixing harder
   than the default baseline.
+- You want a categorical/cardinality-heavy lane without hand-authoring the
+  converter and cardinality envelope.
+- You want one hybrid slice that combines graph/source-shape reuse with
+  compositional matrix/kernel reuse.
+- You want one robustness-composition slice that explicitly couples missingness,
+  shift, and noise with the harder mechanism mix.
 
 ______________________________________________________________________
 
-## Shipped profiles
+## Shipped core profiles
 
 ### `anti_memorization_piecewise_classification_slice_v1`
 
@@ -159,6 +165,128 @@ Inspect first:
 - `metrics.mechanism_family_cooccurrence_ratio`
 - `metrics.graph_ancestor_overlap_mean`
 
+## Current internal evaluation profiles
+
+These profiles are available through repo-local configs and `stress.profile`,
+but they are still evaluation lanes rather than promoted public recipes. Keep
+them audit-gated and compare them against baseline and the current
+compositional slice before treating them as a broader adoption candidate.
+
+### `anti_memorization_piecewise_classification_categorical_cardinality_slice_v1`
+
+- Intended regime: categorical-heavy harder slice with broader correlated
+  categorical-cardinality regimes than the default baseline.
+- Main lever composition:
+  - raised categorical ratio floor and wider class envelope
+  - larger categorical cardinality ceiling tied to the existing
+    high-cardinality workflow
+  - anti-memorization steering retained as the base harder slice control
+
+Generate smoke run:
+
+```bash
+dagzoo generate \
+  --config configs/preset_stress_categorical_cardinality_generate_smoke.yaml \
+  --num-datasets 25 \
+  --out data/run_stress_categorical_cardinality_smoke
+```
+
+Benchmark smoke run:
+
+```bash
+dagzoo benchmark \
+  --config configs/preset_stress_categorical_cardinality_benchmark_smoke.yaml \
+  --preset custom \
+  --suite smoke \
+  --diagnostics \
+  --no-memory \
+  --out-dir benchmarks/results/smoke_stress_categorical_cardinality
+```
+
+Inspect first:
+
+- `coverage_summary.json`
+- `parity_surface_summary.categorical_cardinality`
+- `parity_surface_summary.converter_method_counts`
+- `metrics.cat_cardinality_mean`
+
+### `anti_memorization_piecewise_classification_hybrid_slice_v1`
+
+- Intended regime: hybrid structural+compositional slice that combines the
+  graph/source-shape reuse pressure from the graph-breadth lane with the
+  matrix/kernel/root reuse from the compositional lane.
+- Main lever composition:
+  - broader node and feature envelope with graph gating enabled
+  - parent-arity/source-shape policy reuse
+  - correlated matrix/kernel/root-base-kind reuse
+
+Generate smoke run:
+
+```bash
+dagzoo generate \
+  --config configs/preset_stress_hybrid_generate_smoke.yaml \
+  --num-datasets 25 \
+  --out data/run_stress_hybrid_smoke
+```
+
+Benchmark smoke run:
+
+```bash
+dagzoo benchmark \
+  --config configs/preset_stress_hybrid_benchmark_smoke.yaml \
+  --preset custom \
+  --suite smoke \
+  --diagnostics \
+  --no-memory \
+  --out-dir benchmarks/results/smoke_stress_hybrid
+```
+
+Inspect first:
+
+- `coverage_summary.json`
+- `parity_surface_summary.matrix_kind_counts`
+- `parity_surface_summary.root_base_kind_counts`
+- `parity_surface_summary.source_shape_policy_counts`
+
+### `anti_memorization_piecewise_classification_robustness_composition_slice_v1`
+
+- Intended regime: explicit robustness composition that couples missingness,
+  shift, and mixed noise with the anti-memorization harder slice instead of
+  leaving those levers as separate recipes.
+- Main lever composition:
+  - structured MNAR missingness
+  - mixed graph/variance drift
+  - explicit Gaussian/Laplace/Student-t residual mixture
+
+Generate smoke run:
+
+```bash
+dagzoo generate \
+  --config configs/preset_stress_robustness_composition_generate_smoke.yaml \
+  --num-datasets 25 \
+  --out data/run_stress_robustness_composition_smoke
+```
+
+Benchmark smoke run:
+
+```bash
+dagzoo benchmark \
+  --config configs/preset_stress_robustness_composition_benchmark_smoke.yaml \
+  --preset custom \
+  --suite smoke \
+  --diagnostics \
+  --no-memory \
+  --out-dir benchmarks/results/smoke_stress_robustness_composition
+```
+
+Inspect first:
+
+- `coverage_summary.json`
+- `missingness`
+- `shift`
+- `noise_distribution`
+- `parity_surface_summary.gp_variant_counts`
+
 ______________________________________________________________________
 
 ## Baseline comparison workflow
@@ -178,12 +306,34 @@ dagzoo diversity-audit \
   --out-dir benchmarks/results/diversity_audit_stress_graph_breadth
 ```
 
-Swap `--variant-config` to
-`configs/preset_stress_classification_slice_benchmark_smoke.yaml` or
-`configs/preset_stress_compositional_benchmark_smoke.yaml` for the other
-profiles. Inspect `summary.json` and `summary.md` first, then inspect
+Swap `--variant-config` to any of the other stress benchmark presets for the
+other profiles. Inspect `summary.json` and `summary.md` first, then inspect
 coverage artifacts from a diagnostics-enabled benchmark run when you need the
 relationship-structure or mechanism-family metrics behind the shift.
+
+To turn one diversity-audit run into a parity-focused maintainer report:
+
+```bash
+./.venv/bin/python scripts/render_tabiclv2_parity_report.py \
+  --summary-json benchmarks/results/diversity_audit_stress_graph_breadth/summary.json \
+  --out-dir benchmarks/results/diversity_audit_stress_graph_breadth/parity_report
+```
+
+To run the full internal RD-005 promotion suite across the incumbent,
+structural control, and current challenger lanes:
+
+```bash
+./.venv/bin/python scripts/evaluate_rd005_follow_on_suite.py \
+  --baseline-config configs/default.yaml \
+  --out-root benchmarks/results/rd005_follow_on \
+  --suite smoke \
+  --num-datasets 8 \
+  --seed 123 \
+  --device cpu
+```
+
+Read `follow_on_promotion_summary.json` / `follow_on_promotion_summary.md`
+first when you want the explicit promotion status for each internal lane.
 
 ______________________________________________________________________
 
@@ -194,6 +344,13 @@ ______________________________________________________________________
 - Benchmark smoke presets keep diagnostics off by default. Pass
   `--diagnostics` when you want coverage artifacts in addition to the benchmark
   summary.
+- `dagzoo diversity-audit` `summary.json` now carries `parity_surface_summary`
+  alongside the mechanism-family summary so the remaining TabICLv2 parity gaps
+  can be measured directly instead of inferred indirectly.
+- The full RD-005 suite runner keeps the public/internal boundary explicit:
+  internal lanes can receive `promote`, `hold_internal`, or
+  `structural_control_only`, but public recipe promotion remains a separate
+  follow-up step after a winner clears the gate.
 - Benchmark summaries stay on the current contract. Steering and
   stress-profile evidence lives in diagnostics artifacts and in
   `dagzoo diversity-audit`, not in a new benchmark-only field family.

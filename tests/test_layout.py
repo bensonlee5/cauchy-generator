@@ -9,6 +9,7 @@ from dagzoo.rng import KeyedRng
 
 _GRAPH_BREADTH_STRESS_PROFILE = "anti_memorization_piecewise_classification_graph_breadth_slice_v1"
 _COMPOSITIONAL_STRESS_PROFILE = "anti_memorization_piecewise_classification_compositional_slice_v1"
+_HYBRID_STRESS_PROFILE = "anti_memorization_piecewise_classification_hybrid_slice_v1"
 
 
 def _small_layout_config():
@@ -104,7 +105,7 @@ def test_sample_layout_graph_breadth_prefers_higher_scoring_candidate(
     assert int(sampled.target_to_node) == 3
 
 
-def test_sample_layout_only_enables_relationship_profile_for_graph_breadth(
+def test_sample_layout_only_enables_relationship_profile_for_graph_enabled_profiles(
     monkeypatch,
 ) -> None:
     cfg = _small_layout_config()
@@ -137,6 +138,12 @@ def test_sample_layout_only_enables_relationship_profile_for_graph_breadth(
         KeyedRng(113).keyed("layout", "graph_breadth"),
         "cpu",
         stress_profile_name=_GRAPH_BREADTH_STRESS_PROFILE,
+    )
+    _ = layout_mod._sample_layout(
+        cfg,
+        KeyedRng(114).keyed("layout", "hybrid"),
+        "cpu",
+        stress_profile_name=_HYBRID_STRESS_PROFILE,
     )
 
     assert "graph_relationship_profile" in observed_names

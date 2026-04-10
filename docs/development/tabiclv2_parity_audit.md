@@ -23,6 +23,29 @@ changes are justified.
 | Kernel-family hyperparameters | `partial` | Fixed-layout kernel plans now carry plan-time `gamma`/`signed`, and the compositional stress slice correlates them, but the broader matrix surface still differs from TabICLv2. |
 | Global relationship-policy reuse across all plan families | `partial` | Matrix-family, activation-base-kind, and root-base-kind reuse exist in the compositional slice, and parent-arity/source-shape policy now exists in the graph-breadth slice; the remaining gap is that the full reuse surface is intentionally split across opt-in RD-005 lanes rather than applied globally. |
 
+## Evidence Snapshot
+
+- Treat realized artifacts, not this static table, as the current source of
+  truth. Start with `dagzoo diversity-audit` `summary.json` / `summary.md`.
+- Read `parity_surface_summary` first when you want the remaining parity gaps
+  directly: converter methods/variants, GP variants, kernel `gamma` / `signed`,
+  matrix kinds, root base kinds, parent arity, source-shape policy, and
+  categorical cardinality now surface as first-class summary fields.
+- Use [rd005_handoff_evaluation.md](rd005_handoff_evaluation.md) plus
+  [`scripts/evaluate_rd005_follow_on_suite.py`](../../scripts/evaluate_rd005_follow_on_suite.py)
+  when you want the canonical promotion decision across all current internal
+  RD-005 lanes.
+- Use [`scripts/evaluate_handoff_pareto.py`](../../scripts/evaluate_handoff_pareto.py)
+  when you want only the lower-level structural-diversity/throughput/downstream
+  ranking loop without the full suite orchestration.
+- Use [`scripts/render_tabiclv2_parity_report.py`](../../scripts/render_tabiclv2_parity_report.py)
+  when you want one maintainer-facing markdown/json snapshot from a single
+  diversity-audit run.
+- Current maintained read: the compositional slice is the promotion candidate,
+  graph breadth is the structural extreme, and parity means same-or-better
+  realized diversity under the shipped contracts rather than exact Appendix E
+  reproduction.
+
 ## RD-005 Read
 
 - The main gap was narrower correlation reuse, not absence of graph correlation.

@@ -2492,6 +2492,25 @@ def test_generate_one_emits_realized_gp_variant_metadata() -> None:
     assert mechanism_families["variants_present"]
 
 
+def test_generate_one_emits_parity_surface_metadata() -> None:
+    cfg = _tiny_regression_config()
+    cfg.mechanism.function_family_mix = {"gp": 1.0}
+
+    bundle = generate_one(cfg, seed=18838, device="cpu")
+    parity_surface = bundle.metadata["parity_surface"]
+
+    assert parity_surface["schema_name"] == "dagzoo_fixed_layout_parity_surface"
+    assert parity_surface["schema_version"] == 1
+    assert set(parity_surface["gp_variant_counts"]).issubset(
+        {"gp.standard", "gp.periodic", "gp.multiscale"}
+    )
+    assert "matrix_kind_counts" in parity_surface
+    assert "root_base_kind_counts" in parity_surface
+    assert "source_shape_policy_counts" in parity_surface
+    assert "kernel_gamma" in parity_surface
+    assert "categorical_cardinality" in parity_surface
+
+
 def test_generate_one_noise_metadata_emits_gaussian_defaults() -> None:
     cfg = _tiny_regression_config()
     cfg.noise.family = "gaussian"

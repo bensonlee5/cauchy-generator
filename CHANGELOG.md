@@ -10,6 +10,30 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.19.11] - 2026-04-09
+
+### Added
+
+- Added first-class parity-surface diagnostics coverage for converter methods
+  and variants, GP variants, kernel `gamma` and `signed`, matrix kinds,
+  root-base kinds, parent arity, source-shape policy, and categorical
+  cardinality across fixed-layout bundle metadata and `dagzoo diversity-audit`
+  summaries.
+- Added internal RD-005 follow-on evaluation lanes for
+  categorical/cardinality, hybrid, and robustness-composition comparisons,
+  plus one suite runner that joins diversity-audit, parity, and handoff/Pareto
+  evidence into a single promotion decision artifact.
+
+### Changed
+
+- Updated the RD-005 maintainer workflow so internal slice promotion is decided
+  from explicit `promote`, `hold_internal`, and `structural_control_only`
+  statuses rather than a prose-only checklist, while keeping the public recipe
+  surface unchanged until a lane clears the gate.
+- Updated the roadmap, parity audit note, stress-profile guide, and scripts
+  reference so the repo documents the new internal evaluation workflow without
+  overclaiming public promotion.
+
 ## [0.19.10] - 2026-04-07
 
 ### Added

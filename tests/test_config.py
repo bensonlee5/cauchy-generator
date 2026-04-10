@@ -26,6 +26,9 @@ _STRESS_PROFILES = (
     "anti_memorization_piecewise_classification_slice_v1",
     "anti_memorization_piecewise_classification_graph_breadth_slice_v1",
     "anti_memorization_piecewise_classification_compositional_slice_v1",
+    "anti_memorization_piecewise_classification_categorical_cardinality_slice_v1",
+    "anti_memorization_piecewise_classification_hybrid_slice_v1",
+    "anti_memorization_piecewise_classification_robustness_composition_slice_v1",
 )
 
 
@@ -654,6 +657,13 @@ def test_stress_profile_definition_exposes_relationship_slice_profiles() -> None
     compositional = stress_profile_definition(
         "anti_memorization_piecewise_classification_compositional_slice_v1"
     )
+    categorical = stress_profile_definition(
+        "anti_memorization_piecewise_classification_categorical_cardinality_slice_v1"
+    )
+    hybrid = stress_profile_definition("anti_memorization_piecewise_classification_hybrid_slice_v1")
+    robustness = stress_profile_definition(
+        "anti_memorization_piecewise_classification_robustness_composition_slice_v1"
+    )
 
     assert graph_breadth["filter"]["enabled"] is False
     assert graph_breadth["filter"]["min_target_indegree"] == 2
@@ -669,6 +679,16 @@ def test_stress_profile_definition_exposes_relationship_slice_profiles() -> None
     assert compositional["runtime"]["fixed_layout_target_cells"] == 8_000_000
     assert compositional["mechanism"]["function_family_mix"]["piecewise"] == pytest.approx(2.25)
     assert compositional["mechanism"]["function_family_mix"]["linear"] == pytest.approx(0.75)
+    assert categorical["dataset"]["categorical_ratio_min"] == pytest.approx(0.45)
+    assert categorical["dataset"]["max_categorical_cardinality"] == 64
+    assert categorical["runtime"]["fixed_layout_target_cells"] == 6_000_000
+    assert hybrid["graph"]["n_nodes_min"] == 12
+    assert hybrid["filter"]["min_target_indegree"] == 2
+    assert hybrid["mechanism"]["function_family_mix"]["product"] == pytest.approx(2.0)
+    assert robustness["dataset"]["missing_mechanism"] == "mnar"
+    assert robustness["shift"]["enabled"] is True
+    assert robustness["shift"]["mode"] == "mixed"
+    assert robustness["noise"]["family"] == "mixture"
 
 
 def test_stress_profile_definition_rejects_unknown_name() -> None:
