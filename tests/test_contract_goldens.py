@@ -311,6 +311,7 @@ def _coverage_metric_fixture() -> DatasetMetrics:
         graph_indegree_std=0.6,
         graph_outdegree_std=0.5,
         graph_depth_ratio=0.75,
+        graph_target_depth_ratio=0.625,
         graph_reachability_ratio=0.5,
         graph_ancestor_overlap_mean=0.3,
         graph_target_ancestor_fraction=0.625,

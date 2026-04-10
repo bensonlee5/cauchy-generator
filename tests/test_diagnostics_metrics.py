@@ -61,6 +61,10 @@ def test_extract_dataset_metrics_classification_invariants(
     assert metrics.graph_outdegree_std is not None and metrics.graph_outdegree_std >= 0.0
     assert metrics.graph_depth_ratio is not None and 0.0 <= metrics.graph_depth_ratio <= 1.0
     assert (
+        metrics.graph_target_depth_ratio is not None
+        and 0.0 <= metrics.graph_target_depth_ratio <= 1.0
+    )
+    assert (
         metrics.graph_reachability_ratio is not None
         and 0.0 <= metrics.graph_reachability_ratio <= 1.0
     )
@@ -119,6 +123,10 @@ def test_extract_dataset_metrics_regression_branch(
     assert metrics.graph_indegree_std is not None and metrics.graph_indegree_std >= 0.0
     assert metrics.graph_outdegree_std is not None and metrics.graph_outdegree_std >= 0.0
     assert metrics.graph_depth_ratio is not None and 0.0 <= metrics.graph_depth_ratio <= 1.0
+    assert (
+        metrics.graph_target_depth_ratio is not None
+        and 0.0 <= metrics.graph_target_depth_ratio <= 1.0
+    )
     assert (
         metrics.graph_reachability_ratio is not None
         and 0.0 <= metrics.graph_reachability_ratio <= 1.0
@@ -306,6 +314,7 @@ def test_extract_dataset_metrics_relationship_structure_metrics_from_lineage_met
     assert metrics.graph_indegree_std == pytest.approx(np.sqrt(0.5))
     assert metrics.graph_outdegree_std == pytest.approx(np.sqrt(0.5))
     assert metrics.graph_depth_ratio == pytest.approx(0.75)
+    assert metrics.graph_target_depth_ratio == pytest.approx(0.75)
     assert metrics.graph_reachability_ratio == pytest.approx(5.0 / 6.0)
     assert metrics.graph_ancestor_overlap_mean == pytest.approx(5.0 / 9.0)
     assert metrics.graph_target_ancestor_fraction == pytest.approx(1.0)

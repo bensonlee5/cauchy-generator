@@ -81,6 +81,7 @@ Inspect first:
 
 - `coverage_summary.json`
 - `metrics.graph_depth_ratio`
+- `metrics.graph_target_depth_ratio`
 - `metrics.graph_reachability_ratio`
 - `metrics.graph_target_ancestor_fraction`
 
@@ -120,6 +121,7 @@ Inspect first:
 - `coverage_summary.json`
 - `metrics.graph_indegree_std`
 - `metrics.graph_outdegree_std`
+- `metrics.graph_target_depth_ratio`
 - `metrics.graph_ancestor_overlap_mean`
 - `metrics.graph_target_ancestor_fraction`
 

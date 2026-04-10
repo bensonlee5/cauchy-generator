@@ -103,6 +103,124 @@ def test_sample_layout_graph_breadth_prefers_higher_scoring_candidate(
 
     torch.testing.assert_close(sampled.adjacency, high_breadth)
     assert int(sampled.target_to_node) == 3
+    assert int(sampled.target_depth_nodes) == 3
+
+
+def test_sample_layout_hard_target_depth_min_rejects_shallow_candidates(monkeypatch) -> None:
+    cfg = _small_layout_config()
+    cfg.graph.target_depth_nodes_min = 3
+    cfg.validate_generation_constraints()
+
+    shallow = torch.tensor(
+        [
+            [False, False, False, True],
+            [False, False, False, False],
+            [False, False, False, False],
+            [False, False, False, False],
+        ],
+        dtype=torch.bool,
+    )
+    deep = torch.tensor(
+        [
+            [False, False, True, False],
+            [False, False, False, False],
+            [False, False, False, True],
+            [False, False, False, False],
+        ],
+        dtype=torch.bool,
+    )
+    dag_iter = iter((shallow, deep))
+
+    monkeypatch.setattr(layout_mod, "sample_dag", lambda *_args, **_kwargs: next(dag_iter).clone())
+    monkeypatch.setattr(
+        layout_mod,
+        "_sample_assignments",
+        lambda n_cols, _n_nodes, _generator, _device: [int(index) for index in range(int(n_cols))],
+    )
+    monkeypatch.setattr(layout_mod, "_sample_target_node", lambda **_kwargs: 3)
+
+    sampled = layout_mod._sample_layout(cfg, KeyedRng(901).keyed("layout"), "cpu")
+
+    torch.testing.assert_close(sampled.adjacency, deep)
+    assert int(sampled.target_depth_nodes) == 3
+
+
+def test_sample_layout_soft_target_depth_max_prefers_in_range_candidate(monkeypatch) -> None:
+    cfg = _small_layout_config()
+    cfg.graph.target_depth_nodes_max = 2
+    cfg.validate_generation_constraints()
+
+    over_max = torch.tensor(
+        [
+            [False, False, True, False],
+            [False, False, False, False],
+            [False, False, False, True],
+            [False, False, False, False],
+        ],
+        dtype=torch.bool,
+    )
+    within_max = torch.tensor(
+        [
+            [False, False, False, True],
+            [False, False, False, False],
+            [False, False, False, False],
+            [False, False, False, False],
+        ],
+        dtype=torch.bool,
+    )
+    dag_iter = iter((over_max, within_max))
+
+    monkeypatch.setattr(layout_mod, "sample_dag", lambda *_args, **_kwargs: next(dag_iter).clone())
+    monkeypatch.setattr(
+        layout_mod,
+        "_sample_assignments",
+        lambda n_cols, _n_nodes, _generator, _device: [int(index) for index in range(int(n_cols))],
+    )
+    monkeypatch.setattr(layout_mod, "_sample_target_node", lambda **_kwargs: 3)
+
+    sampled = layout_mod._sample_layout(cfg, KeyedRng(902).keyed("layout"), "cpu")
+
+    torch.testing.assert_close(sampled.adjacency, within_max)
+    assert int(sampled.target_depth_nodes) == 2
+
+
+def test_sample_layout_soft_target_depth_max_falls_back_to_smallest_overage(monkeypatch) -> None:
+    cfg = _small_layout_config()
+    cfg.graph.target_depth_nodes_max = 2
+    cfg.validate_generation_constraints()
+
+    larger_overage = torch.tensor(
+        [
+            [False, True, False, False],
+            [False, False, True, False],
+            [False, False, False, True],
+            [False, False, False, False],
+        ],
+        dtype=torch.bool,
+    )
+    smaller_overage = torch.tensor(
+        [
+            [False, False, True, False],
+            [False, False, False, False],
+            [False, False, False, True],
+            [False, False, False, False],
+        ],
+        dtype=torch.bool,
+    )
+    dag_iter = iter((larger_overage, smaller_overage))
+
+    monkeypatch.setattr(layout_mod, "sample_dag", lambda *_args, **_kwargs: next(dag_iter).clone())
+    monkeypatch.setattr(
+        layout_mod,
+        "_sample_assignments",
+        lambda n_cols, _n_nodes, _generator, _device: [int(index) for index in range(int(n_cols))],
+    )
+    monkeypatch.setattr(layout_mod, "_sample_target_node", lambda **_kwargs: 3)
+
+    sampled = layout_mod._sample_layout(cfg, KeyedRng(903).keyed("layout"), "cpu")
+
+    torch.testing.assert_close(sampled.adjacency, smaller_overage)
+    assert int(sampled.target_depth_nodes) == 3
 
 
 def test_sample_layout_only_enables_relationship_profile_for_graph_enabled_profiles(
@@ -211,6 +329,7 @@ def test_resample_layout_graph_graph_breadth_prefers_higher_scoring_candidate(mo
         graph_nodes=4,
         graph_edges=2,
         graph_depth_nodes=2,
+        target_depth_nodes=2,
         graph_edge_density=2.0 / 6.0,
         adjacency=torch.tensor(
             [

@@ -9,6 +9,7 @@ from hypothesis import strategies as st
 from dagzoo.graph.dag_sampler import (
     dag_edge_density,
     dag_longest_path_nodes,
+    dag_longest_path_to_target_nodes,
     sample_dag,
 )
 from dagzoo.rng import SEED32_MAX
@@ -103,6 +104,46 @@ def test_dag_longest_path_nodes_on_known_graph() -> None:
     assert dag_longest_path_nodes(adjacency) == 4
 
 
+def test_dag_longest_path_to_target_nodes_on_root_target() -> None:
+    adjacency = torch.tensor(
+        [
+            [0, 0, 0],
+            [0, 0, 1],
+            [0, 0, 0],
+        ],
+        dtype=torch.bool,
+    )
+    assert dag_longest_path_to_target_nodes(adjacency, 0) == 1
+
+
+def test_dag_longest_path_to_target_nodes_uses_longest_reachable_root_path() -> None:
+    adjacency = torch.tensor(
+        [
+            [0, 0, 0, 1, 0],
+            [0, 0, 1, 0, 0],
+            [0, 0, 0, 1, 0],
+            [0, 0, 0, 0, 1],
+            [0, 0, 0, 0, 0],
+        ],
+        dtype=torch.bool,
+    )
+    assert dag_longest_path_to_target_nodes(adjacency, 4) == 4
+
+
+def test_dag_longest_path_to_target_nodes_uses_longest_of_multiple_paths() -> None:
+    adjacency = torch.tensor(
+        [
+            [0, 1, 1, 0, 0],
+            [0, 0, 0, 1, 0],
+            [0, 0, 0, 1, 0],
+            [0, 0, 0, 0, 1],
+            [0, 0, 0, 0, 0],
+        ],
+        dtype=torch.bool,
+    )
+    assert dag_longest_path_to_target_nodes(adjacency, 4) == 4
+
+
 def test_dag_longest_path_nodes_rejects_non_upper_triangular_input() -> None:
     adjacency = torch.tensor(
         [
@@ -114,12 +155,16 @@ def test_dag_longest_path_nodes_rejects_non_upper_triangular_input() -> None:
     )
     with pytest.raises(ValueError, match="upper-triangular"):
         dag_longest_path_nodes(adjacency)
+    with pytest.raises(ValueError, match="upper-triangular"):
+        dag_longest_path_to_target_nodes(adjacency, 2)
 
 
 def test_dag_longest_path_nodes_rejects_singleton_self_loop() -> None:
     adjacency = torch.tensor([[1]], dtype=torch.bool)
     with pytest.raises(ValueError, match="upper-triangular"):
         dag_longest_path_nodes(adjacency)
+    with pytest.raises(ValueError, match="upper-triangular"):
+        dag_longest_path_to_target_nodes(adjacency, 0)
 
 
 def test_dag_edge_density_on_known_graph() -> None:

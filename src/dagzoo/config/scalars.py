@@ -106,6 +106,25 @@ def _validate_int_field(
     return parsed
 
 
+def _validate_optional_int_field(
+    *,
+    field_name: str,
+    value: Any,
+    minimum: int,
+    maximum: int | None = None,
+) -> int | None:
+    """Validate and normalize optional integer fields with inclusive bounds."""
+
+    if value is None:
+        return None
+    return _validate_int_field(
+        field_name=field_name,
+        value=value,
+        minimum=minimum,
+        maximum=maximum,
+    )
+
+
 def _validate_min_max_pair(
     *,
     name: str,

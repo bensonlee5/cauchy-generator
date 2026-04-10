@@ -37,6 +37,7 @@ class LayoutPlan:
     graph_nodes: int
     graph_edges: int
     graph_depth_nodes: int
+    target_depth_nodes: int
     graph_edge_density: float
     adjacency: torch.Tensor
     feature_node_assignment: list[int]

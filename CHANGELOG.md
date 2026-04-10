@@ -10,6 +10,23 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.19.12] - 2026-04-10
+
+### Added
+
+- Added public `graph.target_depth_nodes_min/max` controls so custom configs can
+  request target-specific structural depth based on the longest root-to-target
+  path instead of relying only on overall DAG depth.
+- Added emitted `graph_target_depth_nodes` bundle metadata plus
+  `graph_target_depth_ratio` diagnostics coverage so runs can verify the
+  realized target-depth regime alongside the existing global graph metrics.
+
+### Changed
+
+- Updated graph-structure candidate scoring and steering-time graph resampling
+  to prefer target-depth-compatible layouts while keeping
+  `graph_depth_nodes`/`graph_depth_ratio` as stable global observability fields.
+
 ## [0.19.11] - 2026-04-09
 
 ### Added

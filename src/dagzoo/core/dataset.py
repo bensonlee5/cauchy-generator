@@ -213,6 +213,16 @@ def _heterogeneous_request_run_provenance_for_config(
     provenance["graph"] = {
         "n_nodes_min": int(config.graph.n_nodes_min),
         "n_nodes_max": int(config.graph.n_nodes_max),
+        "target_depth_nodes_min": (
+            None
+            if config.graph.target_depth_nodes_min is None
+            else int(config.graph.target_depth_nodes_min)
+        ),
+        "target_depth_nodes_max": (
+            None
+            if config.graph.target_depth_nodes_max is None
+            else int(config.graph.target_depth_nodes_max)
+        ),
     }
     provenance["mechanism"] = {
         "function_family_mix": (

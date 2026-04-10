@@ -69,6 +69,30 @@ def dag_longest_path_nodes(adjacency: torch.Tensor) -> int:
     return max(longest_from)
 
 
+def dag_longest_path_to_target_nodes(adjacency: torch.Tensor, target_node: int) -> int:
+    """Return the longest root-to-target path length measured in number of nodes."""
+
+    if adjacency.ndim != 2 or adjacency.shape[0] != adjacency.shape[1]:
+        raise ValueError(f"adjacency must be square, got shape={tuple(adjacency.shape)!r}")
+    adj_bool = adjacency.to(dtype=torch.bool)
+    if bool(torch.tril(adj_bool, diagonal=0).any().item()):
+        raise ValueError("adjacency must be strict upper-triangular for DAG depth computation.")
+    n_nodes = int(adjacency.shape[0])
+    if target_node < 0 or target_node >= n_nodes:
+        raise ValueError(f"target_node must be in range [0, {n_nodes - 1}], got {target_node}.")
+    if n_nodes == 0:
+        return 0
+
+    longest_to = [1] * n_nodes
+    for dst in range(n_nodes):
+        parents = torch.where(adj_bool[:, dst])[0]
+        if int(parents.numel()) == 0:
+            longest_to[dst] = 1
+        else:
+            longest_to[dst] = 1 + max(longest_to[int(parent.item())] for parent in parents)
+    return int(longest_to[int(target_node)])
+
+
 def dag_edge_density(adjacency: torch.Tensor) -> float:
     """Return realized DAG edge density over strict upper-triangular capacity."""
 

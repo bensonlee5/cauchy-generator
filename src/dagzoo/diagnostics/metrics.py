@@ -86,6 +86,7 @@ def extract_dataset_metrics(
         graph_indegree_std=_float_or_none(raw.get("graph_indegree_std")),
         graph_outdegree_std=_float_or_none(raw.get("graph_outdegree_std")),
         graph_depth_ratio=_float_or_none(raw.get("graph_depth_ratio")),
+        graph_target_depth_ratio=_float_or_none(raw.get("graph_target_depth_ratio")),
         graph_reachability_ratio=_float_or_none(raw.get("graph_reachability_ratio")),
         graph_ancestor_overlap_mean=_float_or_none(raw.get("graph_ancestor_overlap_mean")),
         graph_target_ancestor_fraction=_float_or_none(raw.get("graph_target_ancestor_fraction")),

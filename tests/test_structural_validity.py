@@ -8,6 +8,7 @@ from dagzoo.filtering.structural_validity import (
     evaluate_layout_structural_validity,
     evaluate_lineage_structural_validity,
 )
+from dagzoo.graph import dag_longest_path_to_target_nodes
 from dagzoo.io.lineage_schema import LINEAGE_SCHEMA_VERSION_DENSE
 
 
@@ -32,6 +33,10 @@ def _layout(
         graph_nodes=graph_nodes,
         graph_edges=graph_edges,
         graph_depth_nodes=graph_nodes,
+        target_depth_nodes=dag_longest_path_to_target_nodes(
+            adjacency_tensor,
+            int(target_to_node),
+        ),
         graph_edge_density=(
             float(graph_edges) / float(density_denominator) if density_denominator > 0 else 0.0
         ),

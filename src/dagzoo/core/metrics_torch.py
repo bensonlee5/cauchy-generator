@@ -31,7 +31,7 @@ from dagzoo.core.metric_constants import (
     validate_metric_shapes,
 )
 from dagzoo.core.shift import mechanism_nonlinear_mass
-from dagzoo.graph import dag_longest_path_nodes
+from dagzoo.graph import dag_longest_path_nodes, dag_longest_path_to_target_nodes
 from dagzoo.math import (
     coerce_optional_finite_float as _coerce_optional_finite_float,
 )
@@ -269,6 +269,7 @@ def _extract_relationship_structure_metrics(metadata: dict[str, Any]) -> dict[st
         "graph_indegree_std": None,
         "graph_outdegree_std": None,
         "graph_depth_ratio": None,
+        "graph_target_depth_ratio": None,
         "graph_reachability_ratio": None,
         "graph_ancestor_overlap_mean": None,
         "graph_target_ancestor_fraction": None,
@@ -302,6 +303,9 @@ def _extract_relationship_structure_metrics(metadata: dict[str, Any]) -> dict[st
 
     target_to_node = _target_to_node(metadata, n_nodes=n_nodes)
     if target_to_node is not None:
+        metrics["graph_target_depth_ratio"] = float(
+            dag_longest_path_to_target_nodes(adjacency, int(target_to_node)) / float(n_nodes)
+        )
         metrics["graph_target_ancestor_fraction"] = float(
             ancestor_masks[int(target_to_node)].to(dtype=torch.float32).mean().item()
         )

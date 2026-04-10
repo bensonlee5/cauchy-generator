@@ -142,7 +142,29 @@ Detailed guides:
 
 ______________________________________________________________________
 
-## 6. Generation modes
+## 6. Target-depth graph control
+
+Use `graph.target_depth_nodes_min/max` when you want the selected target node
+to sit deeper or shallower in the latent DAG, independent of the overall graph
+depth.
+
+```yaml
+graph:
+  n_nodes_min: 8
+  n_nodes_max: 16
+  target_depth_nodes_min: 3
+  target_depth_nodes_max: 5
+```
+
+Depth is measured in number of nodes along the longest root-to-target path, so
+`1` means the target node is itself a root. The minimum is enforced as a hard
+generation constraint; the maximum is treated as a soft preference among
+eligible graph candidates. Use diagnostics to inspect the realized
+`graph_target_depth_ratio` after generation.
+
+______________________________________________________________________
+
+## 7. Generation modes
 
 Use `dagzoo generate`, `generate_one`, `generate_batch`, or
 `generate_batch_iter`; those entrypoints share the same public generation

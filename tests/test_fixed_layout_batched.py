@@ -62,6 +62,7 @@ from dagzoo.core.fixed_layout.plan_types import (
 from dagzoo.core.fixed_layout.runtime import _sample_fixed_layout
 from dagzoo.core.layout_types import LayoutPlan
 from dagzoo.functions.activations import _fixed_activation, _gumbel_softmax_activation
+from dagzoo.graph import dag_longest_path_to_target_nodes
 from dagzoo.rng import KeyedRng
 
 
@@ -74,6 +75,14 @@ class ConverterSpec:
 
 
 def _regression_intervention_layout_and_plan() -> tuple[LayoutPlan, FixedLayoutExecutionPlan]:
+    adjacency = torch.tensor(
+        [
+            [False, False, True],
+            [False, False, False],
+            [False, False, False],
+        ],
+        dtype=torch.bool,
+    )
     layout = LayoutPlan(
         n_features=2,
         n_cat=0,
@@ -85,15 +94,9 @@ def _regression_intervention_layout_and_plan() -> tuple[LayoutPlan, FixedLayoutE
         graph_nodes=3,
         graph_edges=1,
         graph_depth_nodes=2,
+        target_depth_nodes=2,
         graph_edge_density=1.0 / 3.0,
-        adjacency=torch.tensor(
-            [
-                [False, False, True],
-                [False, False, False],
-                [False, False, False],
-            ],
-            dtype=torch.bool,
-        ),
+        adjacency=adjacency,
         feature_node_assignment=[0, 1],
         target_to_node=2,
     )
@@ -150,6 +153,7 @@ def _layout_stub(
 ) -> LayoutPlan:
     graph_edges = int(adjacency.to(dtype=torch.int64).sum().item())
     n_features = len(feature_types)
+    target_to_node = 0 if target_node_assignment is None else int(target_node_assignment)
     cat_idx = [idx for idx, kind in enumerate(feature_types) if kind == "cat"]
     card_by_feature = {idx: 4 for idx in cat_idx}
     density_denominator = graph_nodes * max(graph_nodes - 1, 1)
@@ -165,10 +169,11 @@ def _layout_stub(
         graph_nodes=int(graph_nodes),
         graph_edges=graph_edges,
         graph_depth_nodes=int(graph_nodes),
+        target_depth_nodes=dag_longest_path_to_target_nodes(adjacency, target_to_node),
         graph_edge_density=graph_edge_density,
         adjacency=adjacency,
         feature_node_assignment=list(feature_node_assignment),
-        target_to_node=0 if target_node_assignment is None else int(target_node_assignment),
+        target_to_node=target_to_node,
     )
 
 
@@ -632,6 +637,7 @@ def test_build_fixed_layout_execution_plan_uses_keyed_node_roots(
         graph_nodes=2,
         graph_edges=1,
         graph_depth_nodes=2,
+        target_depth_nodes=2,
         graph_edge_density=0.5,
         adjacency=torch.tensor([[False, True], [False, False]], dtype=torch.bool),
         feature_node_assignment=[0],
@@ -1078,7 +1084,8 @@ def test_generate_fixed_layout_raw_batch_keys_seeded_batch_rng_per_node(
         feature_types=[],
         graph_nodes=2,
         graph_edges=0,
-        graph_depth_nodes=2,
+        graph_depth_nodes=1,
+        target_depth_nodes=1,
         graph_edge_density=0.0,
         adjacency=torch.zeros((2, 2), dtype=torch.bool),
         feature_node_assignment=[],
@@ -1181,6 +1188,7 @@ def test_generate_fixed_layout_raw_batch_reports_runtime_metrics(
         graph_nodes=1,
         graph_edges=0,
         graph_depth_nodes=1,
+        target_depth_nodes=1,
         graph_edge_density=0.0,
         adjacency=torch.zeros((1, 1), dtype=torch.bool),
         feature_node_assignment=[0],
@@ -1530,6 +1538,7 @@ def test_generate_fixed_layout_raw_batch_target_intervention_uses_class_modulo(
         graph_nodes=1,
         graph_edges=0,
         graph_depth_nodes=1,
+        target_depth_nodes=1,
         graph_edge_density=0.0,
         adjacency=torch.zeros((1, 1), dtype=torch.bool),
         feature_node_assignment=[],
@@ -1706,6 +1715,7 @@ def test_generate_fixed_layout_validation_label_batch_skips_non_ancestor_nodes(
         graph_nodes=3,
         graph_edges=1,
         graph_depth_nodes=2,
+        target_depth_nodes=2,
         graph_edge_density=1.0 / 3.0,
         adjacency=torch.tensor(
             [
