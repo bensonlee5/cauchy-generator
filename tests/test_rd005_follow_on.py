@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from dagzoo.diagnostics.rd005_follow_on import (
     PROMOTION_STATUS_HOLD_INTERNAL,
     PROMOTION_STATUS_PROMOTE,
     PROMOTION_STATUS_STRUCTURAL_CONTROL_ONLY,
     build_rd005_follow_on_report,
+    write_rd005_follow_on_artifacts,
 )
 
 
@@ -334,3 +338,53 @@ def test_build_rd005_follow_on_report_requires_challenger_to_beat_incumbent() ->
     assert lane_status["categorical-cardinality"]["promotion_failure_reasons"] == [
         "does_not_beat_incumbent"
     ]
+
+
+def test_write_rd005_follow_on_artifacts_persists_summary_files(tmp_path: Path) -> None:
+    report = build_rd005_follow_on_report(
+        baseline_config_path="configs/default.yaml",
+        diversity_report=_diversity_report(),
+        parity_report=_parity_report(),
+        pareto_report=_pareto_report(
+            compositional=_pareto_variant(
+                label="compositional",
+                structural_shift=12.0,
+                datasets_per_minute=90.0,
+                downstream_mean=0.55,
+            ),
+            graph_breadth=_pareto_variant(
+                label="graph-breadth",
+                structural_shift=14.0,
+                datasets_per_minute=88.0,
+                downstream_mean=0.56,
+            ),
+            categorical_cardinality=_pareto_variant(
+                label="categorical-cardinality",
+                structural_shift=13.0,
+                datasets_per_minute=86.0,
+                downstream_mean=0.57,
+            ),
+            hybrid=_pareto_variant(
+                label="hybrid",
+                structural_shift=16.0,
+                datasets_per_minute=89.0,
+                downstream_mean=0.54,
+            ),
+            robustness_composition=_pareto_variant(
+                label="robustness-composition",
+                structural_shift=11.0,
+                datasets_per_minute=87.0,
+                downstream_mean=0.53,
+            ),
+        ),
+    )
+
+    artifact_paths = write_rd005_follow_on_artifacts(report, out_dir=tmp_path)
+
+    payload = json.loads(artifact_paths["summary_json"].read_text(encoding="utf-8"))
+    markdown = artifact_paths["summary_md"].read_text(encoding="utf-8")
+
+    assert artifact_paths["summary_json"] == tmp_path / "follow_on_promotion_summary.json"
+    assert artifact_paths["summary_md"] == tmp_path / "follow_on_promotion_summary.md"
+    assert payload["summary"]["winner_label"] == "hybrid"
+    assert "## Promotion Table" in markdown
