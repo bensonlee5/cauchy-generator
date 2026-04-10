@@ -106,6 +106,56 @@ def test_load_default_config() -> None:
     assert cfg.stress.profile is None
     assert cfg.intervention.mode == "observational"
     assert cfg.intervention.targets == []
+    assert cfg.graph.target_depth_nodes_min is None
+    assert cfg.graph.target_depth_nodes_max is None
+
+
+def test_graph_target_depth_constraints_accept_optional_ordered_bounds() -> None:
+    cfg = GeneratorConfig.from_dict(
+        {
+            "graph": {
+                "n_nodes_min": 3,
+                "n_nodes_max": 5,
+                "target_depth_nodes_min": 2,
+                "target_depth_nodes_max": 4,
+            }
+        }
+    )
+
+    assert cfg.graph.target_depth_nodes_min == 2
+    assert cfg.graph.target_depth_nodes_max == 4
+
+
+@pytest.mark.parametrize(
+    ("payload", "match"),
+    [
+        (
+            {"graph": {"target_depth_nodes_min": 0}},
+            r"graph\.target_depth_nodes_min must be an integer >= 1",
+        ),
+        (
+            {"graph": {"n_nodes_max": 4, "target_depth_nodes_max": 5}},
+            r"graph\.target_depth_nodes_max must be <= graph\.n_nodes_max",
+        ),
+        (
+            {
+                "graph": {
+                    "n_nodes_min": 3,
+                    "n_nodes_max": 5,
+                    "target_depth_nodes_min": 4,
+                    "target_depth_nodes_max": 3,
+                }
+            },
+            r"graph\.target_depth_nodes_min must be <= target_depth_nodes_max",
+        ),
+    ],
+)
+def test_graph_target_depth_constraints_reject_invalid_values(
+    payload: dict[str, object],
+    match: str,
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        GeneratorConfig.from_dict(payload)
 
 
 def test_config_package_reexports_noise_mixture_component_constants() -> None:

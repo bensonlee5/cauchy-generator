@@ -20,7 +20,7 @@ from .plan_types import (
     fixed_layout_signature_payloads,
 )
 
-_FIXED_LAYOUT_METADATA_SCHEMA_VERSION = 11
+_FIXED_LAYOUT_METADATA_SCHEMA_VERSION = 12
 _PARITY_SURFACE_SCHEMA_NAME = "dagzoo_fixed_layout_parity_surface"
 _PARITY_SURFACE_SCHEMA_VERSION = 1
 
@@ -67,6 +67,7 @@ def _layout_to_dict(layout: LayoutPlan) -> dict[str, Any]:
         "graph_nodes": int(layout.graph_nodes),
         "graph_edges": int(layout.graph_edges),
         "graph_depth_nodes": int(layout.graph_depth_nodes),
+        "target_depth_nodes": int(layout.target_depth_nodes),
         "graph_edge_density": float(layout.graph_edge_density),
         "adjacency": adjacency_payload,
         "feature_node_assignment": [int(value) for value in layout.feature_node_assignment],

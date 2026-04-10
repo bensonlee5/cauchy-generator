@@ -22,6 +22,7 @@ _COVERAGE_GOLDEN_METRICS = (
     "graph_indegree_std",
     "graph_outdegree_std",
     "graph_depth_ratio",
+    "graph_target_depth_ratio",
     "graph_reachability_ratio",
     "graph_ancestor_overlap_mean",
     "graph_target_ancestor_fraction",

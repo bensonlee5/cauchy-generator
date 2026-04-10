@@ -19,6 +19,7 @@ class DatasetMetrics:
     graph_indegree_std: float | None
     graph_outdegree_std: float | None
     graph_depth_ratio: float | None
+    graph_target_depth_ratio: float | None
     graph_reachability_ratio: float | None
     graph_ancestor_overlap_mean: float | None
     graph_target_ancestor_fraction: float | None

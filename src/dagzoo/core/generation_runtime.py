@@ -244,6 +244,7 @@ def _base_bundle_metadata_for_layout(
         "graph_nodes": int(layout.graph_nodes),
         "graph_edges": int(layout.graph_edges),
         "graph_depth_nodes": int(layout.graph_depth_nodes),
+        "graph_target_depth_nodes": int(layout.target_depth_nodes),
         "graph_edge_density": float(layout.graph_edge_density),
         "lineage": _build_lineage_metadata(layout, feature_index_map=feature_index_map),
     }

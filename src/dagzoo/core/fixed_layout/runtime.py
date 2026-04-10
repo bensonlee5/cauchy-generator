@@ -209,6 +209,14 @@ def _validate_sampled_layout_structure(config: GeneratorConfig, *, layout: Layou
     )
     if not structural_result.valid:
         raise InvalidStructuralLayoutError(str(structural_result.reason))
+    if config.graph.target_depth_nodes_min is not None and int(layout.target_depth_nodes) < int(
+        config.graph.target_depth_nodes_min
+    ):
+        raise InvalidStructuralLayoutError(
+            "target_depth_below_min:"
+            f" target_depth_nodes={layout.target_depth_nodes}"
+            f" min_target_depth_nodes={config.graph.target_depth_nodes_min}"
+        )
 
 
 def _normalized_keyed_replay_root_path(

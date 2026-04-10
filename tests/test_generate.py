@@ -66,6 +66,7 @@ from dagzoo.core.validation import (
     _stratified_split_indices,
     classify_recoverable_generation_failure,
 )
+from dagzoo.graph import dag_longest_path_to_target_nodes
 from dagzoo.io.lineage_schema import (
     LINEAGE_SCHEMA_NAME,
     LINEAGE_SCHEMA_VERSION,
@@ -137,6 +138,7 @@ def _layout_stub(
 ) -> LayoutPlan:
     graph_edges = int(adjacency.to(dtype=torch.int64).sum().item())
     n_features = len(feature_types)
+    target_to_node = 0 if target_node_assignment is None else int(target_node_assignment)
     cat_idx = [idx for idx, kind in enumerate(feature_types) if kind == "cat"]
     card_by_feature = {idx: 4 for idx in cat_idx}
     density_denominator = graph_nodes * max(graph_nodes - 1, 1)
@@ -152,10 +154,11 @@ def _layout_stub(
         graph_nodes=int(graph_nodes),
         graph_edges=graph_edges,
         graph_depth_nodes=int(graph_nodes),
+        target_depth_nodes=dag_longest_path_to_target_nodes(adjacency, target_to_node),
         graph_edge_density=graph_edge_density,
         adjacency=adjacency,
         feature_node_assignment=list(feature_node_assignment),
-        target_to_node=0 if target_node_assignment is None else int(target_node_assignment),
+        target_to_node=target_to_node,
     )
 
 
@@ -2345,10 +2348,16 @@ def test_generate_one_emits_graph_complexity_metadata() -> None:
 
     graph_nodes = int(bundle.metadata["graph_nodes"])
     graph_depth_nodes = int(bundle.metadata["graph_depth_nodes"])
+    graph_target_depth_nodes = int(bundle.metadata["graph_target_depth_nodes"])
     graph_edge_density = float(bundle.metadata["graph_edge_density"])
+    lineage = bundle.metadata["lineage"]
+    adjacency = torch.as_tensor(lineage["graph"]["adjacency"], dtype=torch.bool)
+    target_to_node = int(lineage["assignments"]["target_to_node"])
 
     assert 1 <= graph_depth_nodes <= graph_nodes
+    assert 1 <= graph_target_depth_nodes <= graph_nodes
     assert 0.0 <= graph_edge_density <= 1.0
+    assert graph_target_depth_nodes == dag_longest_path_to_target_nodes(adjacency, target_to_node)
 
 
 def test_generate_batch_reproducible_metadata() -> None:
@@ -4632,7 +4641,7 @@ def test_fixed_layout_plan_classification_attempt_plan_replay_fixture_is_stable(
     plan = _sample_fixed_layout(cfg, seed=701, device="cpu")
 
     assert plan.prepared_execution_context is not None
-    assert plan.layout_signature == "edcc78abca24aae79b3a85ef48f1e378"
+    assert plan.layout_signature == "61e2914f40c156d632daa12dd998e444"
     assert plan.plan_signature == "b3a06637a1004dcbd9b546008c777a1a"
 
     attempt_plan = _fixed_layout_plan_classification_attempt_plan(
@@ -6924,7 +6933,7 @@ def test_generate_batch_graph_steering_preserves_base_replay_roots_and_replays_p
     assert "steering_layout_root_path" not in steered_keyed_replay
     assert "steering_execution_plan_root_path" not in steered_keyed_replay
     assert replayed_plan.layout_signature == steered_bundle.metadata["layout_signature"]
-    assert int(steered_bundle.metadata["layout_plan_schema_version"]) == 11
+    assert int(steered_bundle.metadata["layout_plan_schema_version"]) == 12
     assert str(steered_bundle.metadata["layout_execution_contract"]) == "chunk_batched_v3"
     assert str(replayed_plan.layout_signature) == str(steered_bundle.metadata["layout_signature"])
     assert str(replayed_plan.plan_signature) == str(

@@ -262,6 +262,7 @@ def test_run_effective_diversity_audit_graph_breadth_variant_surfaces_relationsh
                 "graph_ancestor_overlap_mean": (0.15, 0.12, 0.15, 0.18),
                 "graph_reachability_ratio": (0.25, 0.22, 0.25, 0.28),
                 "graph_depth_ratio": (0.30, 0.28, 0.30, 0.32),
+                "graph_target_depth_ratio": (0.24, 0.22, 0.24, 0.26),
             }
         ),
     )
@@ -274,6 +275,7 @@ def test_run_effective_diversity_audit_graph_breadth_variant_surfaces_relationsh
                 "graph_ancestor_overlap_mean": (0.35, 0.30, 0.35, 0.40),
                 "graph_reachability_ratio": (0.50, 0.45, 0.50, 0.55),
                 "graph_depth_ratio": (0.48, 0.44, 0.48, 0.52),
+                "graph_target_depth_ratio": (0.42, 0.38, 0.42, 0.46),
             }
         ),
     )
@@ -312,6 +314,7 @@ def test_run_effective_diversity_audit_graph_breadth_variant_surfaces_relationsh
         "graph_ancestor_overlap_mean",
         "graph_reachability_ratio",
         "graph_depth_ratio",
+        "graph_target_depth_ratio",
     ):
         assert variant_metrics[metric]["mean"] > baseline_metrics[metric]["mean"]
         assert comparison["structural_diversity_metric_shift_pct"][metric] > 0.0

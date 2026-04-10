@@ -11,7 +11,12 @@ from dagzoo.core.fixed_layout.plan_types import FixedLayoutConverterSpec
 from dagzoo.core.layout_types import FeatureType, LayoutPlan
 from dagzoo.core.shift import resolve_shift_runtime_params
 from dagzoo.functions._rng_helpers import randint_scalar
-from dagzoo.graph import dag_edge_density, dag_longest_path_nodes, sample_dag
+from dagzoo.graph import (
+    dag_edge_density,
+    dag_longest_path_nodes,
+    dag_longest_path_to_target_nodes,
+    sample_dag,
+)
 from dagzoo.rng import KeyedRng
 from dagzoo.sampling.correlated import sample_correlated_choice, sample_correlated_num
 
@@ -136,7 +141,7 @@ def _graph_relationship_candidate_score(
     adjacency: torch.Tensor,
     feature_to_node: list[int],
     target_to_node: int,
-    graph_depth_nodes: int,
+    target_depth_nodes: int,
     relationship_profile: str,
 ) -> float:
     adjacency_cpu = adjacency.to(device="cpu", dtype=torch.bool)
@@ -157,7 +162,7 @@ def _graph_relationship_candidate_score(
     )
     capacity = n_nodes * (n_nodes - 1) // 2
     reachability_ratio = float(reachability.sum().item() / float(capacity)) if capacity > 0 else 0.0
-    depth_ratio = float(int(graph_depth_nodes) / float(n_nodes))
+    depth_ratio = float(int(target_depth_nodes) / float(n_nodes))
     (
         multi_parent_weight,
         ancestor_weight,
@@ -173,6 +178,35 @@ def _graph_relationship_candidate_score(
         + (reachability_weight * reachability_ratio)
         + (depth_weight * depth_ratio)
         + (root_weight * root_fraction)
+    )
+
+
+def _target_depth_max_overage(
+    *,
+    target_depth_nodes: int,
+    target_depth_nodes_max: int | None,
+) -> int:
+    if target_depth_nodes_max is None:
+        return 0
+    return max(0, int(target_depth_nodes) - int(target_depth_nodes_max))
+
+
+def _target_depth_candidate_rank(
+    *,
+    target_depth_nodes: int,
+    target_depth_nodes_max: int | None,
+    relationship_score: float,
+    structure_attempt: int,
+) -> tuple[bool, int, float, int]:
+    overage = _target_depth_max_overage(
+        target_depth_nodes=int(target_depth_nodes),
+        target_depth_nodes_max=target_depth_nodes_max,
+    )
+    return (
+        overage == 0,
+        -int(overage),
+        float(relationship_score),
+        -int(structure_attempt),
     )
 
 
@@ -392,8 +426,20 @@ def _sample_layout(
     feature_to_node: list[int] | None = None
     target_to_node: int | None = None
     graph_depth_nodes = 1
+    target_depth_nodes = 1
     graph_edge_density = 0.0
-    best_eligible_candidate: tuple[float, torch.Tensor, list[int], int, int, float] | None = None
+    best_eligible_candidate: (
+        tuple[
+            tuple[bool, int, float, int],
+            torch.Tensor,
+            list[int],
+            int,
+            int,
+            int,
+            float,
+        ]
+        | None
+    ) = None
     edge_logit_bias = float(
         shift_params.edge_logit_bias_shift
     ) + _graph_relationship_edge_logit_bias(relationship_profile)
@@ -424,6 +470,7 @@ def _sample_layout(
             device=device,
             relationship_profile=relationship_profile,
         )
+        target_depth_nodes = dag_longest_path_to_target_nodes(adjacency, int(target_to_node))
         eligible_target_nodes = _eligible_target_nodes(
             adjacency=adjacency,
             feature_to_node=feature_to_node,
@@ -431,31 +478,47 @@ def _sample_layout(
         )
         if not eligible_target_nodes:
             continue
-        if relationship_profile is None:
+        if config.graph.target_depth_nodes_min is not None and int(target_depth_nodes) < int(
+            config.graph.target_depth_nodes_min
+        ):
+            continue
+        if relationship_profile is None and config.graph.target_depth_nodes_max is None:
             break
-        candidate_score = _graph_relationship_candidate_score(
-            adjacency=adjacency,
-            feature_to_node=feature_to_node,
-            target_to_node=int(target_to_node),
-            graph_depth_nodes=int(graph_depth_nodes),
-            relationship_profile=relationship_profile,
+        relationship_score = (
+            0.0
+            if relationship_profile is None
+            else _graph_relationship_candidate_score(
+                adjacency=adjacency,
+                feature_to_node=feature_to_node,
+                target_to_node=int(target_to_node),
+                target_depth_nodes=int(target_depth_nodes),
+                relationship_profile=relationship_profile,
+            )
         )
-        if best_eligible_candidate is None or candidate_score > float(best_eligible_candidate[0]):
+        candidate_rank = _target_depth_candidate_rank(
+            target_depth_nodes=int(target_depth_nodes),
+            target_depth_nodes_max=config.graph.target_depth_nodes_max,
+            relationship_score=float(relationship_score),
+            structure_attempt=int(structure_attempt),
+        )
+        if best_eligible_candidate is None or candidate_rank > best_eligible_candidate[0]:
             best_eligible_candidate = (
-                float(candidate_score),
+                candidate_rank,
                 adjacency.clone(),
                 list(feature_to_node),
                 int(target_to_node),
                 int(graph_depth_nodes),
+                int(target_depth_nodes),
                 float(graph_edge_density),
             )
-    if relationship_profile is not None and best_eligible_candidate is not None:
+    if best_eligible_candidate is not None:
         (
-            _score,
+            _rank,
             adjacency,
             feature_to_node,
             target_to_node,
             graph_depth_nodes,
+            target_depth_nodes,
             graph_edge_density,
         ) = best_eligible_candidate
     assert adjacency is not None
@@ -477,6 +540,7 @@ def _sample_layout(
         graph_nodes=num_nodes,
         graph_edges=int(adjacency.sum().item()),
         graph_depth_nodes=int(graph_depth_nodes),
+        target_depth_nodes=int(target_depth_nodes),
         graph_edge_density=float(graph_edge_density),
         adjacency=adjacency,
         feature_node_assignment=feature_to_node,
@@ -498,6 +562,7 @@ def _resample_layout_graph(
     structure_attempts = max(1, int(config.filter.max_attempts))
     adjacency: torch.Tensor | None = None
     graph_depth_nodes = 1
+    target_depth_nodes = 1
     graph_edge_density = 0.0
     relationship_profile = _sample_graph_relationship_profile(
         keyed_rng=keyed_rng.keyed("relationship_profile"),
@@ -509,7 +574,9 @@ def _resample_layout_graph(
             int(structure_attempts),
             int(_GRAPH_RELATIONSHIP_MIN_STRUCTURE_ATTEMPTS),
         )
-    best_eligible_candidate: tuple[float, torch.Tensor, int, float] | None = None
+    best_eligible_candidate: (
+        tuple[tuple[bool, int, float, int], torch.Tensor, int, int, float] | None
+    ) = None
     base_adjacency = torch.as_tensor(layout.adjacency, dtype=torch.bool, device="cpu")
     effective_edge_logit_bias = float(edge_logit_bias) + _graph_relationship_edge_logit_bias(
         relationship_profile
@@ -527,6 +594,7 @@ def _resample_layout_graph(
         )
         graph_depth_nodes = dag_longest_path_nodes(adjacency)
         graph_edge_density = dag_edge_density(adjacency)
+        target_depth_nodes = dag_longest_path_to_target_nodes(adjacency, int(layout.target_to_node))
         is_valid_candidate = int(layout.target_to_node) in _eligible_target_nodes(
             adjacency=adjacency,
             feature_to_node=feature_to_node,
@@ -535,26 +603,45 @@ def _resample_layout_graph(
             not torch.equal(adjacency.to(device="cpu", dtype=torch.bool), base_adjacency)
             or structure_attempt == (structure_attempts - 1)
         )
+        if (
+            is_valid_candidate
+            and config.graph.target_depth_nodes_min is not None
+            and int(target_depth_nodes) < int(config.graph.target_depth_nodes_min)
+        ):
+            is_valid_candidate = False
         if not is_valid_candidate:
             continue
-        if relationship_profile is None:
+        if relationship_profile is None and config.graph.target_depth_nodes_max is None:
             break
-        candidate_score = _graph_relationship_candidate_score(
-            adjacency=adjacency,
-            feature_to_node=feature_to_node,
-            target_to_node=int(layout.target_to_node),
-            graph_depth_nodes=int(graph_depth_nodes),
-            relationship_profile=relationship_profile,
+        relationship_score = (
+            0.0
+            if relationship_profile is None
+            else _graph_relationship_candidate_score(
+                adjacency=adjacency,
+                feature_to_node=feature_to_node,
+                target_to_node=int(layout.target_to_node),
+                target_depth_nodes=int(target_depth_nodes),
+                relationship_profile=relationship_profile,
+            )
         )
-        if best_eligible_candidate is None or candidate_score > float(best_eligible_candidate[0]):
+        candidate_rank = _target_depth_candidate_rank(
+            target_depth_nodes=int(target_depth_nodes),
+            target_depth_nodes_max=config.graph.target_depth_nodes_max,
+            relationship_score=float(relationship_score),
+            structure_attempt=int(structure_attempt),
+        )
+        if best_eligible_candidate is None or candidate_rank > best_eligible_candidate[0]:
             best_eligible_candidate = (
-                float(candidate_score),
+                candidate_rank,
                 adjacency.clone(),
                 int(graph_depth_nodes),
+                int(target_depth_nodes),
                 float(graph_edge_density),
             )
-    if relationship_profile is not None and best_eligible_candidate is not None:
-        _score, adjacency, graph_depth_nodes, graph_edge_density = best_eligible_candidate
+    if best_eligible_candidate is not None:
+        _rank, adjacency, graph_depth_nodes, target_depth_nodes, graph_edge_density = (
+            best_eligible_candidate
+        )
     assert adjacency is not None
     return LayoutPlan(
         n_features=int(layout.n_features),
@@ -567,6 +654,7 @@ def _resample_layout_graph(
         graph_nodes=int(layout.graph_nodes),
         graph_edges=int(adjacency.sum().item()),
         graph_depth_nodes=int(graph_depth_nodes),
+        target_depth_nodes=int(target_depth_nodes),
         graph_edge_density=float(graph_edge_density),
         adjacency=adjacency,
         feature_node_assignment=feature_to_node,

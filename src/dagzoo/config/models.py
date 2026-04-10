@@ -60,6 +60,7 @@ from .scalars import (
     _validate_int_field,
     _validate_min_max_pair,
     _validate_optional_finite_float_field,
+    _validate_optional_int_field,
 )
 
 _STEERING_PRESET_ANTI_MEMORIZATION_PIECEWISE_V1 = "anti_memorization_piecewise_v1"
@@ -758,6 +759,16 @@ def _normalize_graph_fields(graph: GraphConfig) -> None:
         value=graph.n_nodes_max,
         minimum=2,
     )
+    graph.target_depth_nodes_min = _validate_optional_int_field(
+        field_name="graph.target_depth_nodes_min",
+        value=graph.target_depth_nodes_min,
+        minimum=1,
+    )
+    graph.target_depth_nodes_max = _validate_optional_int_field(
+        field_name="graph.target_depth_nodes_max",
+        value=graph.target_depth_nodes_max,
+        minimum=1,
+    )
 
 
 def _normalize_mechanism_fields(mechanism: MechanismConfig) -> None:
@@ -1356,6 +1367,28 @@ def _stage2_validate_graph_constraints(graph: GraphConfig) -> None:
         max_value=graph.n_nodes_max,
         max_label="n_nodes_max",
     )
+    if (
+        graph.target_depth_nodes_min is not None
+        and graph.target_depth_nodes_min > graph.n_nodes_max
+    ):
+        raise ValueError(
+            "graph.target_depth_nodes_min must be <= graph.n_nodes_max, got "
+            f"{graph.target_depth_nodes_min} > {graph.n_nodes_max}."
+        )
+    if (
+        graph.target_depth_nodes_max is not None
+        and graph.target_depth_nodes_max > graph.n_nodes_max
+    ):
+        raise ValueError(
+            "graph.target_depth_nodes_max must be <= graph.n_nodes_max, got "
+            f"{graph.target_depth_nodes_max} > {graph.n_nodes_max}."
+        )
+    _validate_min_max_pair(
+        name="graph.target_depth_nodes_min",
+        min_value=graph.target_depth_nodes_min,
+        max_value=graph.target_depth_nodes_max,
+        max_label="target_depth_nodes_max",
+    )
 
 
 def _stage2_validate_mechanism_constraints(mechanism: MechanismConfig) -> None:
@@ -1725,6 +1758,8 @@ class DatasetConfig:
 class GraphConfig:
     n_nodes_min: int = 2
     n_nodes_max: int = 32
+    target_depth_nodes_min: int | None = None
+    target_depth_nodes_max: int | None = None
 
 
 @dataclass(slots=True)
