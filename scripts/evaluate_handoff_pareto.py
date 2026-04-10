@@ -52,6 +52,7 @@ class _CliArgs:
     baseline_config: str
     out_root: str
     variant_config: tuple[str, ...]
+    variant_label: tuple[str, ...]
     stress_profile: tuple[str, ...]
     num_datasets: int
     seed: int
@@ -71,6 +72,8 @@ def _sanitize_label(label: str) -> str:
 
 def _build_variant_specs(args: _CliArgs, *, temp_dir: Path) -> list[_VariantSpec]:
     baseline_config_path = Path(args.baseline_config).resolve()
+    if args.variant_label and len(args.variant_label) != len(args.variant_config):
+        raise ValueError("--variant-label count must match --variant-config count.")
     specs: list[_VariantSpec] = [
         _VariantSpec(
             label="baseline",
@@ -78,11 +81,16 @@ def _build_variant_specs(args: _CliArgs, *, temp_dir: Path) -> list[_VariantSpec
             regime_id="baseline",
         )
     ]
-    for config_path_text in args.variant_config:
+    for index, config_path_text in enumerate(args.variant_config):
         config_path = Path(config_path_text).resolve()
+        label = (
+            str(args.variant_label[index])
+            if index < len(args.variant_label) and str(args.variant_label[index]).strip()
+            else f"config:{config_path.stem}"
+        )
         specs.append(
             _VariantSpec(
-                label=f"config:{config_path.stem}",
+                label=label,
                 config_path=config_path,
                 regime_id=f"config:{config_path.stem}",
             )
@@ -348,6 +356,11 @@ def _entry_payload(
         "datasets_per_minute": _datasets_per_minute(num_datasets, elapsed_seconds),
         "downstream": downstream,
         "supporting_metrics": _supporting_metric_snapshot(coverage_summary),
+        "parity_surface_summary": (
+            coverage_summary.get("parity_surface_summary")
+            if isinstance(coverage_summary, dict)
+            else None
+        ),
         "coverage_summary": coverage_summary,
     }
 
@@ -485,8 +498,38 @@ def _write_markdown_report(report: dict[str, Any], *, out_path: Path) -> None:
         for metric, value in entry["supporting_metrics"].items():
             rendered = "-" if value is None else f"{float(value):.4f}"
             lines.append(f"  - `{metric}`: {rendered}")
+        parity_surface_summary = entry.get("parity_surface_summary")
+        if isinstance(parity_surface_summary, dict):
+            lines.append("- Parity surface snapshot:")
+            lines.append(
+                "  - Converter methods: "
+                f"`{_render_count_snapshot(parity_surface_summary.get('converter_method_counts'))}`"
+            )
+            lines.append(
+                "  - GP variants: "
+                f"`{_render_count_snapshot(parity_surface_summary.get('gp_variant_counts'))}`"
+            )
+            lines.append(
+                "  - Matrix kinds: "
+                f"`{_render_count_snapshot(parity_surface_summary.get('matrix_kind_counts'))}`"
+            )
+            lines.append(
+                "  - Source-shape policy: "
+                f"`{_render_count_snapshot(parity_surface_summary.get('source_shape_policy_counts'))}`"
+            )
         lines.append("")
     out_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
+def _render_count_snapshot(payload: object) -> str:
+    if not isinstance(payload, dict) or not payload:
+        return "-"
+    parts: list[str] = []
+    for label in sorted(payload):
+        value = payload.get(label)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            parts.append(f"{label}={int(value)}")
+    return ", ".join(parts) if parts else "-"
 
 
 @click.command(
@@ -503,6 +546,12 @@ def _write_markdown_report(report: dict[str, Any], *, out_path: Path) -> None:
     multiple=True,
     default=(),
     help="Additional full config YAML path to evaluate as one variant. Repeatable.",
+)
+@click.option(
+    "--variant-label",
+    multiple=True,
+    default=(),
+    help="Optional label for each --variant-config entry. Repeatable and positional.",
 )
 @click.option(
     "--stress-profile",
@@ -544,6 +593,7 @@ def cli(
     baseline_config: str,
     out_root: str,
     variant_config: tuple[str, ...],
+    variant_label: tuple[str, ...],
     stress_profile: tuple[str, ...],
     num_datasets: int,
     seed: int,
@@ -558,6 +608,7 @@ def cli(
         baseline_config=baseline_config,
         out_root=out_root,
         variant_config=variant_config,
+        variant_label=variant_label,
         stress_profile=stress_profile,
         num_datasets=num_datasets,
         seed=seed,

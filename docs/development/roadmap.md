@@ -79,15 +79,15 @@ Lower rank means higher priority. Rank `0` is reserved for completed items retai
 | 0    | RD-016     | Generate-handoff manifest and one-way downstream handoff               | implemented | Now       | `BL-143 -> BL-144 -> BL-145 -> BL-146 -> BL-147` (completed)                                                     |
 | 0    | RD-011     | Mechanism diversity expansion with measurable effective-diversity gain | implemented | Now       | `#28 -> #240` (completed), `#220` (later analytical follow-on), `BL-26 -> BL-151 -> BL-29 -> BL-30` (historical) |
 | 0    | RD-008     | Meta-feature coverage steering                                         | implemented | Now       | `#246 -> #251 -> #256 -> #261 -> #266` (completed)                                                               |
-| 1    | RD-005     | Robustness stress profiles (hard-task/adversarial regimes)             | research    | Now       | `#247 -> #252 -> #257 -> #262 -> #267`                                                                           |
+| 1    | RD-005     | Robustness stress profiles (hard-task/adversarial regimes)             | implemented | Now       | `#247 -> #252 -> #257 -> #262 -> #267` (completed), follow-ons `#293 + #294`                                    |
 | 2    | RD-013     | Time-series generation tracks for PFN pretraining                      | research    | Later     | `#248 -> #253 -> (#258 + #263) -> #268`                                                                          |
 | 0    | RD-002     | Observational and hard-interventional generation modes                 | implemented | Now       | `#249 -> #255 -> (#259 + #265) -> #269` (completed)                                                             |
 | 4    | RD-010     | Hardware-adaptive autotuning beyond coarse FLOPs tiers                 | planned     | Later     | `#250 -> #254 -> #260 -> #264 -> (#270 + #271) -> #272`                                                          |
 
 ## Dependency Graph
 
-With RD-008 and RD-002 implemented, the active execution order is `RD-005`,
-then the later lanes. Within `RD-013` and `RD-010`, the graph fans out where
+With RD-008, RD-002, and RD-005 implemented, the remaining execution order is
+`RD-013`, then `RD-010`. Within `RD-013` and `RD-010`, the graph fans out where
 the work can proceed in parallel after the schema/spec step.
 
 ```mermaid
@@ -167,11 +167,11 @@ graph TD
 
 | README Mission/Pillar Claim                                         | Current State | Evidence in Repo                                                                                                                                                                                                                                                                                              | Gap                                                                                                                                              | Roadmap IDs    |
 | ------------------------------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
-| Foundation model pretraining with diverse structural priors         | `partial`     | Heterogeneous-by-default public generation, shared grouped-runtime execution helpers, `dataset.rows`, deferred filtering, effective-diversity audits, diagnostics coverage aggregation, explicit noise/shift controls, stage-level throughput metrics, generate-handoff manifests, steering, and the shipped `piecewise` plus widened `gp` paths are implemented | Time-series generation tracks and broader named reference/stress packs remain active follow-on work                                              | RD-013, RD-005 |
+| Foundation model pretraining with diverse structural priors         | `partial`     | Heterogeneous-by-default public generation, shared grouped-runtime execution helpers, `dataset.rows`, deferred filtering, effective-diversity audits, diagnostics coverage aggregation, explicit noise/shift controls, stage-level throughput metrics, generate-handoff manifests, steering, shipped mechanism diversity, named RD-005 slices, and parity/Pareto maintainer workflows are implemented | Time-series generation tracks and public promotion of the current internal RD-005 evaluation lanes remain active follow-on work                  | RD-013, RD-005 |
 | Causal discovery with ground-truth DAGs and interventional datasets | `implemented` | DAG lineage metadata, hard-interventional sampling semantics, summary-only intervention contracts, and handoff provenance are emitted with schema validation, discoverable presets, and user-facing workflow guardrails                                                                                      | Counterfactual paired-output generation remains deferred rather than part of the current public contract                                          | RD-002         |
-| Robustness testing with hard tasks, shifts, adversarial regimes     | `partial`     | Deferred filtering, diagnostics proxies, missingness mechanisms, explicit noise-family controls, shift/drift controls, and steering are implemented with deterministic controls and benchmark guardrails                                                                                                      | Named hard-task and adversarial profile suites are not implemented yet                                                                           | RD-005         |
+| Robustness testing with hard tasks, shifts, adversarial regimes     | `implemented` | Deferred filtering, diagnostics proxies, missingness mechanisms, explicit noise-family controls, shift/drift controls, steering, named carried stress slices, parity-surface diagnostics, matched-budget diversity audits, and the RD-005 Pareto workflow are implemented with deterministic controls and benchmark guardrails | Further slice promotion should remain audit-gated; the default baseline is intentionally unchanged until a wider corpus pack clears the guardrails | RD-005         |
 | Causal structural integrity (hierarchical dependencies)             | `implemented` | Graph-driven node pipeline, shared runtime execution, DAG lineage artifacts, hard-interventional generation, shipped mechanism-family diversity controls, and keyed RNG semantic reproducibility are implemented                                                                                             | Counterfactual paired-output generation remains deferred, but the current structural-generation contract is implemented                           | RD-002         |
-| Tabular realism (mixed type + postprocess hooks)                    | `partial`     | Numeric/categorical converters, postprocess hooks, many-class rollout within the current `<=32` class envelope, configurable missingness, explicit noise families, shipped mechanism diversity controls, steering, and the current public generation runtime are implemented                                | Named robustness compositions over the shipped levers remain active work                                                                         | RD-005         |
+| Tabular realism (mixed type + postprocess hooks)                    | `partial`     | Numeric/categorical converters, postprocess hooks, many-class rollout within the current `<=32` class envelope, configurable missingness, explicit noise families, shipped mechanism diversity controls, steering, parity-surface diagnostics, and the current public generation runtime are implemented    | Promotion of the current internal categorical/cardinality and hybrid evaluation lanes remains active follow-on work                               | RD-005         |
 | PFN task coverage (classification, regression, time-series)         | `partial`     | Classification and regression generation pipelines are fully supported with deterministic seeds, keyed replay metadata, and benchmark workflows                                                                                                                                                               | No time-series generation mode, temporal metadata contract, or temporal diagnostics/guardrails                                                   | RD-013         |
 | Staged complexity scaling (features/nodes/samples)                  | `retired`     | Historical staged-complexity implementation (RD-006) has been retired in favor of explicit split sizing and the current heterogeneous/stratified generation model                                                                                                                                             | Not active                                                                                                                                       | RD-006         |
 | Hardware-native performance (Torch + hardware-aware tuning)         | `partial`     | Torch CPU/CUDA/MPS path, hardware detection, coarse profile-based tuning, benchmark suite, and stage-level generation/write/filter metrics are implemented                                                                                                                                                    | Hardware-adaptive autotuning is not implemented; any further throughput work is deferred to later follow-ons after the completed RD-009 baseline | RD-010, RD-014 |
@@ -303,38 +303,32 @@ Use the canonical docs instead:
 
 ### RD-005: Robustness Stress Profiles (Hard-Task/Adversarial Regimes)
 
-- Status: `research`
-- Milestone: `Now`
+- Status: `implemented`
+- Milestone: `Now` (completed via `#247`, `#252`, `#257`, `#262`, `#267`; closed follow-ons `#293`, `#294`)
 - Mission alignment: robustness testing
 - Pillar alignment: tabular realism
-- Goal: define reproducible named stress profiles and carried regime slices
-  built from the current harder-data levers so contributors can run
-  benchmark-guarded hard-task and adversarial-style regimes without inventing
-  one-off configs, and downstream repos can hold the data regime fixed while
-  comparing model scales.
-- GitHub tracking: `#247 -> #252 -> #257 -> #262 -> #267`
-- Repo touchpoints: `src/dagzoo/config/`, `src/dagzoo/core/config_resolution.py`, `src/dagzoo/functions/random_functions.py`, `src/dagzoo/postprocess/postprocess.py`, `src/dagzoo/bench/`, `src/dagzoo/sampling/missingness.py`, `src/dagzoo/core/shift.py`, `src/dagzoo/core/noise_runtime.py`
-- Exit criteria:
-  - Reproducible named stress presets are selectable via config/CLI and remain opt-in.
+- Goal: ship reproducible named stress profiles and carried regime slices built
+  from the current harder-data levers so contributors can run benchmark-guarded
+  hard-task and adversarial-style regimes without inventing one-off configs,
+  and downstream repos can hold the data regime fixed while comparing model
+  scales.
+- GitHub tracking: completed epic `#247`; shipped chain `#252 -> #257 -> #262 -> #267`; closed follow-ons `#293`, `#294`
+- Repo touchpoints: `src/dagzoo/config/`, `src/dagzoo/core/config_resolution.py`, `src/dagzoo/core/execution_semantics.py`, `src/dagzoo/core/layout.py`, `src/dagzoo/core/fixed_layout/metadata.py`, `src/dagzoo/diagnostics/`, `src/dagzoo/recipes/`, `scripts/evaluate_handoff_pareto.py`, `scripts/evaluate_rd005_follow_on_suite.py`, `scripts/render_tabiclv2_parity_report.py`, `docs/features/stress-profiles.md`
+- Delivered scope:
+  - Named carried slices are implemented for the baseline anti-memorization classification lane plus the graph-breadth and compositional comparison lanes used by the closed RD-005 chain.
   - Stress profiles are composed from the lever families surfaced by RD-008, RD-003, RD-004, and RD-012 rather than bespoke parallel plumbing.
-  - Benchmarks and diagnostics confirm regimes differ from baseline in intended directions.
-  - Profiles expose stable regime identifiers and enough metadata for
-    downstream matched-regime-budget comparisons, including comparable
-    dataset-size/task-complexity envelopes when they are used as scaling
-    slices.
-  - Reproducibility tests pass for fixed seed runs.
-- Delivery issues:
-  - `#252` `spec(stress): define named robustness stress profiles and validation`
-  - `#257` `feat(stress): integrate named stress profiles into generate and filter workflows`
-  - `#262` `analysis(stress): add regime characterization and baseline-comparison diagnostics`
-  - `#267` `docs(stress): add presets, tests, and benchmark guardrails for robustness profiles`
+  - Bundle metadata, diagnostics coverage artifacts, and `dagzoo diversity-audit` now expose first-class parity-surface summaries for converter, GP, kernel, matrix, root-base-kind, parent-arity, source-shape-policy, and categorical-cardinality coverage.
+  - The maintainer decision loop is implemented: `dagzoo diversity-audit` measures matched-budget diversity movement, `scripts/evaluate_handoff_pareto.py` ranks variants by structural diversity then throughput, `scripts/render_tabiclv2_parity_report.py` renders one audit into a parity report, and `scripts/evaluate_rd005_follow_on_suite.py` joins those artifacts into one explicit promotion decision with per-lane status fields.
+- Completion evidence:
+  - Reproducible named stress presets are selectable via config/CLI and remain opt-in.
+  - Fixed-seed materialization tests cover the current carried profiles and smoke presets.
+  - The parity note, stress-profile docs, and audit artifacts all frame the target as realized diversity under current contracts rather than exact TabICLv2 reproduction.
 - Current repo baseline:
-  - Curated recipe entries labeled `stress profile` remain adoption-layer
-    examples rather than the carried-slice contract for downstream scaling.
-  - `#252` introduces the first carried classification slice as
-    `stress.profile=anti_memorization_piecewise_classification_slice_v1`,
-    resolving onto the default classification envelope plus
-    `steering.preset=anti_memorization_piecewise_v1`.
+  - `configs/default.yaml` remains the stable default baseline and is not widened implicitly by RD-005.
+  - `anti_memorization_piecewise_classification_compositional_slice_v1` is the current promotion candidate for broader use.
+  - `anti_memorization_piecewise_classification_graph_breadth_slice_v1` remains the structural extreme rather than the default promotion target.
+  - `anti_memorization_piecewise_classification_categorical_cardinality_slice_v1`, `anti_memorization_piecewise_classification_hybrid_slice_v1`, and `anti_memorization_piecewise_classification_robustness_composition_slice_v1` are repo-local evaluation lanes pending matched-budget confirmation rather than closed roadmap delivery.
+  - Further public promotions should stay audit-gated and remain deferred until the follow-on suite produces a winner with tracked confirmation artifacts.
 
 ### RD-006: Staged Complexity Scaling (Features + Graph)
 

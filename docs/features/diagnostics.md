@@ -4,7 +4,7 @@ Diagnostics adds run-level coverage summaries to a generated corpus so you can
 see what the run actually produced. When enabled, `dagzoo` writes
 `coverage_summary.json` and `coverage_summary.md` alongside the generated data,
 making it easier to inspect feature counts, class counts, mechanism mix, noise,
-missingness, and other realized properties.
+missingness, parity-surface relationship reuse, and other realized properties.
 
 Use diagnostics when you want to compare recipes, confirm that a preset landed
 in the range you expected, or explain why one run behaves differently from
@@ -29,6 +29,12 @@ missingness rate) across the corpus and reporting coverage statistics. Optional
 target bands let you define expected ranges for specific meta-features and track
 what fraction of your corpus falls within those bands, turning effective
 diversity from a vague goal into a quantitative metric.
+
+Coverage summaries also persist a `parity_surface_summary` block for the
+realized relationship-reuse surface. That additive section reports converter
+method/variant frequency, GP variant frequency, kernel `gamma` / `signed`
+coverage, matrix-family coverage, root-base-kind coverage, parent-arity counts,
+source-shape policy counts, and categorical-cardinality ranges.
 
 ______________________________________________________________________
 
@@ -100,7 +106,7 @@ ______________________________________________________________________
 
 - Public `dataset_catalog.ndjson` for stable per-dataset identity and emitted schema.
 - In-process `DatasetBundle.metadata` when you need rich realized generation parameters.
-- Coverage summaries for meta-features, enabled observability metrics, and steering movement when curriculum steering is enabled.
+- Coverage summaries for meta-features, enabled observability metrics, parity-surface summaries, and steering movement when curriculum steering is enabled.
 - Benchmark summary guardrail sections that include diagnostics context.
 
 Exact output contracts are documented in

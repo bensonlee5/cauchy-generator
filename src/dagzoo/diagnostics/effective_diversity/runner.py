@@ -25,10 +25,14 @@ def _probe_entry(result: CorpusProbeResult) -> dict[str, Any]:
     """Convert one probe dataclass into the persisted report entry shape."""
 
     mechanism_family_summary = None
+    parity_surface_summary = None
     if isinstance(result.coverage_summary, dict):
         payload = result.coverage_summary.get("mechanism_family_summary")
         if isinstance(payload, dict):
             mechanism_family_summary = payload
+        payload = result.coverage_summary.get("parity_surface_summary")
+        if isinstance(payload, dict):
+            parity_surface_summary = payload
     return {
         "label": result.label,
         "config_path": result.config_path,
@@ -47,6 +51,7 @@ def _probe_entry(result: CorpusProbeResult) -> dict[str, Any]:
         "filter_rejection_rate_dataset_level": result.filter_rejection_rate_dataset_level,
         "coverage_summary": result.coverage_summary,
         "mechanism_family_summary": mechanism_family_summary,
+        "parity_surface_summary": parity_surface_summary,
         "filter_summary": result.filter_summary,
     }
 

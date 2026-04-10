@@ -23,6 +23,21 @@ from dagzoo.config import GeneratorConfig
             "anti_memorization_piecewise_classification_compositional_slice_v1",
             "data/run_stress_compositional_smoke",
         ),
+        (
+            "configs/preset_stress_categorical_cardinality_generate_smoke.yaml",
+            "anti_memorization_piecewise_classification_categorical_cardinality_slice_v1",
+            "data/run_stress_categorical_cardinality_smoke",
+        ),
+        (
+            "configs/preset_stress_hybrid_generate_smoke.yaml",
+            "anti_memorization_piecewise_classification_hybrid_slice_v1",
+            "data/run_stress_hybrid_smoke",
+        ),
+        (
+            "configs/preset_stress_robustness_composition_generate_smoke.yaml",
+            "anti_memorization_piecewise_classification_robustness_composition_slice_v1",
+            "data/run_stress_robustness_composition_smoke",
+        ),
     ],
 )
 def test_stress_generate_presets_load_with_expected_profile(
@@ -59,6 +74,24 @@ def test_stress_generate_presets_load_with_expected_profile(
             "anti_memorization_piecewise_classification_compositional_slice_v1",
             "stress_compositional_smoke",
             "benchmarks/results/smoke_stress_compositional",
+        ),
+        (
+            "configs/preset_stress_categorical_cardinality_benchmark_smoke.yaml",
+            "anti_memorization_piecewise_classification_categorical_cardinality_slice_v1",
+            "stress_categorical_cardinality_smoke",
+            "benchmarks/results/smoke_stress_categorical_cardinality",
+        ),
+        (
+            "configs/preset_stress_hybrid_benchmark_smoke.yaml",
+            "anti_memorization_piecewise_classification_hybrid_slice_v1",
+            "stress_hybrid_smoke",
+            "benchmarks/results/smoke_stress_hybrid",
+        ),
+        (
+            "configs/preset_stress_robustness_composition_benchmark_smoke.yaml",
+            "anti_memorization_piecewise_classification_robustness_composition_slice_v1",
+            "stress_robustness_composition_smoke",
+            "benchmarks/results/smoke_stress_robustness_composition",
         ),
     ],
 )

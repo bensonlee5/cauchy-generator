@@ -33,6 +33,10 @@ docs helpers, and maintenance utilities rather than convenience wrappers.
   - Dry-run or remove ignored local runtime/docs outputs (`data/`, `benchmarks/results/`, and the built docs output under `site/`) without touching tracked files.
 - `scripts/evaluate_handoff_pareto.py --baseline-config <path> --out-root <dir> [--stress-profile <name> ...] [--variant-config <path> ...]`
   - Runs matched `dagzoo generate --handoff-root` baseline/variant comparisons and writes RD-005 maintainer summaries for structural diversity, throughput, and the anti-triviality downstream ceiling.
+- `scripts/evaluate_rd005_follow_on_suite.py --baseline-config <path> --out-root <dir>`
+  - Runs the full internal RD-005 lane set through diversity-audit, parity rendering, and handoff Pareto evaluation, then writes one combined promotion decision summary with `promote` / `hold_internal` / `structural_control_only` statuses.
+- `scripts/render_tabiclv2_parity_report.py --summary-json <path> --out-dir <dir>`
+  - Renders one `dagzoo diversity-audit` summary into a maintainer-facing parity report with first-class converter/GP/kernel/matrix/root/source-shape snapshots.
 - `scripts/docs/sync_hugo_content.py [--check]`
   - Sync canonical docs from `docs/` into the generated Hugo input area described in `site/README.md` (single-source docs model).
 - `scripts/docs/check_links.py [roots...]`
@@ -61,6 +65,8 @@ docs helpers, and maintenance utilities rather than convenience wrappers.
 ./.venv/bin/python scripts/cleanup_local_artifacts.py --group all
 ./.venv/bin/python scripts/cleanup_local_artifacts.py --group runtime --apply
 ./.venv/bin/python scripts/evaluate_handoff_pareto.py --baseline-config configs/default.yaml --stress-profile anti_memorization_piecewise_classification_graph_breadth_slice_v1 --stress-profile anti_memorization_piecewise_classification_compositional_slice_v1 --out-root benchmarks/results/rd005_pareto --num-datasets 8 --seed 123 --device cpu
+./.venv/bin/python scripts/evaluate_rd005_follow_on_suite.py --baseline-config configs/default.yaml --out-root benchmarks/results/rd005_follow_on --suite smoke --num-datasets 8 --seed 123 --device cpu
+./.venv/bin/python scripts/render_tabiclv2_parity_report.py --summary-json benchmarks/results/diversity_audit_stress_graph_breadth/summary.json --out-dir benchmarks/results/diversity_audit_stress_graph_breadth/parity_report
 uv run dagzoo generate --config configs/default.yaml --num-datasets 50 --device cpu --out data/run_cpu_50
 uv run dagzoo generate --config configs/preset_cuda_h100.yaml --num-datasets 500 --device cuda --out data/run_h100_500 --seed 123
 uv run dagzoo generate --config configs/preset_many_class_generate_smoke.yaml --num-datasets 25 --device cpu --out data/run_many_class --seed 123

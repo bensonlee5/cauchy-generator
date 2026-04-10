@@ -16,6 +16,7 @@ from dagzoo.rng import KeyedRng
 from dagzoo.sampling.correlated import sample_correlated_choice, sample_correlated_num
 
 _GRAPH_BREADTH_STRESS_PROFILE = "anti_memorization_piecewise_classification_graph_breadth_slice_v1"
+_HYBRID_STRESS_PROFILE = "anti_memorization_piecewise_classification_hybrid_slice_v1"
 _GRAPH_RELATIONSHIP_PROFILES: tuple[str, ...] = (
     "fanin_heavy",
     "ancestor_breadth",
@@ -88,7 +89,10 @@ def _ancestor_nodes_for_target(adjacency: torch.Tensor, *, target_to_node: int) 
 
 
 def _graph_relationship_policy_enabled(stress_profile_name: str | None) -> bool:
-    return str(stress_profile_name) == _GRAPH_BREADTH_STRESS_PROFILE
+    return str(stress_profile_name) in {
+        _GRAPH_BREADTH_STRESS_PROFILE,
+        _HYBRID_STRESS_PROFILE,
+    }
 
 
 def _sample_graph_relationship_profile(

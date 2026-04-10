@@ -117,6 +117,25 @@ def test_diversity_audit_cli_writes_summary_artifacts_for_stress_profile_preset(
                     "dataset_presence_rate_by_variant": {},
                     "mean_total_function_plans": 2.0,
                 },
+                "parity_surface_summary": {
+                    "metadata_coverage_rate": 1.0,
+                    "bundles_with_metadata": 2,
+                    "converter_method_counts": {"numeric": 2},
+                    "converter_variant_counts": {"numeric.standard": 2},
+                    "converter_method_variant_counts": {"numeric.standard": 2},
+                    "gp_variant_counts": {"gp.standard": 2},
+                    "kernel_signed_counts": {"signed": 2},
+                    "matrix_kind_counts": {"dense": 2},
+                    "activation_base_kind_counts": {"piecewise": 2},
+                    "root_base_kind_counts": {"piecewise": 2},
+                    "source_kind_counts": {"latent": 2},
+                    "combine_kind_counts": {"concat": 2},
+                    "aggregation_kind_counts": {"sum": 2},
+                    "parent_arity_counts": {"single_parent": 2},
+                    "source_shape_policy_counts": {"default": 2},
+                    "kernel_gamma": {"count": 2, "min": 0.2, "max": 0.8, "mean": 0.5},
+                    "categorical_cardinality": {"count": 2, "min": 4, "max": 8, "mean": 6.0},
+                },
                 "metrics": {},
             },
             filter_summary=None,
@@ -147,6 +166,25 @@ def test_diversity_audit_cli_writes_summary_artifacts_for_stress_profile_preset(
                     "sampled_variant_counts": {},
                     "dataset_presence_rate_by_variant": {},
                     "mean_total_function_plans": 2.0,
+                },
+                "parity_surface_summary": {
+                    "metadata_coverage_rate": 1.0,
+                    "bundles_with_metadata": 2,
+                    "converter_method_counts": {"numeric": 1, "categorical": 1},
+                    "converter_variant_counts": {"categorical.quantile": 1},
+                    "converter_method_variant_counts": {"categorical.quantile": 1},
+                    "gp_variant_counts": {"gp.periodic": 2},
+                    "kernel_signed_counts": {"signed": 1, "unsigned": 1},
+                    "matrix_kind_counts": {"dense": 1, "triangular": 1},
+                    "activation_base_kind_counts": {"piecewise": 1, "tree": 1},
+                    "root_base_kind_counts": {"piecewise": 1, "tree": 1},
+                    "source_kind_counts": {"latent": 2},
+                    "combine_kind_counts": {"concat": 1, "stack": 1},
+                    "aggregation_kind_counts": {"sum": 1, "mean": 1},
+                    "parent_arity_counts": {"single_parent": 1, "multi_parent": 1},
+                    "source_shape_policy_counts": {"parent_arity_reuse": 2},
+                    "kernel_gamma": {"count": 2, "min": 0.1, "max": 1.0, "mean": 0.55},
+                    "categorical_cardinality": {"count": 2, "min": 8, "max": 16, "mean": 12.0},
                 },
                 "metrics": {},
             },
@@ -192,8 +230,16 @@ def test_diversity_audit_cli_writes_summary_artifacts_for_stress_profile_preset(
     assert markdown_path.exists()
 
     payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    markdown = markdown_path.read_text(encoding="utf-8")
     assert payload["baseline"]["config_path"] == "configs/default.yaml"
     assert (
         payload["variants"][0]["config_path"]
         == "configs/preset_stress_graph_breadth_benchmark_smoke.yaml"
     )
+    assert payload["baseline"]["parity_surface_summary"]["converter_method_counts"] == {
+        "numeric": 2
+    }
+    assert payload["variants"][0]["parity_surface_summary"]["source_shape_policy_counts"] == {
+        "parent_arity_reuse": 2
+    }
+    assert "## Parity Surface" in markdown

@@ -17,6 +17,13 @@ def test_recipe_catalog_entries_have_required_metadata() -> None:
     specs = iter_recipe_specs()
 
     assert len(specs) == 5
+    assert [spec.name for spec in specs] == [
+        "default-baseline",
+        "tabpfn-v1-prior-approx",
+        "high-cardinality-stress",
+        "missingness-robustness",
+        "shift-stress",
+    ]
     for spec in specs:
         assert spec.confidence_tier
         assert spec.expected_regime

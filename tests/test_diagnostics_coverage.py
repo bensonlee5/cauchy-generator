@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 
 import pytest
+import torch
 
 from dagzoo.config import DiagnosticsConfig, GeneratorConfig
 from dagzoo.diagnostics.coverage import (
@@ -108,6 +109,7 @@ def test_coverage_artifact_schema_required_keys(tmp_path) -> None:
     assert "generated_at" in payload
     assert payload["num_datasets"] == 1
     assert "metrics" in payload
+    assert "parity_surface_summary" in payload
     assert "steering" not in payload
 
     required_metric_keys = {
@@ -127,6 +129,61 @@ def test_coverage_artifact_schema_required_keys(tmp_path) -> None:
     metric = payload["metrics"]["pearson_abs_mean"]
     assert required_metric_keys.issubset(set(metric))
     assert {"num_bins", "covered_bins", "coverage_ratio", "bins"}.issubset(set(metric["histogram"]))
+
+
+def test_coverage_aggregator_summarizes_parity_surface_metadata() -> None:
+    agg = CoverageAggregator(CoverageAggregationConfig(histogram_bins=4))
+    bundle = DatasetBundle(
+        X_train=torch.zeros((4, 2), dtype=torch.float32),
+        y_train=torch.zeros(4, dtype=torch.float32),
+        X_test=torch.zeros((2, 2), dtype=torch.float32),
+        y_test=torch.zeros(2, dtype=torch.float32),
+        feature_types=["cat", "num"],
+        metadata={
+            "parity_surface": {
+                "schema_name": "dagzoo_fixed_layout_parity_surface",
+                "schema_version": 1,
+                "converter_method_counts": {"neighbor": 2},
+                "converter_variant_counts": {"input": 1},
+                "converter_method_variant_counts": {"neighbor.input": 1},
+                "gp_variant_counts": {"gp.periodic": 1},
+                "kernel_gamma": {
+                    "count": 2,
+                    "min": 0.25,
+                    "max": 1.50,
+                    "mean": 0.875,
+                    "total": 1.75,
+                },
+                "kernel_signed_counts": {"unsigned": 2},
+                "matrix_kind_counts": {"kernel": 2},
+                "activation_base_kind_counts": {"gaussian": 1},
+                "root_base_kind_counts": {"unit_ball": 1},
+                "source_kind_counts": {"stack": 1},
+                "combine_kind_counts": {"stack": 1},
+                "aggregation_kind_counts": {"sum": 1},
+                "parent_arity_counts": {"3plus": 1},
+                "source_shape_policy_counts": {"stack_parent3plus": 1},
+                "categorical_cardinality": {
+                    "count": 1,
+                    "min": 8.0,
+                    "max": 8.0,
+                    "mean": 8.0,
+                    "total": 8.0,
+                },
+            }
+        },
+    )
+
+    agg.update_bundle(bundle)
+    summary = agg.build_summary()["parity_surface_summary"]
+
+    assert summary["bundles_with_metadata"] == 1
+    assert summary["converter_method_counts"] == {"neighbor": 2}
+    assert summary["gp_variant_counts"] == {"gp.periodic": 1}
+    assert summary["matrix_kind_counts"] == {"kernel": 2}
+    assert summary["source_shape_policy_counts"] == {"stack_parent3plus": 1}
+    assert summary["kernel_gamma"]["mean"] == pytest.approx(0.875)
+    assert summary["categorical_cardinality"]["mean"] == pytest.approx(8.0)
 
 
 def test_coverage_aggregation_bounds_sample_memory() -> None:

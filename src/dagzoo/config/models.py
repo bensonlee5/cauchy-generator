@@ -73,6 +73,15 @@ _STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_GRAPH_BREADTH_SLICE_V
 _STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_COMPOSITIONAL_SLICE_V1 = (
     "anti_memorization_piecewise_classification_compositional_slice_v1"
 )
+_STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_CATEGORICAL_CARDINALITY_SLICE_V1 = (
+    "anti_memorization_piecewise_classification_categorical_cardinality_slice_v1"
+)
+_STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_HYBRID_SLICE_V1 = (
+    "anti_memorization_piecewise_classification_hybrid_slice_v1"
+)
+_STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_ROBUSTNESS_COMPOSITION_SLICE_V1 = (
+    "anti_memorization_piecewise_classification_robustness_composition_slice_v1"
+)
 _REMOVED_FILTER_FIELDS = frozenset(
     {
         "threshold",
@@ -247,6 +256,156 @@ _STRESS_PROFILE_DEFINITIONS: dict[str, dict[str, Any]] = {
         },
         "runtime": {
             "fixed_layout_target_cells": 8_000_000,
+        },
+        "steering": {
+            "enabled": True,
+            "preset": _STEERING_PRESET_ANTI_MEMORIZATION_PIECEWISE_V1,
+            "stages": [],
+        },
+    },
+    _STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_CATEGORICAL_CARDINALITY_SLICE_V1: {
+        "dataset": {
+            "task": "classification",
+            "n_train": 768,
+            "n_test": 256,
+            "rows": None,
+            "n_features_min": 20,
+            "n_features_max": 72,
+            "n_classes_min": 2,
+            "n_classes_max": 12,
+            "categorical_ratio_min": 0.45,
+            "categorical_ratio_max": 1.0,
+            "max_categorical_cardinality": 64,
+        },
+        "graph": {
+            "n_nodes_min": 4,
+            "n_nodes_max": 28,
+        },
+        "filter": {
+            "enabled": False,
+            "min_target_indegree": 1,
+            "min_target_relevant_feature_count": 2,
+            "min_target_relevant_feature_fraction": 0.05,
+        },
+        "mechanism": {
+            "function_family_mix": {
+                "piecewise": 1.50,
+                "gp": 1.25,
+                "discretization": 1.25,
+                "linear": 1.0,
+                "quadratic": 1.0,
+                "tree": 1.0,
+                "nn": 0.8,
+                "em": 0.8,
+                "product": 0.8,
+            },
+        },
+        "runtime": {
+            "fixed_layout_target_cells": 6_000_000,
+        },
+        "steering": {
+            "enabled": True,
+            "preset": _STEERING_PRESET_ANTI_MEMORIZATION_PIECEWISE_V1,
+            "stages": [],
+        },
+    },
+    _STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_HYBRID_SLICE_V1: {
+        "dataset": {
+            "task": "classification",
+            "n_train": 768,
+            "n_test": 256,
+            "rows": None,
+            "n_features_min": 24,
+            "n_features_max": 72,
+            "n_classes_min": 2,
+            "n_classes_max": 12,
+            "categorical_ratio_min": 0.15,
+            "categorical_ratio_max": 0.90,
+            "max_categorical_cardinality": 16,
+        },
+        "graph": {
+            "n_nodes_min": 12,
+            "n_nodes_max": 40,
+        },
+        "filter": {
+            "enabled": False,
+            "min_target_indegree": 2,
+            "min_target_relevant_feature_count": 4,
+            "min_target_relevant_feature_fraction": 0.15,
+        },
+        "mechanism": {
+            "function_family_mix": {
+                "piecewise": 2.25,
+                "product": 2.0,
+                "gp": 1.5,
+                "tree": 1.5,
+                "nn": 1.0,
+                "discretization": 1.0,
+                "em": 0.9,
+                "quadratic": 0.9,
+                "linear": 0.7,
+            },
+        },
+        "runtime": {
+            "fixed_layout_target_cells": 6_000_000,
+        },
+        "steering": {
+            "enabled": True,
+            "preset": _STEERING_PRESET_ANTI_MEMORIZATION_PIECEWISE_V1,
+            "stages": [],
+        },
+    },
+    _STRESS_PROFILE_ANTI_MEMORIZATION_PIECEWISE_CLASSIFICATION_ROBUSTNESS_COMPOSITION_SLICE_V1: {
+        "dataset": {
+            "task": "classification",
+            "n_train": 768,
+            "n_test": 256,
+            "rows": None,
+            "n_features_min": 16,
+            "n_features_max": 64,
+            "n_classes_min": 2,
+            "n_classes_max": 10,
+            "categorical_ratio_min": 0.20,
+            "categorical_ratio_max": 0.90,
+            "max_categorical_cardinality": 24,
+            "missing_rate": 0.15,
+            "missing_mechanism": "mnar",
+            "missing_mnar_logit_scale": 2.0,
+        },
+        "graph": {
+            "n_nodes_min": 6,
+            "n_nodes_max": 32,
+        },
+        "mechanism": {
+            "function_family_mix": {
+                "piecewise": 1.75,
+                "gp": 1.5,
+                "product": 1.25,
+                "tree": 1.25,
+                "nn": 1.0,
+                "discretization": 1.0,
+                "em": 1.0,
+                "quadratic": 0.9,
+                "linear": 0.75,
+            },
+        },
+        "shift": {
+            "enabled": True,
+            "mode": "mixed",
+            "graph_scale": 0.35,
+            "variance_scale": 0.35,
+        },
+        "noise": {
+            "family": "mixture",
+            "student_t_df": 6.0,
+            "mixture_weights": {
+                "gaussian": 0.50,
+                "laplace": 0.30,
+                "student_t": 0.20,
+            },
+        },
+        "runtime": {
+            "fixed_layout_target_cells": 6_000_000,
         },
         "steering": {
             "enabled": True,

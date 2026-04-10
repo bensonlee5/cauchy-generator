@@ -75,6 +75,31 @@ class _ValueAccumulator:
         self.min_value = min(self.min_value, as_float)
         self.max_value = max(self.max_value, as_float)
 
+    def merge_stats(
+        self,
+        *,
+        count: object,
+        total: object,
+        min_value: object,
+        max_value: object,
+    ) -> None:
+        count_value = _coerce_optional_int(count)
+        total_value = _coerce_optional_float(total)
+        min_stat = _coerce_optional_float(min_value)
+        max_stat = _coerce_optional_float(max_value)
+        if (
+            count_value is None
+            or count_value <= 0
+            or total_value is None
+            or min_stat is None
+            or max_stat is None
+        ):
+            return
+        self.count += int(count_value)
+        self.total += float(total_value)
+        self.min_value = min(self.min_value, float(min_stat))
+        self.max_value = max(self.max_value, float(max_stat))
+
     def finalize(self) -> dict[str, Any]:
         if self.count <= 0:
             return {"count": 0, "min": None, "max": None, "mean": None}
@@ -222,6 +247,22 @@ class CoverageAggregator:
         self._mechanism_family_dataset_presence: dict[str, int] = {}
         self._mechanism_variant_sampled_counts: dict[str, int] = {}
         self._mechanism_variant_dataset_presence: dict[str, int] = {}
+        self._parity_surface_bundles_with_metadata = 0
+        self._parity_converter_method_counts: dict[str, int] = {}
+        self._parity_converter_variant_counts: dict[str, int] = {}
+        self._parity_converter_method_variant_counts: dict[str, int] = {}
+        self._parity_gp_variant_counts: dict[str, int] = {}
+        self._parity_kernel_signed_counts: dict[str, int] = {}
+        self._parity_matrix_kind_counts: dict[str, int] = {}
+        self._parity_activation_base_kind_counts: dict[str, int] = {}
+        self._parity_root_base_kind_counts: dict[str, int] = {}
+        self._parity_source_kind_counts: dict[str, int] = {}
+        self._parity_combine_kind_counts: dict[str, int] = {}
+        self._parity_aggregation_kind_counts: dict[str, int] = {}
+        self._parity_parent_arity_counts: dict[str, int] = {}
+        self._parity_source_shape_policy_counts: dict[str, int] = {}
+        self._parity_kernel_gamma = _ValueAccumulator()
+        self._parity_categorical_cardinality = _ValueAccumulator()
         self._metrics = {
             name: _MetricAccumulator(
                 sample_limit=self._config.max_values_per_metric,
@@ -242,6 +283,7 @@ class CoverageAggregator:
         metrics = extract_dataset_metrics(bundle, include_spearman=self._config.include_spearman)
         self.update_metrics(metrics)
         self._update_mechanism_families(bundle)
+        self._update_parity_surface(bundle)
         return metrics
 
     def update_metrics(self, metrics: DatasetMetrics) -> None:
@@ -273,6 +315,7 @@ class CoverageAggregator:
             "quantiles": list(self._config.quantiles),
             "max_values_per_metric": self._config.max_values_per_metric,
             "mechanism_family_summary": self._build_mechanism_family_summary(),
+            "parity_surface_summary": self._build_parity_surface_summary(),
             "metrics": summary_metrics,
         }
 
@@ -353,6 +396,133 @@ class CoverageAggregator:
             "mean_total_function_plans": float(mean_total_function_plans),
         }
 
+    def _update_count_summary(
+        self,
+        payload: object,
+        *,
+        destination: dict[str, int],
+    ) -> None:
+        if not isinstance(payload, dict):
+            return
+        for raw_label, raw_count in payload.items():
+            if not isinstance(raw_label, str) or isinstance(raw_count, bool):
+                continue
+            if not isinstance(raw_count, (int, float)) or not math.isfinite(float(raw_count)):
+                continue
+            count = max(0, int(raw_count))
+            if count > 0:
+                destination[str(raw_label)] = int(destination.get(str(raw_label), 0)) + int(count)
+
+    def _update_parity_surface(self, bundle: DatasetBundle) -> None:
+        metadata = bundle.metadata.get("parity_surface")
+        if not isinstance(metadata, dict):
+            return
+        self._parity_surface_bundles_with_metadata += 1
+        self._update_count_summary(
+            metadata.get("converter_method_counts"),
+            destination=self._parity_converter_method_counts,
+        )
+        self._update_count_summary(
+            metadata.get("converter_variant_counts"),
+            destination=self._parity_converter_variant_counts,
+        )
+        self._update_count_summary(
+            metadata.get("converter_method_variant_counts"),
+            destination=self._parity_converter_method_variant_counts,
+        )
+        self._update_count_summary(
+            metadata.get("gp_variant_counts"),
+            destination=self._parity_gp_variant_counts,
+        )
+        self._update_count_summary(
+            metadata.get("kernel_signed_counts"),
+            destination=self._parity_kernel_signed_counts,
+        )
+        self._update_count_summary(
+            metadata.get("matrix_kind_counts"),
+            destination=self._parity_matrix_kind_counts,
+        )
+        self._update_count_summary(
+            metadata.get("activation_base_kind_counts"),
+            destination=self._parity_activation_base_kind_counts,
+        )
+        self._update_count_summary(
+            metadata.get("root_base_kind_counts"),
+            destination=self._parity_root_base_kind_counts,
+        )
+        self._update_count_summary(
+            metadata.get("source_kind_counts"),
+            destination=self._parity_source_kind_counts,
+        )
+        self._update_count_summary(
+            metadata.get("combine_kind_counts"),
+            destination=self._parity_combine_kind_counts,
+        )
+        self._update_count_summary(
+            metadata.get("aggregation_kind_counts"),
+            destination=self._parity_aggregation_kind_counts,
+        )
+        self._update_count_summary(
+            metadata.get("parent_arity_counts"),
+            destination=self._parity_parent_arity_counts,
+        )
+        self._update_count_summary(
+            metadata.get("source_shape_policy_counts"),
+            destination=self._parity_source_shape_policy_counts,
+        )
+        kernel_gamma = metadata.get("kernel_gamma")
+        if isinstance(kernel_gamma, dict):
+            self._parity_kernel_gamma.merge_stats(
+                count=kernel_gamma.get("count"),
+                total=kernel_gamma.get("total"),
+                min_value=kernel_gamma.get("min"),
+                max_value=kernel_gamma.get("max"),
+            )
+        categorical_cardinality = metadata.get("categorical_cardinality")
+        if isinstance(categorical_cardinality, dict):
+            self._parity_categorical_cardinality.merge_stats(
+                count=categorical_cardinality.get("count"),
+                total=categorical_cardinality.get("total"),
+                min_value=categorical_cardinality.get("min"),
+                max_value=categorical_cardinality.get("max"),
+            )
+
+    def _build_parity_surface_summary(self) -> dict[str, Any]:
+        bundles_with_metadata = int(self._parity_surface_bundles_with_metadata)
+        num_datasets = int(self._num_datasets)
+        metadata_denominator = num_datasets if num_datasets > 0 else 0
+        return {
+            "schema_name": "dagzoo_parity_surface_summary",
+            "schema_version": 1,
+            "metadata_coverage_rate": (
+                float(bundles_with_metadata / metadata_denominator)
+                if metadata_denominator > 0
+                else 0.0
+            ),
+            "bundles_with_metadata": bundles_with_metadata,
+            "converter_method_counts": dict(sorted(self._parity_converter_method_counts.items())),
+            "converter_variant_counts": dict(sorted(self._parity_converter_variant_counts.items())),
+            "converter_method_variant_counts": dict(
+                sorted(self._parity_converter_method_variant_counts.items())
+            ),
+            "gp_variant_counts": dict(sorted(self._parity_gp_variant_counts.items())),
+            "kernel_gamma": self._parity_kernel_gamma.finalize(),
+            "kernel_signed_counts": dict(sorted(self._parity_kernel_signed_counts.items())),
+            "matrix_kind_counts": dict(sorted(self._parity_matrix_kind_counts.items())),
+            "activation_base_kind_counts": dict(
+                sorted(self._parity_activation_base_kind_counts.items())
+            ),
+            "root_base_kind_counts": dict(sorted(self._parity_root_base_kind_counts.items())),
+            "source_kind_counts": dict(sorted(self._parity_source_kind_counts.items())),
+            "combine_kind_counts": dict(sorted(self._parity_combine_kind_counts.items())),
+            "aggregation_kind_counts": dict(sorted(self._parity_aggregation_kind_counts.items())),
+            "parent_arity_counts": dict(sorted(self._parity_parent_arity_counts.items())),
+            "source_shape_policy_counts": dict(
+                sorted(self._parity_source_shape_policy_counts.items())
+            ),
+            "categorical_cardinality": self._parity_categorical_cardinality.finalize(),
+        }
+
 
 def write_coverage_summary_json(summary: dict[str, Any], out_path: str | Path) -> Path:
     """Write run-level coverage summary JSON artifact."""
@@ -384,12 +554,20 @@ def write_coverage_summary_markdown(summary: dict[str, Any], out_path: str | Pat
         task_parts = [f"{name}={count}" for name, count in sorted(task_counts.items())]
         lines.append(f"- Task counts: `{', '.join(task_parts)}`")
     mechanism_family_summary = summary.get("mechanism_family_summary", {})
+    parity_surface_summary = summary.get("parity_surface_summary", {})
     if isinstance(mechanism_family_summary, dict):
         lines.extend(
             [
                 f"- Mechanism metadata coverage: `{_fmt(mechanism_family_summary.get('metadata_coverage_rate'))}`",
                 f"- Bundles with mechanism metadata: `{_fmt(mechanism_family_summary.get('bundles_with_metadata'), digits=0)}`",
                 f"- Mean total function plans: `{_fmt(mechanism_family_summary.get('mean_total_function_plans'))}`",
+            ]
+        )
+    if isinstance(parity_surface_summary, dict):
+        lines.extend(
+            [
+                f"- Parity-surface metadata coverage: `{_fmt(parity_surface_summary.get('metadata_coverage_rate'))}`",
+                f"- Bundles with parity-surface metadata: `{_fmt(parity_surface_summary.get('bundles_with_metadata'), digits=0)}`",
             ]
         )
     lines.extend(["", "## Metrics", ""])
@@ -444,9 +622,132 @@ def write_coverage_summary_markdown(summary: dict[str, Any], out_path: str | Pat
                     f"{_fmt((variant_presence or {}).get(label))} |"
                 )
 
+    if isinstance(parity_surface_summary, dict):
+        lines.extend(["", "## Parity Surface", ""])
+        lines.extend(
+            _parity_surface_markdown_lines(
+                "Converter methods",
+                parity_surface_summary.get("converter_method_counts"),
+            )
+        )
+        lines.extend(
+            _parity_surface_markdown_lines(
+                "Converter variants",
+                parity_surface_summary.get("converter_variant_counts"),
+            )
+        )
+        lines.extend(
+            _parity_surface_markdown_lines(
+                "Converter method+variant",
+                parity_surface_summary.get("converter_method_variant_counts"),
+            )
+        )
+        lines.extend(
+            _parity_surface_markdown_lines(
+                "GP variants",
+                parity_surface_summary.get("gp_variant_counts"),
+            )
+        )
+        lines.extend(
+            _parity_surface_markdown_lines(
+                "Kernel signed counts",
+                parity_surface_summary.get("kernel_signed_counts"),
+            )
+        )
+        lines.extend(
+            _parity_surface_markdown_lines(
+                "Matrix kinds",
+                parity_surface_summary.get("matrix_kind_counts"),
+            )
+        )
+        lines.extend(
+            _parity_surface_markdown_lines(
+                "Activation-matrix base kinds",
+                parity_surface_summary.get("activation_base_kind_counts"),
+            )
+        )
+        lines.extend(
+            _parity_surface_markdown_lines(
+                "Root base kinds",
+                parity_surface_summary.get("root_base_kind_counts"),
+            )
+        )
+        lines.extend(
+            _parity_surface_markdown_lines(
+                "Source kinds",
+                parity_surface_summary.get("source_kind_counts"),
+            )
+        )
+        lines.extend(
+            _parity_surface_markdown_lines(
+                "Combine kinds",
+                parity_surface_summary.get("combine_kind_counts"),
+            )
+        )
+        lines.extend(
+            _parity_surface_markdown_lines(
+                "Aggregation kinds",
+                parity_surface_summary.get("aggregation_kind_counts"),
+            )
+        )
+        lines.extend(
+            _parity_surface_markdown_lines(
+                "Parent arities",
+                parity_surface_summary.get("parent_arity_counts"),
+            )
+        )
+        lines.extend(
+            _parity_surface_markdown_lines(
+                "Source-shape policy",
+                parity_surface_summary.get("source_shape_policy_counts"),
+            )
+        )
+        lines.extend(
+            _parity_surface_scalar_markdown_lines(
+                "Kernel gamma",
+                parity_surface_summary.get("kernel_gamma"),
+            )
+        )
+        lines.extend(
+            _parity_surface_scalar_markdown_lines(
+                "Categorical cardinality",
+                parity_surface_summary.get("categorical_cardinality"),
+            )
+        )
+
     with path.open("w", encoding="utf-8") as f:
         f.write("\n".join(lines).rstrip() + "\n")
     return path
+
+
+def _parity_surface_markdown_lines(title: str, payload: object) -> list[str]:
+    lines = [f"### {title}", ""]
+    if not isinstance(payload, dict) or not payload:
+        lines.append("- No observed counts.")
+        lines.append("")
+        return lines
+    lines.append("| Label | Sampled Count |")
+    lines.append("|---|---:|")
+    for label in sorted(payload):
+        lines.append(f"| {label} | {_fmt(payload.get(label), digits=0)} |")
+    lines.append("")
+    return lines
+
+
+def _parity_surface_scalar_markdown_lines(title: str, payload: object) -> list[str]:
+    lines = [f"### {title}", ""]
+    if not isinstance(payload, dict) or int(_coerce_optional_int(payload.get("count")) or 0) <= 0:
+        lines.append("- No observed values.")
+        lines.append("")
+        return lines
+    lines.append(
+        "- Count / mean / range: "
+        f"`{_fmt(payload.get('count'), digits=0)}` / "
+        f"`{_fmt(payload.get('mean'))}` / "
+        f"`{_fmt(payload.get('min'))}-{_fmt(payload.get('max'))}`"
+    )
+    lines.append("")
+    return lines
 
 
 def _normalize_quantiles(quantiles: tuple[float, ...] | list[float]) -> tuple[float, ...]:

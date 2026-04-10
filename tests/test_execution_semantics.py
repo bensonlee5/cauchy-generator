@@ -66,6 +66,14 @@ class ConverterSpec:
     cardinality: int | None = None
 
 
+_GRAPH_BREADTH_STRESS_PROFILE = "anti_memorization_piecewise_classification_graph_breadth_slice_v1"
+_COMPOSITIONAL_STRESS_PROFILE = "anti_memorization_piecewise_classification_compositional_slice_v1"
+_HYBRID_STRESS_PROFILE = "anti_memorization_piecewise_classification_hybrid_slice_v1"
+_ROBUSTNESS_COMPOSITION_STRESS_PROFILE = (
+    "anti_memorization_piecewise_classification_robustness_composition_slice_v1"
+)
+
+
 @pytest.mark.parametrize(
     ("family", "plan"),
     [
@@ -290,13 +298,15 @@ def test_sample_activation_plan_can_emit_gumbel_softmax(
         ),
     ],
 )
-def test_sample_multi_source_plan_uses_parent_bucketed_semantic_names_for_graph_breadth(
+@pytest.mark.parametrize("profile", (_GRAPH_BREADTH_STRESS_PROFILE, _HYBRID_STRESS_PROFILE))
+def test_sample_multi_source_plan_uses_parent_bucketed_semantic_names_for_graph_enabled_profiles(
     parent_count: int,
     expected_combine_name: str,
     expected_combine_probs: tuple[float, float],
     expected_aggregation_name: str,
     expected_aggregation_probs: tuple[float, float, float, float],
     monkeypatch: pytest.MonkeyPatch,
+    profile: str,
 ) -> None:
     observed_calls: list[tuple[str, tuple[float, ...] | None]] = []
 
@@ -326,7 +336,7 @@ def test_sample_multi_source_plan_uses_parent_bucketed_semantic_names_for_graph_
         mechanism_logit_tilt=0.0,
         function_family_mix=None,
         device="cpu",
-        stress_profile_name="anti_memorization_piecewise_classification_graph_breadth_slice_v1",
+        stress_profile_name=profile,
     )
 
     assert isinstance(source, StackedNodeSource)
@@ -360,21 +370,23 @@ def test_sample_multi_source_plan_keeps_default_semantic_names_outside_graph_bre
         lambda *_args, **_kwargs: LinearFunctionPlan(matrix=GaussianMatrixPlan()),
     )
 
-    source = execution_semantics_mod.sample_multi_source_plan(
-        keyed_rng=KeyedRng(416),
-        parent_count=3,
-        out_dim=4,
-        mechanism_logit_tilt=0.0,
-        function_family_mix=None,
-        device="cpu",
-        stress_profile_name="anti_memorization_piecewise_classification_compositional_slice_v1",
-    )
+    for profile in (_COMPOSITIONAL_STRESS_PROFILE, _ROBUSTNESS_COMPOSITION_STRESS_PROFILE):
+        source = execution_semantics_mod.sample_multi_source_plan(
+            keyed_rng=KeyedRng(416),
+            parent_count=3,
+            out_dim=4,
+            mechanism_logit_tilt=0.0,
+            function_family_mix=None,
+            device="cpu",
+            stress_profile_name=profile,
+        )
 
-    assert isinstance(source, StackedNodeSource)
-    assert observed_calls == [
-        ("multi_source_combine_kind", None),
-        ("multi_source_aggregation_kind", None),
-    ]
+        assert isinstance(source, StackedNodeSource)
+        assert observed_calls == [
+            ("multi_source_combine_kind", None),
+            ("multi_source_aggregation_kind", None),
+        ]
+        observed_calls.clear()
 
 
 @pytest.mark.parametrize(
@@ -604,10 +616,18 @@ def test_fixed_layout_signature_payloads_include_kernel_hyperparameters_and_base
     assert payloads[1]["base_kind"] == "uniform"
 
 
-def test_compositional_stress_profile_uses_correlated_matrix_and_root_sampling(
+@pytest.mark.parametrize(
+    "profile",
+    (
+        _COMPOSITIONAL_STRESS_PROFILE,
+        _HYBRID_STRESS_PROFILE,
+        _ROBUSTNESS_COMPOSITION_STRESS_PROFILE,
+    ),
+)
+def test_compositional_style_stress_profiles_use_correlated_matrix_and_root_sampling(
     monkeypatch: pytest.MonkeyPatch,
+    profile: str,
 ) -> None:
-    compositional_profile = "anti_memorization_piecewise_classification_compositional_slice_v1"
     observed_names: list[str] = []
 
     def fake_sample_correlated_choice(*_args, **kwargs):
@@ -640,7 +660,7 @@ def test_compositional_stress_profile_uses_correlated_matrix_and_root_sampling(
     matrix_plan = execution_semantics_mod.sample_matrix_plan(
         keyed_rng=KeyedRng(901),
         device="cpu",
-        stress_profile_name=compositional_profile,
+        stress_profile_name=profile,
     )
     root_source = execution_semantics_mod.sample_root_source_plan(
         keyed_rng=KeyedRng(902),
@@ -648,7 +668,7 @@ def test_compositional_stress_profile_uses_correlated_matrix_and_root_sampling(
         mechanism_logit_tilt=0.0,
         function_family_mix=None,
         device="cpu",
-        stress_profile_name=compositional_profile,
+        stress_profile_name=profile,
     )
 
     assert isinstance(matrix_plan, KernelMatrixPlan)
@@ -982,7 +1002,7 @@ def test_keyed_graph_breadth_multi_parent_sampling_keeps_later_parents_stable(
             mechanism_logit_tilt=0.0,
             function_family_mix=None,
             device="cpu",
-            stress_profile_name="anti_memorization_piecewise_classification_graph_breadth_slice_v1",
+            stress_profile_name=_GRAPH_BREADTH_STRESS_PROFILE,
         )
 
         assert isinstance(source, StackedNodeSource)

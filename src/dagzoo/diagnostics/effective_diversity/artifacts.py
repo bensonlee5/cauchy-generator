@@ -75,6 +75,68 @@ def _mechanism_family_markdown_lines(
     return lines
 
 
+def _parity_surface_markdown_lines(
+    title: str,
+    summary: object,
+) -> list[str]:
+    if not isinstance(summary, dict):
+        return [f"### {title}", "", "- No parity-surface metadata was recorded.", ""]
+
+    lines = [
+        f"### {title}",
+        "",
+        f"- Metadata coverage: `{_fmt(summary.get('metadata_coverage_rate'))}`",
+        f"- Bundles with metadata: `{_fmt(summary.get('bundles_with_metadata'), digits=0)}`",
+        "",
+    ]
+    count_tables = (
+        ("Converter methods", summary.get("converter_method_counts")),
+        ("Converter variants", summary.get("converter_variant_counts")),
+        ("Converter method+variant", summary.get("converter_method_variant_counts")),
+        ("GP variants", summary.get("gp_variant_counts")),
+        ("Kernel signed", summary.get("kernel_signed_counts")),
+        ("Matrix kinds", summary.get("matrix_kind_counts")),
+        ("Activation base kinds", summary.get("activation_base_kind_counts")),
+        ("Root base kinds", summary.get("root_base_kind_counts")),
+        ("Source kinds", summary.get("source_kind_counts")),
+        ("Combine kinds", summary.get("combine_kind_counts")),
+        ("Aggregation kinds", summary.get("aggregation_kind_counts")),
+        ("Parent arities", summary.get("parent_arity_counts")),
+        ("Source-shape policy", summary.get("source_shape_policy_counts")),
+    )
+    for section_title, payload in count_tables:
+        lines.append(f"#### {section_title}")
+        lines.append("")
+        if not isinstance(payload, dict) or not payload:
+            lines.append("- No observed counts.")
+            lines.append("")
+            continue
+        lines.append("| Label | Sampled Count |")
+        lines.append("|---|---:|")
+        for label in sorted(payload):
+            lines.append(f"| {label} | {_fmt(payload.get(label), digits=0)} |")
+        lines.append("")
+
+    for section_title, payload in (
+        ("Kernel gamma", summary.get("kernel_gamma")),
+        ("Categorical cardinality", summary.get("categorical_cardinality")),
+    ):
+        lines.append(f"#### {section_title}")
+        lines.append("")
+        if not isinstance(payload, dict) or int(payload.get("count") or 0) <= 0:
+            lines.append("- No observed values.")
+            lines.append("")
+            continue
+        lines.append(
+            "- Count / mean / range: "
+            f"`{_fmt(payload.get('count'), digits=0)}` / "
+            f"`{_fmt(payload.get('mean'))}` / "
+            f"`{_fmt(payload.get('min'))}-{_fmt(payload.get('max'))}`"
+        )
+        lines.append("")
+    return lines
+
+
 def format_effective_diversity_markdown(report: dict[str, Any]) -> str:
     """Render a concise markdown summary for the diversity audit."""
 
@@ -152,6 +214,27 @@ def format_effective_diversity_markdown(report: dict[str, Any]) -> str:
             _mechanism_family_markdown_lines(
                 label,
                 variant.get("mechanism_family_summary"),
+            )
+        )
+    lines.extend(
+        [
+            "",
+            "## Parity Surface",
+            "",
+            *_parity_surface_markdown_lines(
+                "Baseline",
+                baseline.get("parity_surface_summary"),
+            ),
+        ]
+    )
+    for variant in variants if isinstance(variants, list) else []:
+        if not isinstance(variant, dict):
+            continue
+        label = str(variant.get("label", "-"))
+        lines.extend(
+            _parity_surface_markdown_lines(
+                label,
+                variant.get("parity_surface_summary"),
             )
         )
     return "\n".join(lines).rstrip() + "\n"

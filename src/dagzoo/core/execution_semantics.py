@@ -123,14 +123,31 @@ _JOINT_VARIANTS: tuple[tuple[FixedLayoutConverterMethod, FixedLayoutConverterVar
 )
 _COMPOSITIONAL_STRESS_PROFILE = "anti_memorization_piecewise_classification_compositional_slice_v1"
 _GRAPH_BREADTH_STRESS_PROFILE = "anti_memorization_piecewise_classification_graph_breadth_slice_v1"
+_HYBRID_STRESS_PROFILE = "anti_memorization_piecewise_classification_hybrid_slice_v1"
+_ROBUSTNESS_COMPOSITION_STRESS_PROFILE = (
+    "anti_memorization_piecewise_classification_robustness_composition_slice_v1"
+)
+_MATRIX_KERNEL_CORRELATION_PROFILES = frozenset(
+    {
+        _COMPOSITIONAL_STRESS_PROFILE,
+        _HYBRID_STRESS_PROFILE,
+        _ROBUSTNESS_COMPOSITION_STRESS_PROFILE,
+    }
+)
+_PARENT_ARITY_SOURCE_SHAPE_CORRELATION_PROFILES = frozenset(
+    {
+        _GRAPH_BREADTH_STRESS_PROFILE,
+        _HYBRID_STRESS_PROFILE,
+    }
+)
 
 
 def _matrix_kernel_correlation_enabled(stress_profile_name: str | None) -> bool:
-    return str(stress_profile_name) == _COMPOSITIONAL_STRESS_PROFILE
+    return str(stress_profile_name) in _MATRIX_KERNEL_CORRELATION_PROFILES
 
 
 def _parent_arity_source_shape_correlation_enabled(stress_profile_name: str | None) -> bool:
-    return str(stress_profile_name) == _GRAPH_BREADTH_STRESS_PROFILE
+    return str(stress_profile_name) in _PARENT_ARITY_SOURCE_SHAPE_CORRELATION_PROFILES
 
 
 class ConverterSpecLike(Protocol):
