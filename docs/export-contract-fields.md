@@ -5,9 +5,9 @@
 - Path patterns use `*` for dynamic map keys and `[]` for list item shapes.
 - `audit_status` is a field-review classification only; it does not change the live export surface.
 
-## dataset_catalog.ndjson record
+## dataset_catalog.parquet record payload
 
-One minimal per-dataset record written under each generated shard.
+Canonical per-dataset JSON payload stored in each generated shard catalog row.
 
 | Path | Type | Presence | Stability | Producer | Audit | Known Consumer / Rationale |
 | --- | --- | --- | --- | --- | --- | --- |

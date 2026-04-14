@@ -17,7 +17,11 @@ from dagzoo.io.lineage_schema import (
     validate_lineage_payload,
 )
 from dagzoo.io.parquet_writer import _sanitize_json, write_packed_parquet_shards_stream
-from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME, REPLAY_CATALOG_FILENAME
+from dagzoo.io.shard_contract import (
+    DATASET_CATALOG_FILENAME,
+    REPLAY_CATALOG_FILENAME,
+    iter_ndjson_records,
+)
 from dagzoo.types import DatasetBundle
 
 
@@ -103,10 +107,7 @@ def _stub_write_packed_split(*, state, split, dataset_index, x, y, compression) 
 
 
 def _load_ndjson_records(path: Path) -> list[dict[str, object]]:
-    records: list[dict[str, object]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        records.append(json.loads(line))
-    return records
+    return [dict(record) for record in iter_ndjson_records(path)]
 
 
 def test_io_exports_resolve_lineage_path(tmp_path) -> None:

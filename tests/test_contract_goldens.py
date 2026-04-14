@@ -25,7 +25,11 @@ from dagzoo.diagnostics.coverage import (
 )
 from dagzoo.diagnostics.types import DatasetMetrics
 from dagzoo.io.parquet_writer import write_packed_parquet_shards_stream
-from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME
+from dagzoo.io.shard_contract import (
+    DATASET_CATALOG_FILENAME,
+    iter_ndjson_records,
+    write_dataset_catalog_records,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -155,65 +159,56 @@ def _write_generated_metadata(run_root: Path) -> None:
     generated_dir = run_root / "generated"
     shard_dir = generated_dir / "shard_00000"
     shard_dir.mkdir(parents=True, exist_ok=True)
-    (shard_dir / DATASET_CATALOG_FILENAME).write_text(
-        "\n".join(
-            [
-                json.dumps(
-                    {
-                        "dataset_index": 0,
-                        "dataset_id": "2" * 32,
-                        "task": "classification",
-                        "n_train": 16,
-                        "n_test": 8,
-                        "n_features": 8,
-                        "feature_types": ["num"] * 8,
-                        "n_classes": 3,
-                        "group_ids": {
-                            "request_run": "1" * 32,
-                            "layout_plan": "4" * 32,
-                        },
-                        "intervention": {
-                            "mode": "hard_interventional",
-                            "signature": "a" * 32,
-                        },
-                        "target_derivation": "tabiclv2_latent_node",
-                        "target_relevance": {
-                            "feature_count": 5,
-                            "feature_fraction": 0.625,
-                        },
-                    },
-                    sort_keys=True,
-                ),
-                json.dumps(
-                    {
-                        "dataset_index": 1,
-                        "dataset_id": "3" * 32,
-                        "task": "classification",
-                        "n_train": 16,
-                        "n_test": 8,
-                        "n_features": 8,
-                        "feature_types": ["num"] * 8,
-                        "n_classes": 3,
-                        "group_ids": {
-                            "request_run": "1" * 32,
-                            "layout_plan": "4" * 32,
-                        },
-                        "intervention": {
-                            "mode": "hard_interventional",
-                            "signature": "a" * 32,
-                        },
-                        "target_derivation": "tabiclv2_latent_node",
-                        "target_relevance": {
-                            "feature_count": 6,
-                            "feature_fraction": 0.75,
-                        },
-                    },
-                    sort_keys=True,
-                ),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
+    write_dataset_catalog_records(
+        shard_dir / DATASET_CATALOG_FILENAME,
+        [
+            {
+                "dataset_index": 0,
+                "dataset_id": "2" * 32,
+                "task": "classification",
+                "n_train": 16,
+                "n_test": 8,
+                "n_features": 8,
+                "feature_types": ["num"] * 8,
+                "n_classes": 3,
+                "group_ids": {
+                    "request_run": "1" * 32,
+                    "layout_plan": "4" * 32,
+                },
+                "intervention": {
+                    "mode": "hard_interventional",
+                    "signature": "a" * 32,
+                },
+                "target_derivation": "tabiclv2_latent_node",
+                "target_relevance": {
+                    "feature_count": 5,
+                    "feature_fraction": 0.625,
+                },
+            },
+            {
+                "dataset_index": 1,
+                "dataset_id": "3" * 32,
+                "task": "classification",
+                "n_train": 16,
+                "n_test": 8,
+                "n_features": 8,
+                "feature_types": ["num"] * 8,
+                "n_classes": 3,
+                "group_ids": {
+                    "request_run": "1" * 32,
+                    "layout_plan": "4" * 32,
+                },
+                "intervention": {
+                    "mode": "hard_interventional",
+                    "signature": "a" * 32,
+                },
+                "target_derivation": "tabiclv2_latent_node",
+                "target_relevance": {
+                    "feature_count": 6,
+                    "feature_fraction": 0.75,
+                },
+            },
+        ],
     )
 
 
@@ -380,9 +375,7 @@ def test_generated_metadata_record_paths_contract_golden(tmp_path: Path) -> None
 
     batch = generate_batch(cfg, num_datasets=1, seed=123, device="cpu")
     write_packed_parquet_shards_stream(batch, tmp_path, shard_size=8, compression="zstd")
-    record = json.loads(
-        (tmp_path / "shard_00000" / DATASET_CATALOG_FILENAME).read_text().splitlines()[0]
-    )
+    record = next(iter_ndjson_records(tmp_path / "shard_00000" / DATASET_CATALOG_FILENAME))
 
     actual_paths = sorted({_format_tokens(tokens) for tokens in _flatten_path_tokens(record)})
 
@@ -397,9 +390,9 @@ def test_public_docs_do_not_reference_removed_target_head_contract() -> None:
         "conditional target head": r"conditional target head",
         "latent_complete_x_conditional": r"latent_complete_x_conditional",
         "posterior_predictive": r"posterior_predictive",
-        "teacher_conditionals": r"teacher_conditionals",
         "teacher-conditional": r"teacher-conditional",
         "metadata.ndjson": r"metadata\.ndjson",
+        "dataset_catalog.ndjson": r"dataset_catalog\.ndjson",
         "tab-foundry": r"tab-foundry",
     }
 

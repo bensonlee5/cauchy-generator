@@ -29,6 +29,7 @@ from dagzoo.io.shard_contract import (
     build_dataset_catalog_record,
     internal_shard_dir,
     resolve_internal_root,
+    write_dataset_catalog_records,
 )
 from dagzoo.math import sanitize_json as _sanitize_json
 from dagzoo.math import to_numpy as _to_numpy
@@ -97,7 +98,7 @@ class _PackedShardState:
     metadata_path: Path
     train_writer: Any | None = None
     test_writer: Any | None = None
-    metadata_file: TextIO | None = None
+    catalog_records: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -252,17 +253,6 @@ def _ensure_shard_blob_open(state: _ShardLineageState) -> BinaryIO:
     return opened
 
 
-def _ensure_metadata_file_open(state: _PackedShardState) -> TextIO:
-    """Return an append-ready catalog handle, opening it once per shard."""
-
-    metadata_file = state.metadata_file
-    if metadata_file is not None and not metadata_file.closed:
-        return metadata_file
-    opened = state.metadata_path.open("a", encoding="utf-8")
-    state.metadata_file = opened
-    return opened
-
-
 def _ensure_replay_file_open(state: _ReplayShardState) -> TextIO:
     """Return an append-ready replay sidecar handle, opening it once per shard."""
 
@@ -299,10 +289,9 @@ def _close_packed_shard_handles(state: _PackedShardState) -> None:
         test_writer.close()
         state.test_writer = None
 
-    metadata_file = state.metadata_file
-    if metadata_file is not None:
-        metadata_file.close()
-        state.metadata_file = None
+    if state.catalog_records:
+        write_dataset_catalog_records(state.metadata_path, state.catalog_records)
+        state.catalog_records = []
 
 
 def _close_replay_shard_handles(state: _ReplayShardState) -> None:
@@ -552,7 +541,6 @@ def _write_metadata_record(
 ) -> None:
     """Append one public dataset-catalog record to the shard catalog stream."""
 
-    metadata_file = _ensure_metadata_file_open(state)
     payload = build_dataset_catalog_record(
         dataset_index=dataset_index,
         n_train=n_train,
@@ -561,14 +549,7 @@ def _write_metadata_record(
         feature_types=feature_types,
         metadata=metadata,
     )
-    metadata_file.write(
-        json.dumps(
-            _sanitize_json(payload),
-            sort_keys=True,
-            allow_nan=False,
-        )
-    )
-    metadata_file.write("\n")
+    state.catalog_records.append(cast(dict[str, Any], _sanitize_json(payload)))
 
 
 def _write_replay_record(

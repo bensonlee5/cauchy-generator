@@ -95,7 +95,7 @@ ______________________________________________________________________
 - in-process `DatasetBundle.metadata` adds a top-level
   `metadata.intervention = {mode, signature}` summary for hard-interventional
   runs
-- public `dataset_catalog.ndjson` records expose only that summary object
+- public `dataset_catalog.parquet` records expose only that summary object
 - `handoff_manifest.json` aggregates one optional
   `provenance.intervention = {mode, signature}` summary per generated corpus
 - observational runs omit intervention fields from public artifacts entirely

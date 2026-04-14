@@ -6,14 +6,13 @@ import json
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, TextIO, cast
 
 import numpy as np
 
 from dagzoo.core.staged_artifacts import staged_output_path as _staged_output_path
 from dagzoo.io.parquet_writer import (
     _close_packed_shard_handles,
-    _ensure_metadata_file_open,
     _PackedShardState,
     _write_packed_split,
 )
@@ -89,12 +88,6 @@ def _create_curated_shard_writer(
     )
 
 
-def _ensure_curated_metadata_file_open(state: _CuratedShardWriter) -> TextIO:
-    """Return an append-ready metadata handle for a curated shard."""
-
-    return _ensure_metadata_file_open(state.shard_state)
-
-
 def _write_curated_split(
     *,
     state: _CuratedShardWriter,
@@ -142,8 +135,7 @@ def _write_curated_dataset(
         y=test_split.y,
         compression="zstd",
     )
-    metadata_file = _ensure_curated_metadata_file_open(state)
-    _write_ndjson_record(metadata_file, record)
+    state.shard_state.catalog_records.append(cast(dict[str, Any], dict(record)))
 
 
 def _close_curated_shard_writer(state: _CuratedShardWriter | None) -> None:

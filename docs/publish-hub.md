@@ -28,7 +28,7 @@ handoffs/default_baseline/
     shard_00000/
       train.parquet
       test.parquet
-      dataset_catalog.ndjson
+      dataset_catalog.parquet
   internal/
     effective_config.yaml
     effective_config_trace.yaml

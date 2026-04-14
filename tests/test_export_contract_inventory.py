@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,7 +14,7 @@ from dagzoo.core.dataset import generate_batch
 from dagzoo.core.generate_handoff import build_generate_handoff_manifest
 from dagzoo.diagnostics.coverage import CoverageAggregationConfig, CoverageAggregator
 from dagzoo.io.parquet_writer import write_packed_parquet_shards_stream
-from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME
+from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME, iter_ndjson_records
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INVENTORY_PATH = REPO_ROOT / "reference" / "export_contract_inventory.yaml"
@@ -208,8 +207,8 @@ def _contract_sample_artifacts(tmp_path: Path) -> dict[str, Any]:
     effective_config_path.write_text("seed: 123\n", encoding="utf-8")
     effective_trace_path.write_text("- source: unit-test\n", encoding="utf-8")
 
-    catalog_record = json.loads(
-        (generated_dir / "shard_00000" / DATASET_CATALOG_FILENAME).read_text().splitlines()[0]
+    catalog_record = next(
+        iter_ndjson_records(generated_dir / "shard_00000" / DATASET_CATALOG_FILENAME)
     )
     train_row = (
         pyarrow_parquet.read_table(generated_dir / "shard_00000" / "train.parquet")

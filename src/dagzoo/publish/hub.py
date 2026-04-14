@@ -255,7 +255,7 @@ def build_hub_dataset_card(
             "",
             "## What is included",
             "",
-            "- `generated/`: public parquet shards plus per-shard `dataset_catalog.ndjson` summaries",
+            "- `generated/`: public parquet shards plus per-shard `dataset_catalog.parquet` catalogs",
             "- `curated/`: optional accepted-only shards written later by `dagzoo filter`",
             "- `handoff_manifest.json`: portable corpus identity and provenance metadata",
             "",

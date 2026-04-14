@@ -9,7 +9,7 @@ missingness, parity-surface relationship reuse, and other realized properties.
 Use diagnostics when you want to compare recipes, confirm that a preset landed
 in the range you expected, or explain why one run behaves differently from
 another. Start with the coverage summaries, then drill into
-`dataset_catalog.ndjson` or in-process metadata when you need per-dataset
+`dataset_catalog.parquet` or in-process metadata when you need per-dataset
 detail.
 
 ______________________________________________________________________
@@ -55,7 +55,7 @@ ______________________________________________________________________
 
 ### Operational triggers
 
-- You need the stable public `dataset_catalog.ndjson` plus summary-level metric coverage.
+- You need the stable public `dataset_catalog.parquet` plus summary-level metric coverage.
 - You are validating whether presets or CLI overrides hit expected ranges.
 - You want benchmark runs to include richer context for guardrail review.
 
@@ -104,7 +104,7 @@ ______________________________________________________________________
 
 ## What to inspect
 
-- Public `dataset_catalog.ndjson` for stable per-dataset identity and emitted schema.
+- Public `dataset_catalog.parquet` for stable per-dataset identity and emitted schema.
 - In-process `DatasetBundle.metadata` when you need rich realized generation parameters.
 - Coverage summaries for meta-features, enabled observability metrics, parity-surface summaries, and steering movement when curriculum steering is enabled.
 - Benchmark summary guardrail sections that include diagnostics context.
@@ -132,7 +132,7 @@ emitting a separate artifact family. That section reports:
   emitted metadata for the generated run.
 
 This steering analysis is additive: it does not add new CLI flags and does not
-change the public per-dataset `dataset_catalog.ndjson` contract.
+change the public per-dataset `dataset_catalog.parquet` contract.
 
 ______________________________________________________________________
 

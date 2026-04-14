@@ -7,6 +7,7 @@ import pytest
 from huggingface_hub.errors import LocalTokenNotFoundError
 
 from dagzoo.core.generate_handoff import build_generate_handoff_manifest
+from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME, write_dataset_catalog_records
 from dagzoo.publish.hub import build_hub_dataset_card, publish_handoff_to_hub
 
 _REQUEST_RUN_ID = "1" * 32
@@ -17,6 +18,9 @@ _INTERVENTION = {"mode": "hard_interventional", "signature": "a" * 32}
 
 def _write_ndjson(path: Path, records: list[dict[str, object]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix == ".parquet":
+        write_dataset_catalog_records(path, records)
+        return
     path.write_text(
         "\n".join(json.dumps(record, sort_keys=True) for record in records) + "\n",
         encoding="utf-8",
@@ -61,12 +65,12 @@ def _write_corpus(
         for index, dataset_id in enumerate(_DATASET_IDS)
     ]
     generated_shard = root / "generated" / "shard_00000"
-    _write_ndjson(generated_shard / "dataset_catalog.ndjson", generated_records)
+    _write_ndjson(generated_shard / DATASET_CATALOG_FILENAME, generated_records)
     (generated_shard / "train.parquet").write_bytes(b"train")
     (generated_shard / "test.parquet").write_bytes(b"test")
     if include_curated:
         curated_shard = root / "curated" / "shard_00000"
-        _write_ndjson(curated_shard / "dataset_catalog.ndjson", generated_records[:1])
+        _write_ndjson(curated_shard / DATASET_CATALOG_FILENAME, generated_records[:1])
         (curated_shard / "train.parquet").write_bytes(b"curated-train")
         (curated_shard / "test.parquet").write_bytes(b"curated-test")
 
