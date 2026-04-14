@@ -10,6 +10,19 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.20.0] - 2026-04-14
+
+### Changed
+
+- User-facing note: DagZoo now hard-cuts the remaining NDJSON artifact paths to
+  parquet. Internal replay sidecars now write `replay_catalog.parquet`, and
+  deferred filter runs now write `filter_manifest.parquet`.
+- User-facing note: parquet-backed record streams are now the only supported
+  catalog/replay/filter-manifest format. Legacy NDJSON record readers are no
+  longer part of the live DagZoo artifact path.
+- User-facing note: the public docs now describe the parquet-only replay and
+  filter artifact surface.
+
 ## [0.19.13] - 2026-04-14
 
 ### Changed

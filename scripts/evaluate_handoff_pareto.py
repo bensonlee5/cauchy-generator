@@ -25,7 +25,7 @@ except Exception as exc:  # pragma: no cover - optional dependency at import tim
 from dagzoo.cli.entrypoint import main as dagzoo_main
 from dagzoo.config import GeneratorConfig
 from dagzoo.diagnostics.effective_diversity.compare import compare_coverage_summaries
-from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME, iter_ndjson_records
+from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME, iter_parquet_json_records
 
 _RIDGE_LAMBDA = 1e-2
 _EASY_TASK_CEILING_MARGIN = 0.10
@@ -162,7 +162,7 @@ def _run_generate(
 def _catalog_task(run_root: Path) -> str:
     catalog_paths = sorted((run_root / "generated").glob(f"shard_*/{DATASET_CATALOG_FILENAME}"))
     for catalog_path in catalog_paths:
-        for record in iter_ndjson_records(catalog_path):
+        for record in iter_parquet_json_records(catalog_path):
             task = record.get("task")
             if isinstance(task, str) and task.strip():
                 return task.strip().lower()

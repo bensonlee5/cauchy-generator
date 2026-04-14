@@ -19,8 +19,9 @@ from dagzoo.io.parquet_writer import write_packed_parquet_shards_stream
 from dagzoo.io.shard_contract import (
     DATASET_CATALOG_FILENAME,
     REPLAY_CATALOG_FILENAME,
-    iter_ndjson_records,
+    iter_parquet_json_records,
     write_dataset_catalog_records,
+    write_json_record_parquet_records,
 )
 from dagzoo.types import DatasetBundle
 
@@ -85,17 +86,15 @@ def _bundle_without_config(seed: int) -> DatasetBundle:
 
 
 def _load_ndjson(path) -> list[dict[str, object]]:
-    return [dict(record) for record in iter_ndjson_records(path)]
+    return [dict(record) for record in iter_parquet_json_records(path)]
 
 
 def _write_ndjson_records(path, records: list[dict[str, object]]) -> None:
-    if Path(path).suffix == ".parquet":
+    resolved_path = Path(path)
+    if resolved_path.name == DATASET_CATALOG_FILENAME:
         write_dataset_catalog_records(path, records)
         return
-    path.write_text(
-        "".join(json.dumps(record, sort_keys=True) + "\n" for record in records),
-        encoding="utf-8",
-    )
+    write_json_record_parquet_records(resolved_path, records)
 
 
 def _rewrite_replay_lineage_to_compact(metadata_path: Path) -> list[dict[str, object]]:
@@ -681,7 +680,7 @@ def test_run_deferred_filter_rejects_stale_filter_output_dir(
     )
 
     out_dir.mkdir()
-    (out_dir / "filter_manifest.ndjson").write_text("", encoding="utf-8")
+    (out_dir / "filter_manifest.parquet").write_text("", encoding="utf-8")
 
     with pytest.raises(RuntimeError, match="already contains prior artifacts"):
         _ = run_deferred_filter(in_dir=in_dir, out_dir=out_dir)

@@ -7,7 +7,7 @@ from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, BinaryIO, TextIO, cast
+from typing import Any, BinaryIO, cast
 
 import numpy as np
 
@@ -26,6 +26,7 @@ from dagzoo.io.lineage_schema import (
 from dagzoo.io.shard_contract import (
     DATASET_CATALOG_FILENAME,
     REPLAY_CATALOG_FILENAME,
+    BufferedJsonRecordParquetWriter,
     build_dataset_catalog_record,
     internal_shard_dir,
     resolve_internal_root,
@@ -107,7 +108,7 @@ class _ReplayShardState:
 
     shard_dir: Path
     replay_path: Path
-    replay_file: TextIO | None = None
+    replay_writer: BufferedJsonRecordParquetWriter | None = None
 
 
 @dataclass(slots=True)
@@ -253,14 +254,14 @@ def _ensure_shard_blob_open(state: _ShardLineageState) -> BinaryIO:
     return opened
 
 
-def _ensure_replay_file_open(state: _ReplayShardState) -> TextIO:
-    """Return an append-ready replay sidecar handle, opening it once per shard."""
+def _ensure_replay_writer(state: _ReplayShardState) -> BufferedJsonRecordParquetWriter:
+    """Return an append-ready replay parquet writer, opening it once per shard."""
 
-    replay_file = state.replay_file
-    if replay_file is not None and not replay_file.closed:
-        return replay_file
-    opened = state.replay_path.open("a", encoding="utf-8")
-    state.replay_file = opened
+    replay_writer = state.replay_writer
+    if replay_writer is not None:
+        return replay_writer
+    opened = BufferedJsonRecordParquetWriter(state.replay_path)
+    state.replay_writer = opened
     return opened
 
 
@@ -297,10 +298,10 @@ def _close_packed_shard_handles(state: _PackedShardState) -> None:
 def _close_replay_shard_handles(state: _ReplayShardState) -> None:
     """Close open replay sidecar handles for one shard."""
 
-    replay_file = state.replay_file
-    if replay_file is not None:
-        replay_file.close()
-        state.replay_file = None
+    replay_writer = state.replay_writer
+    if replay_writer is not None:
+        replay_writer.close()
+        state.replay_writer = None
 
 
 def _close_shard_lineage_files(lineage_states: Mapping[int, _ShardLineageState]) -> None:
@@ -564,7 +565,6 @@ def _write_replay_record(
 ) -> None:
     """Append one private replay-sidecar record with full metadata."""
 
-    replay_file = _ensure_replay_file_open(state)
     payload = {
         "dataset_index": int(dataset_index),
         "n_train": int(n_train),
@@ -573,14 +573,8 @@ def _write_replay_record(
         "feature_types": list(feature_types),
         "metadata": dict(metadata),
     }
-    replay_file.write(
-        json.dumps(
-            _sanitize_json(payload),
-            sort_keys=True,
-            allow_nan=False,
-        )
-    )
-    replay_file.write("\n")
+    replay_writer = _ensure_replay_writer(state)
+    replay_writer.write(cast(dict[str, Any], _sanitize_json(payload)))
 
 
 def _write_bundle_to_shard(

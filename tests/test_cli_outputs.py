@@ -68,7 +68,7 @@ def test_filter_cli_prints_curated_output_summary(
     monkeypatch.setattr(
         "dagzoo.cli.commands.filter.run_deferred_filter",
         lambda **_kwargs: SimpleNamespace(
-            manifest_path=tmp_path / "filter_out" / "filter_manifest.ndjson",
+            manifest_path=tmp_path / "filter_out" / "filter_manifest.parquet",
             summary_path=tmp_path / "filter_out" / "filter_summary.json",
             total_datasets=4,
             accepted_datasets=3,

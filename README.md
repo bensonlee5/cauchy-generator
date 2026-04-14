@@ -181,7 +181,7 @@ data/default_baseline/
     dataset_catalog.parquet
   internal/
     shard_00000/
-      replay_catalog.ndjson
+      replay_catalog.parquet
       lineage/
         adjacency.bitpack.bin
         adjacency.index.json

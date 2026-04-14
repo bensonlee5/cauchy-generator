@@ -20,7 +20,7 @@ from dagzoo.core.identity import stable_blake2s_hex
 from dagzoo.io.shard_contract import (
     DATASET_CATALOG_FILENAME,
     REPLAY_CATALOG_FILENAME,
-    iter_ndjson_records,
+    iter_parquet_json_records,
     write_dataset_catalog_records,
 )
 
@@ -97,7 +97,7 @@ def _write_ndjson(path: Path, records: list[dict[str, object]]) -> None:
 
 
 def _load_ndjson(path: Path) -> list[dict[str, object]]:
-    return [dict(record) for record in iter_ndjson_records(path)]
+    return [dict(record) for record in iter_parquet_json_records(path)]
 
 
 def _write_generate_run_artifacts(

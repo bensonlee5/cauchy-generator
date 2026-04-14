@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TextIO, cast
+from typing import Any, cast
 
 import numpy as np
 
@@ -17,7 +16,6 @@ from dagzoo.io.parquet_writer import (
     _write_packed_split,
 )
 from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME
-from dagzoo.math import sanitize_json as _sanitize_json
 
 
 @dataclass(slots=True)
@@ -47,19 +45,6 @@ def _ensure_curated_output_dir_safe(out_dir: Path) -> None:
         )
 
     out_dir.mkdir(parents=True, exist_ok=True)
-
-
-def _write_ndjson_record(handle: TextIO, record: Mapping[str, Any]) -> None:
-    """Append one JSON-safe NDJSON record to an already-open handle."""
-
-    handle.write(
-        json.dumps(
-            _sanitize_json(dict(record)),
-            sort_keys=True,
-            allow_nan=False,
-        )
-    )
-    handle.write("\n")
 
 
 def _create_curated_shard_writer(

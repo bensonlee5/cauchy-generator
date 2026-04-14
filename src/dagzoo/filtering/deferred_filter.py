@@ -24,7 +24,6 @@ from dagzoo.filtering.deferred_filter_artifacts import (
     _ensure_curated_output_dir_safe,
     _ensure_split_iter_exhausted,
     _write_curated_dataset,
-    _write_ndjson_record,
 )
 from dagzoo.filtering.deferred_filter_replay import (
     _build_filter_metadata,
@@ -39,13 +38,14 @@ from dagzoo.io.parquet_writer import (
 from dagzoo.io.shard_contract import (
     DATASET_CATALOG_FILENAME,
     REPLAY_CATALOG_FILENAME,
+    BufferedJsonRecordParquetWriter,
     internal_shard_dir,
-    iter_ndjson_records,
+    iter_parquet_json_records,
     resolve_internal_root,
 )
 from dagzoo.math import sanitize_json as _sanitize_json
 
-MANIFEST_FILENAME = "filter_manifest.ndjson"
+MANIFEST_FILENAME = "filter_manifest.parquet"
 SUMMARY_FILENAME = "filter_summary.json"
 
 
@@ -134,9 +134,9 @@ def _ensure_filter_output_dir_safe(out_dir: Path) -> None:
 
 
 def _iter_metadata_records(path: Path) -> Iterator[dict[str, Any]]:
-    """Yield NDJSON records for one shard."""
+    """Yield parquet-backed JSON records for one shard."""
 
-    yield from iter_ndjson_records(path)
+    yield from iter_parquet_json_records(path)
 
 
 def _build_packed_split_dataset(
@@ -371,7 +371,8 @@ def run_deferred_filter(
     promoted_final_paths: list[Path] = []
 
     try:
-        with staged_manifest_path.open("w", encoding="utf-8") as manifest_file:
+        manifest_writer = BufferedJsonRecordParquetWriter(staged_manifest_path)
+        try:
             for shard_dir in shard_dirs:
                 catalog_path = _catalog_path_for_shard(shard_dir)
                 if catalog_path is None:
@@ -507,8 +508,7 @@ def run_deferred_filter(
                                 )
                                 curated_written += 1
 
-                        _write_ndjson_record(
-                            manifest_file,
+                        manifest_writer.write(
                             {
                                 "dataset_index": dataset_index,
                                 "seed": seed,
@@ -518,7 +518,7 @@ def run_deferred_filter(
                                 "reason": reason,
                                 "elapsed_seconds": float(elapsed_seconds),
                                 "filter": filter_metadata,
-                            },
+                            }
                         )
 
                     _ensure_split_iter_exhausted(train_iter, split_path=train_path)
@@ -540,6 +540,8 @@ def run_deferred_filter(
                         (curated_writer.shard_dir, curated_writer.final_shard_dir)
                     )
                     curated_accepted_total += curated_written
+        finally:
+            manifest_writer.close()
 
         total_datasets = accepted_total + rejected_total
         datasets_per_minute = (
