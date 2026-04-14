@@ -546,7 +546,7 @@ def test_filter_cli_passes_structural_overrides_to_runner(
 
     class _Result:
         def __init__(self) -> None:
-            self.manifest_path = tmp_path / "filter_out" / "filter_manifest.ndjson"
+            self.manifest_path = tmp_path / "filter_out" / "filter_manifest.parquet"
             self.summary_path = tmp_path / "filter_out" / "filter_summary.json"
             self.total_datasets = 2
             self.accepted_datasets = 2
@@ -603,7 +603,7 @@ def test_filter_cli_passes_structural_override_to_runner(
 
     class _Result:
         def __init__(self) -> None:
-            self.manifest_path = tmp_path / "filter_out" / "filter_manifest.ndjson"
+            self.manifest_path = tmp_path / "filter_out" / "filter_manifest.parquet"
             self.summary_path = tmp_path / "filter_out" / "filter_summary.json"
             self.total_datasets = 1
             self.accepted_datasets = 1
@@ -645,7 +645,7 @@ def test_filter_cli_leaves_structural_overrides_unset_by_default(
 
     class _Result:
         def __init__(self) -> None:
-            self.manifest_path = tmp_path / "filter_out" / "filter_manifest.ndjson"
+            self.manifest_path = tmp_path / "filter_out" / "filter_manifest.parquet"
             self.summary_path = tmp_path / "filter_out" / "filter_summary.json"
             self.total_datasets = 1
             self.accepted_datasets = 1
@@ -898,7 +898,7 @@ def test_generate_cli_rejects_stale_handoff_root_filter_artifacts(
 ) -> None:
     filter_dir = tmp_path / "handoff" / "filter"
     filter_dir.mkdir(parents=True, exist_ok=True)
-    (filter_dir / "filter_manifest.ndjson").write_text("{}", encoding="utf-8")
+    (filter_dir / "filter_manifest.parquet").write_text("{}", encoding="utf-8")
 
     with pytest.raises(SystemExit) as exc:
         main(

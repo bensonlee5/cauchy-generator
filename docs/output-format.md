@@ -116,7 +116,7 @@ out_dir/
     ...
   internal/
     shard_00000/
-      replay_catalog.ndjson
+      replay_catalog.parquet
       lineage/
         adjacency.bitpack.bin
         adjacency.index.json
@@ -195,7 +195,7 @@ handoff_root/
     effective_config.yaml
     effective_config_trace.yaml
     shard_00000/
-      replay_catalog.ndjson
+      replay_catalog.parquet
       lineage/
         adjacency.bitpack.bin
         adjacency.index.json
@@ -204,7 +204,7 @@ handoff_root/
 ```
 
 `generated/` reuses the same public shard contract described above.
-`internal/` remains dagzoo-only. `replay_catalog.ndjson` stores the full
+`internal/` remains dagzoo-only. `replay_catalog.parquet` stores the full
 per-dataset metadata payload, including the same summary-only `intervention`
 object when present.
 

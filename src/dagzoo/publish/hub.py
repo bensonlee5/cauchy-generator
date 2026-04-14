@@ -23,7 +23,7 @@ from dagzoo.io.shard_contract import (
     DATASET_CATALOG_FILENAME,
     INTERNAL_DIRNAME,
     RUN_CONTEXT_FILENAME,
-    iter_ndjson_records,
+    iter_parquet_json_records,
 )
 from dagzoo.recipes import get_recipe_spec, parse_recipe_reference
 
@@ -104,7 +104,7 @@ def _summarize_corpus(corpus_dir: Path) -> dict[str, Any]:
     n_class_values: list[int] = []
 
     for catalog_path in catalog_paths:
-        for record in iter_ndjson_records(catalog_path):
+        for record in iter_parquet_json_records(catalog_path):
             dataset_count += 1
             task = record.get("task")
             if isinstance(task, str) and task.strip():

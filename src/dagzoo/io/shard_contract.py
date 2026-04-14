@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -18,9 +19,10 @@ except Exception:  # pragma: no cover - optional dependency in some read-only co
 
 DATASET_CATALOG_FILENAME = "dataset_catalog.parquet"
 INTERNAL_DIRNAME = "internal"
-REPLAY_CATALOG_FILENAME = "replay_catalog.ndjson"
+REPLAY_CATALOG_FILENAME = "replay_catalog.parquet"
 RUN_CONTEXT_FILENAME = "run_context.json"
 _BLAKE2S_HEX_LENGTH = 32
+_JSON_RECORD_PARQUET_BATCH_SIZE = 1024
 
 
 def _require_pyarrow() -> None:
@@ -156,6 +158,29 @@ def _canonical_record_json(record: Mapping[str, Any]) -> str:
     return json.dumps(dict(record), sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
+def _build_json_record_parquet_row(record: Mapping[str, Any]) -> dict[str, Any]:
+    dataset_index = record.get("dataset_index")
+    if dataset_index is None or isinstance(dataset_index, bool):
+        raise ValueError("json-record parquet rows require an integer dataset_index.")
+    record_json = _canonical_record_json(record)
+    return {
+        "dataset_index": int(dataset_index),
+        "record_json": record_json,
+        "record_sha256": sha256(record_json.encode("utf-8")).hexdigest(),
+    }
+
+
+def json_record_parquet_schema():
+    _require_pyarrow()
+    return pa.schema(
+        [
+            pa.field("dataset_index", pa.int64()),
+            pa.field("record_json", pa.large_string()),
+            pa.field("record_sha256", pa.string()),
+        ]
+    )
+
+
 def build_dataset_catalog_parquet_row(record: Mapping[str, Any]) -> dict[str, Any]:
     record_json = _canonical_record_json(record)
     metadata = record.get("metadata")
@@ -229,6 +254,53 @@ def write_dataset_catalog_records(path: str | Path, records: Sequence[Mapping[st
     pq.write_table(table, Path(path), compression="zstd")
 
 
+def write_json_record_parquet_records(
+    path: str | Path, records: Sequence[Mapping[str, Any]]
+) -> None:
+    _require_pyarrow()
+    rows = [_build_json_record_parquet_row(record) for record in records]
+    table = pa.Table.from_pylist(rows, schema=json_record_parquet_schema())
+    pq.write_table(table, Path(path), compression="zstd")
+
+
+@dataclass(slots=True)
+class BufferedJsonRecordParquetWriter:
+    """Incremental parquet writer for JSON-backed record streams."""
+
+    path: Path
+    compression: str = "zstd"
+    batch_size: int = _JSON_RECORD_PARQUET_BATCH_SIZE
+    _writer: Any | None = None
+    _rows: list[dict[str, Any]] = field(default_factory=list)
+
+    def write(self, record: Mapping[str, Any]) -> None:
+        self._rows.append(_build_json_record_parquet_row(record))
+        if len(self._rows) >= int(self.batch_size):
+            self.flush()
+
+    def flush(self) -> None:
+        _require_pyarrow()
+        if not self._rows:
+            return
+        table = pa.Table.from_pylist(self._rows, schema=json_record_parquet_schema())
+        if self._writer is None:
+            self._writer = pq.ParquetWriter(
+                self.path,
+                table.schema,
+                compression=self.compression,
+            )
+        self._writer.write_table(table)
+        self._rows.clear()
+
+    def close(self) -> None:
+        try:
+            self.flush()
+        finally:
+            if self._writer is not None:
+                self._writer.close()
+                self._writer = None
+
+
 def resolve_internal_root(
     public_root: str | Path,
     *,
@@ -257,36 +329,36 @@ def internal_shard_dir(
     return Path(internal_root) / str(shard_name)
 
 
-def iter_ndjson_records(path: str | Path) -> Iterator[dict[str, Any]]:
-    """Yield catalog records from either parquet-backed or NDJSON-backed shard catalogs."""
+def iter_parquet_json_records(path: str | Path) -> Iterator[dict[str, Any]]:
+    """Yield JSON record payloads from a parquet-backed record stream."""
 
+    _require_pyarrow()
     resolved_path = Path(path)
-    if resolved_path.suffix == ".parquet":
-        try:
-            _require_pyarrow()
-            rows = pq.read_table(resolved_path, columns=["record_json"]).to_pylist()
-        except Exception:
-            rows = None
-        if rows is not None:
-            for row_number, row in enumerate(rows, start=1):
-                record_json = row.get("record_json")
-                if not isinstance(record_json, str):
-                    raise ValueError(
-                        f"Invalid parquet catalog row in {path}:{row_number}: missing record_json."
-                    )
-                payload = json.loads(record_json)
-                if not isinstance(payload, dict):
-                    raise ValueError(
-                        f"Invalid parquet catalog row in {path}:{row_number}: expected object."
-                    )
-                yield payload
-            return
-
-    with resolved_path.open("r", encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, start=1):
-            if not line.strip():
-                continue
-            payload = json.loads(line)
-            if not isinstance(payload, dict):
-                raise ValueError(f"Invalid NDJSON record in {path}:{line_number}: expected object.")
-            yield payload
+    if resolved_path.suffix != ".parquet":
+        raise ValueError(f"legacy NDJSON record streams are unsupported: {resolved_path}")
+    rows = pq.read_table(
+        resolved_path,
+        columns=["record_json", "record_sha256"],
+    ).to_pylist()
+    for row_number, row in enumerate(rows, start=1):
+        record_json = row.get("record_json")
+        if not isinstance(record_json, str):
+            raise ValueError(
+                f"Invalid parquet catalog row in {path}:{row_number}: missing record_json."
+            )
+        expected_sha = row.get("record_sha256")
+        if not isinstance(expected_sha, str) or not expected_sha:
+            raise ValueError(
+                f"Invalid parquet catalog row in {path}:{row_number}: missing record_sha256."
+            )
+        actual_sha = sha256(record_json.encode("utf-8")).hexdigest()
+        if actual_sha != expected_sha:
+            raise ValueError(
+                f"Invalid parquet catalog row in {path}:{row_number}: record_sha256 mismatch."
+            )
+        payload = json.loads(record_json)
+        if not isinstance(payload, dict):
+            raise ValueError(
+                f"Invalid parquet catalog row in {path}:{row_number}: expected object."
+            )
+        yield payload

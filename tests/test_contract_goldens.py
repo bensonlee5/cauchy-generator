@@ -27,7 +27,7 @@ from dagzoo.diagnostics.types import DatasetMetrics
 from dagzoo.io.parquet_writer import write_packed_parquet_shards_stream
 from dagzoo.io.shard_contract import (
     DATASET_CATALOG_FILENAME,
-    iter_ndjson_records,
+    iter_parquet_json_records,
     write_dataset_catalog_records,
 )
 
@@ -375,7 +375,7 @@ def test_generated_metadata_record_paths_contract_golden(tmp_path: Path) -> None
 
     batch = generate_batch(cfg, num_datasets=1, seed=123, device="cpu")
     write_packed_parquet_shards_stream(batch, tmp_path, shard_size=8, compression="zstd")
-    record = next(iter_ndjson_records(tmp_path / "shard_00000" / DATASET_CATALOG_FILENAME))
+    record = next(iter_parquet_json_records(tmp_path / "shard_00000" / DATASET_CATALOG_FILENAME))
 
     actual_paths = sorted({_format_tokens(tokens) for tokens in _flatten_path_tokens(record)})
 
@@ -393,6 +393,8 @@ def test_public_docs_do_not_reference_removed_target_head_contract() -> None:
         "teacher-conditional": r"teacher-conditional",
         "metadata.ndjson": r"metadata\.ndjson",
         "dataset_catalog.ndjson": r"dataset_catalog\.ndjson",
+        "replay_catalog.ndjson": r"replay_catalog\.ndjson",
+        "filter_manifest.ndjson": r"filter_manifest\.ndjson",
         "tab-foundry": r"tab-foundry",
     }
 

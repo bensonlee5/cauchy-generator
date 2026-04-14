@@ -11,7 +11,7 @@ from typing import Any, NoReturn, cast
 
 from dagzoo.core.identity import stable_blake2s_hex
 from dagzoo.core.staged_artifacts import cleanup_path, promote_staged_path, staged_output_path
-from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME, iter_ndjson_records
+from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME, iter_parquet_json_records
 from dagzoo.math import sanitize_json
 
 HANDOFF_MANIFEST_FILENAME = "handoff_manifest.json"
@@ -138,7 +138,7 @@ def _load_generated_identity(
     generate_run_id: str | None = None
     dataset_ids: list[str] = []
     for catalog_path in catalog_paths:
-        for record in iter_ndjson_records(catalog_path):
+        for record in iter_parquet_json_records(catalog_path):
             current_generate_run_id, dataset_id = _catalog_record_identity_fields(
                 record=record,
                 catalog_path=catalog_path,
@@ -190,7 +190,7 @@ def _load_generated_provenance(
     intervention_summary: object = None
     intervention_initialized = False
     for catalog_path in catalog_paths:
-        for record in iter_ndjson_records(catalog_path):
+        for record in iter_parquet_json_records(catalog_path):
             target_derivation = record.get("target_derivation")
             if isinstance(target_derivation, str) and target_derivation.strip():
                 target_derivations.add(target_derivation)

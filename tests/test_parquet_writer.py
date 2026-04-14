@@ -20,7 +20,7 @@ from dagzoo.io.parquet_writer import _sanitize_json, write_packed_parquet_shards
 from dagzoo.io.shard_contract import (
     DATASET_CATALOG_FILENAME,
     REPLAY_CATALOG_FILENAME,
-    iter_ndjson_records,
+    iter_parquet_json_records,
 )
 from dagzoo.types import DatasetBundle
 
@@ -107,7 +107,7 @@ def _stub_write_packed_split(*, state, split, dataset_index, x, y, compression) 
 
 
 def _load_ndjson_records(path: Path) -> list[dict[str, object]]:
-    return [dict(record) for record in iter_ndjson_records(path)]
+    return [dict(record) for record in iter_parquet_json_records(path)]
 
 
 def test_io_exports_resolve_lineage_path(tmp_path) -> None:
