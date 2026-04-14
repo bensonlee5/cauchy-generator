@@ -178,7 +178,7 @@ data/default_baseline/
   shard_00000/
     train.parquet
     test.parquet
-    dataset_catalog.ndjson
+    dataset_catalog.parquet
   internal/
     shard_00000/
       replay_catalog.ndjson

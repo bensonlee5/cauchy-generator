@@ -137,7 +137,7 @@ ______________________________________________________________________
   configuration and realized rates.
 - In-process `DatasetBundle.metadata["prior"]` for the latent-node target
   semantics versus the later observation-model step.
-- Public `dataset_catalog.ndjson` for the stable emitted dataset identity and
+- Public `dataset_catalog.parquet` for the stable emitted dataset identity and
   schema surface.
 - Benchmark summaries for `preset_results[*].scenarios.missingness` (when enabled).
 

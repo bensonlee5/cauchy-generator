@@ -1,8 +1,8 @@
 schema: dagzoo-export-contract-inventory-v1
 artifacts:
   dataset_catalog_record:
-    label: dataset_catalog.ndjson record
-    description: One minimal per-dataset record written under each generated shard.
+    label: dataset_catalog.parquet record payload
+    description: Canonical per-dataset JSON payload stored in each generated shard catalog row.
   parquet_split_row:
     label: Packed parquet split row
     description: Row schema shared by shard train.parquet and test.parquet.

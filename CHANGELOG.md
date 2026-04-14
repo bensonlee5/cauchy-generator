@@ -10,6 +10,18 @@ contains imported legacy history, so date order is not strictly monotonic:
 `0.3.0` records the older `cauchy-generator -> dagzoo` rename, while `0.5.0`
 records the later `dagsynth -> dagzoo` rename on the current release line.
 
+## [0.19.13] - 2026-04-14
+
+### Changed
+
+- User-facing note: generated and curated public shard catalogs now emit
+  `dataset_catalog.parquet` natively, preserving the canonical per-dataset
+  payload in `record_json` while adding checksum and resolved scalar columns so
+  downstream corpus assembly can consume the catalog without NDJSON transcoding.
+- User-facing note: the published output-format and export-contract docs now
+  refer to the parquet-backed catalog surface instead of the removed
+  `dataset_catalog.ndjson` file.
+
 ## [0.19.12] - 2026-04-10
 
 ### Added

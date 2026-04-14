@@ -111,7 +111,7 @@ out_dir/
   shard_00000/
     train.parquet
     test.parquet
-    dataset_catalog.ndjson
+    dataset_catalog.parquet
   shard_00001/
     ...
   internal/
@@ -148,54 +148,33 @@ Compression is `zstd` by default.
 
 ______________________________________________________________________
 
-## Dataset Catalog NDJSON
+## Dataset Catalog Parquet
 
-Each public shard writes one `dataset_catalog.ndjson` file with one JSON record
-per dataset. Current record keys are:
+Each public shard writes one `dataset_catalog.parquet` file with one row per
+dataset. The row stores the canonical semantic payload in `record_json`, plus a
+checksum and resolved scalar columns that downstream tooling can filter without
+re-parsing every record.
 
-| Key                 | Type              | Description                                             |
-| ------------------- | ----------------- | ------------------------------------------------------- |
-| `dataset_index`     | int               | Global dataset index                                    |
-| `dataset_id`        | str               | Stable dataset identifier                               |
-| `task`              | str               | `classification` or `regression`                        |
-| `n_train`           | int               | Train row count                                         |
-| `n_test`            | int               | Test row count                                          |
-| `n_features`        | int               | Emitted feature count                                   |
-| `feature_types`     | list[str]         | Per-feature type annotations                            |
-| `n_classes`         | int or null       | Realized emitted class count (`null` for regression)    |
-| `group_ids`         | object (optional) | Stable downstream grouping keys                         |
-| `intervention`      | object (optional) | Summary-only intervention regime metadata               |
-| `target_derivation` | str (optional)    | Current target-construction marker                      |
-| `target_relevance`  | object (optional) | Summary of which emitted features reach the target node |
+| Column                          | Type        | Description                                                     |
+| ------------------------------- | ----------- | --------------------------------------------------------------- |
+| `dataset_index`                 | int64       | Shard-local dataset index                                       |
+| `record_json`                   | large_string| Canonical JSON payload for the dataset catalog record           |
+| `record_sha256`                 | string      | SHA-256 of `record_json`                                        |
+| `resolved_dataset_id`           | string|null | Stable dataset identifier                                       |
+| `resolved_request_run`          | string|null | Stable request-run grouping key when available                  |
+| `resolved_task`                 | string      | `classification` or `regression`                                |
+| `resolved_n_train`              | int64       | Train row count                                                 |
+| `resolved_n_test`               | int64       | Test row count                                                  |
+| `resolved_n_features`           | int64       | Emitted feature count                                           |
+| `resolved_n_classes`            | int64|null  | Realized emitted class count (`null` for regression)            |
+| `resolved_filter_mode`          | string|null | Filter mode summary when curated/filter metadata is available   |
+| `resolved_filter_status`        | string|null | Filter status summary when curated/filter metadata is available |
+| `resolved_filter_accepted`      | bool|null   | Accepted-only decision when curated/filter metadata is available|
+| `teacher_conditionals_available`| bool        | Whether teacher conditionals were available for the dataset     |
 
-### `group_ids` sub-object
-
-Present when public grouping ids are available.
-
-| Key           | Type | Description                                                    |
-| ------------- | ---- | -------------------------------------------------------------- |
-| `request_run` | str  | Stable grouping key for one requested public run               |
-| `cohort`      | str  | Stable grouping key for heterogeneous raw-generation cohorts   |
-| `layout_plan` | str  | Stable grouping key for datasets sharing one reused execution plan |
-
-### `intervention` sub-object
-
-Present when hard-intervention metadata is available.
-Observational runs omit this field entirely.
-
-| Key         | Type | Description                             |
-| ----------- | ---- | --------------------------------------- |
-| `mode`      | str  | Emitted intervention regime             |
-| `signature` | str  | Stable summary intervention identifier  |
-
-### `target_relevance` sub-object
-
-Present when lineage target-relevance metadata is available.
-
-| Key                | Type  | Description                                                           |
-| ------------------ | ----- | --------------------------------------------------------------------- |
-| `feature_count`    | int   | Number of emitted features whose latent node reaches `target_to_node` |
-| `feature_fraction` | float | `feature_count / n_features`                                          |
+The semantic payload embedded in `record_json` carries the stable per-dataset
+fields used by downstream consumers, including `dataset_id`, `task`,
+`group_ids`, `intervention`, `target_derivation`, and `target_relevance`.
 
 ______________________________________________________________________
 
@@ -211,7 +190,7 @@ handoff_root/
     shard_00000/
       train.parquet
       test.parquet
-      dataset_catalog.ndjson
+      dataset_catalog.parquet
   internal/
     effective_config.yaml
     effective_config_trace.yaml
@@ -370,7 +349,7 @@ When diagnostics are enabled, the run root also includes:
 - `coverage_summary.md`
 
 These artifacts summarize corpus-level coverage and do not alter the public
-parquet or `dataset_catalog.ndjson` contract.
+parquet or `dataset_catalog.parquet` contract.
 
 The exhaustive field list for diagnostics summaries lives in
 [export-contract-fields.md](export-contract-fields.md).

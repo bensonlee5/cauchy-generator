@@ -3,15 +3,29 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
-DATASET_CATALOG_FILENAME = "dataset_catalog.ndjson"
+try:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+except Exception:  # pragma: no cover - optional dependency in some read-only contexts
+    pa = None
+    pq = None
+
+
+DATASET_CATALOG_FILENAME = "dataset_catalog.parquet"
 INTERNAL_DIRNAME = "internal"
 REPLAY_CATALOG_FILENAME = "replay_catalog.ndjson"
 RUN_CONTEXT_FILENAME = "run_context.json"
 _BLAKE2S_HEX_LENGTH = 32
+
+
+def _require_pyarrow() -> None:
+    if pa is None or pq is None:
+        raise RuntimeError("pyarrow is required for parquet-backed shard catalogs.")
 
 
 def _is_direct_shard_input(path: Path) -> bool:
@@ -138,6 +152,83 @@ def build_dataset_catalog_record(
     return record
 
 
+def _canonical_record_json(record: Mapping[str, Any]) -> str:
+    return json.dumps(dict(record), sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def build_dataset_catalog_parquet_row(record: Mapping[str, Any]) -> dict[str, Any]:
+    record_json = _canonical_record_json(record)
+    metadata = record.get("metadata")
+    metadata_mapping = metadata if isinstance(metadata, Mapping) else None
+    filter_payload = (
+        metadata_mapping.get("filter") if isinstance(metadata_mapping, Mapping) else None
+    )
+    split_groups = record.get("group_ids")
+    request_run = split_groups.get("request_run") if isinstance(split_groups, Mapping) else None
+    teacher_conditionals = record.get("teacher_conditionals")
+    return {
+        "dataset_index": int(record["dataset_index"]),
+        "record_json": record_json,
+        "record_sha256": sha256(record_json.encode("utf-8")).hexdigest(),
+        "resolved_dataset_id": record.get("dataset_id"),
+        "resolved_request_run": request_run,
+        "resolved_task": str(
+            record.get("task") or infer_task_from_metadata(metadata_mapping or {})
+        ),
+        "resolved_n_train": int(record["n_train"]),
+        "resolved_n_test": int(record["n_test"]),
+        "resolved_n_features": int(record["n_features"]),
+        "resolved_n_classes": (
+            None if record.get("n_classes") is None else int(record["n_classes"])
+        ),
+        "resolved_filter_mode": (
+            filter_payload.get("mode") if isinstance(filter_payload, Mapping) else None
+        ),
+        "resolved_filter_status": (
+            filter_payload.get("status") if isinstance(filter_payload, Mapping) else None
+        ),
+        "resolved_filter_accepted": (
+            filter_payload.get("accepted")
+            if isinstance(filter_payload, Mapping)
+            and isinstance(filter_payload.get("accepted"), bool)
+            else None
+        ),
+        "teacher_conditionals_available": bool(
+            isinstance(teacher_conditionals, Mapping)
+            and teacher_conditionals.get("available") is True
+        ),
+    }
+
+
+def dataset_catalog_schema():
+    _require_pyarrow()
+    return pa.schema(
+        [
+            pa.field("dataset_index", pa.int64()),
+            pa.field("record_json", pa.large_string()),
+            pa.field("record_sha256", pa.string()),
+            pa.field("resolved_dataset_id", pa.string()),
+            pa.field("resolved_request_run", pa.string()),
+            pa.field("resolved_task", pa.string()),
+            pa.field("resolved_n_train", pa.int64()),
+            pa.field("resolved_n_test", pa.int64()),
+            pa.field("resolved_n_features", pa.int64()),
+            pa.field("resolved_n_classes", pa.int64()),
+            pa.field("resolved_filter_mode", pa.string()),
+            pa.field("resolved_filter_status", pa.string()),
+            pa.field("resolved_filter_accepted", pa.bool_()),
+            pa.field("teacher_conditionals_available", pa.bool_()),
+        ]
+    )
+
+
+def write_dataset_catalog_records(path: str | Path, records: Sequence[Mapping[str, Any]]) -> None:
+    _require_pyarrow()
+    rows = [build_dataset_catalog_parquet_row(record) for record in records]
+    table = pa.Table.from_pylist(rows, schema=dataset_catalog_schema())
+    pq.write_table(table, Path(path), compression="zstd")
+
+
 def resolve_internal_root(
     public_root: str | Path,
     *,
@@ -167,9 +258,31 @@ def internal_shard_dir(
 
 
 def iter_ndjson_records(path: str | Path) -> Iterator[dict[str, Any]]:
-    """Yield JSON-object NDJSON records from one file."""
+    """Yield catalog records from either parquet-backed or NDJSON-backed shard catalogs."""
 
-    with Path(path).open("r", encoding="utf-8") as handle:
+    resolved_path = Path(path)
+    if resolved_path.suffix == ".parquet":
+        try:
+            _require_pyarrow()
+            rows = pq.read_table(resolved_path, columns=["record_json"]).to_pylist()
+        except Exception:
+            rows = None
+        if rows is not None:
+            for row_number, row in enumerate(rows, start=1):
+                record_json = row.get("record_json")
+                if not isinstance(record_json, str):
+                    raise ValueError(
+                        f"Invalid parquet catalog row in {path}:{row_number}: missing record_json."
+                    )
+                payload = json.loads(record_json)
+                if not isinstance(payload, dict):
+                    raise ValueError(
+                        f"Invalid parquet catalog row in {path}:{row_number}: expected object."
+                    )
+                yield payload
+            return
+
+    with resolved_path.open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
             if not line.strip():
                 continue

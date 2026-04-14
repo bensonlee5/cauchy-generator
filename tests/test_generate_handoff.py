@@ -17,7 +17,12 @@ from dagzoo.core.generate_handoff import (
     write_generate_handoff_manifest,
 )
 from dagzoo.core.identity import stable_blake2s_hex
-from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME, REPLAY_CATALOG_FILENAME
+from dagzoo.io.shard_contract import (
+    DATASET_CATALOG_FILENAME,
+    REPLAY_CATALOG_FILENAME,
+    iter_ndjson_records,
+    write_dataset_catalog_records,
+)
 
 _UNIT_REQUEST_RUN_ID = "1" * 32
 _UNIT_LAYOUT_PLAN_ID = "4" * 32
@@ -82,6 +87,9 @@ def _catalog_record(
 
 def _write_ndjson(path: Path, records: list[dict[str, object]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix == ".parquet":
+        write_dataset_catalog_records(path, records)
+        return
     path.write_text(
         "\n".join(json.dumps(record, sort_keys=True) for record in records) + "\n",
         encoding="utf-8",
@@ -89,9 +97,7 @@ def _write_ndjson(path: Path, records: list[dict[str, object]]) -> None:
 
 
 def _load_ndjson(path: Path) -> list[dict[str, object]]:
-    return [
-        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
-    ]
+    return [dict(record) for record in iter_ndjson_records(path)]
 
 
 def _write_generate_run_artifacts(

@@ -16,7 +16,12 @@ from dagzoo.io.lineage_schema import (
     LINEAGE_SCHEMA_VERSION_DENSE,
 )
 from dagzoo.io.parquet_writer import write_packed_parquet_shards_stream
-from dagzoo.io.shard_contract import DATASET_CATALOG_FILENAME, REPLAY_CATALOG_FILENAME
+from dagzoo.io.shard_contract import (
+    DATASET_CATALOG_FILENAME,
+    REPLAY_CATALOG_FILENAME,
+    iter_ndjson_records,
+    write_dataset_catalog_records,
+)
 from dagzoo.types import DatasetBundle
 
 
@@ -80,14 +85,13 @@ def _bundle_without_config(seed: int) -> DatasetBundle:
 
 
 def _load_ndjson(path) -> list[dict[str, object]]:
-    payload: list[dict[str, object]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            payload.append(json.loads(line))
-    return payload
+    return [dict(record) for record in iter_ndjson_records(path)]
 
 
 def _write_ndjson_records(path, records: list[dict[str, object]]) -> None:
+    if Path(path).suffix == ".parquet":
+        write_dataset_catalog_records(path, records)
+        return
     path.write_text(
         "".join(json.dumps(record, sort_keys=True) + "\n" for record in records),
         encoding="utf-8",
